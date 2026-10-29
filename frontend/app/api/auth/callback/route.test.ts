@@ -1,3 +1,8 @@
+// @vitest-environment node
+// A server route handler, so it runs in node, not jsdom. Under jsdom, vitest 5 swaps in a
+// compat `Request` whose static Symbol.hasInstance accepts any Request — NextRequest inherits
+// it, so the route's `instanceof NextRequest` guard took a plain Request for a NextRequest
+// and read `.cookies` off it (undefined). Node's own Request is what the route sees in Next.
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 // The route handler must read process.env at call time, not module load time (which is why
