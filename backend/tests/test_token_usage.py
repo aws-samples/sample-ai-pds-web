@@ -241,7 +241,9 @@ def test_summary_prices_totals_and_flags_unpriced_models():
     assert s["cost_usd"] == pytest.approx(4.0 + 0.6)  # the unpriced model adds nothing
     assert s["unpriced_models"] == ["claude-mystery"]
     assert s["by_source"]["discovery"]["cache_hit_rate"] == pytest.approx(0.75)
-    assert s["by_model"]["claude-mystery"]["cost_usd"] == 0
+    assert s["by_source"]["survey"]["cost_usd"] == 0
+    # A project runs on one model, so there is no per-model view.
+    assert "by_model" not in s
 
 
 def test_summary_of_nothing_is_zero():
@@ -308,20 +310,21 @@ def as_role(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_admin_sees_each_project_and_the_total(as_role, monkeypatch):
+async def test_admin_sees_each_project_most_expensive_first(as_role, monkeypatch):
     s3s = as_role("admin")
     registry = ProjectRegistry()
     registry.register("u-1", "First", owner="pm@aipds.local")
     registry.register("u-2", "Second", owner="pm@aipds.local")
     monkeypatch.setattr(app_module, "registry", registry)
-    rec = UsageRecorder(app_module.s3_store_factory("u-1"), "u-1", "discovery")
+    # u-2 is listed second by the registry but costs more — it must come first.
+    rec = UsageRecorder(app_module.s3_store_factory("u-2"), "u-2", "discovery")
     rec.observe(_msg("m1", _usage(inp=1_000_000)))
     await rec.flush()
     body = TestClient(app_module.app).get("/admin/usage").json()
-    by_id = {p["project_id"]: p["usage"] for p in body["projects"]}
-    assert by_id["u-1"]["cost_usd"] == pytest.approx(4.0)
-    assert by_id["u-2"]["requests"] == 0
-    assert body["total"]["cost_usd"] == pytest.approx(4.0)
+    assert [p["project_id"] for p in body["projects"]] == ["u-2", "u-1"]
+    assert body["projects"][0]["usage"]["cost_usd"] == pytest.approx(4.0)
+    assert body["projects"][1]["usage"]["requests"] == 0
+    assert (body["total"], body["page"], body["size"]) == (2, 1, 10)
     assert body["estimate"] is True
     assert body["pricing"]["source"] == "builtin"
     assert set(s3s) >= {"u-1", "u-2"}
@@ -344,11 +347,53 @@ async def test_the_route_prices_with_the_refreshed_snapshot(as_role, monkeypatch
     rec.observe(_msg("m1", _usage(inp=1_000_000)))
     await rec.flush()
     body = TestClient(app_module.app).get("/admin/usage").json()
-    assert body["total"]["cost_usd"] == pytest.approx(1.0)  # the snapshot's rate, not 4.0
+    # The snapshot's rate, not the built-in 4.0.
+    assert body["projects"][0]["usage"]["cost_usd"] == pytest.approx(1.0)
     assert body["pricing"] == {"source": "price_list", "as_of": "2026-11-01T00:00:00+00:00",
                                "region": "ap-northeast-2"}
 
 
-def test_a_non_admin_is_refused(as_role):
+@pytest.mark.asyncio
+async def test_pages_are_cut_after_sorting_by_cost(as_role, monkeypatch):
+    as_role("admin")
+    registry = ProjectRegistry()
+    for i in range(5):
+        registry.register(f"p-{i}", owner="pm@aipds.local")
+    monkeypatch.setattr(app_module, "registry", registry)
+    for i in range(5):  # p-4 costs the most, p-0 the least
+        rec = UsageRecorder(app_module.s3_store_factory(f"p-{i}"), f"p-{i}", "discovery")
+        rec.observe(_msg("m", _usage(inp=(i + 1) * 1000)))
+        await rec.flush()
+    client = TestClient(app_module.app)
+    first = client.get("/admin/usage?page=1&size=2").json()
+    last = client.get("/admin/usage?page=3&size=2").json()
+    assert [p["project_id"] for p in first["projects"]] == ["p-4", "p-3"]
+    assert [p["project_id"] for p in last["projects"]] == ["p-0"]
+    assert first["total"] == last["total"] == 5
+
+
+@pytest.mark.asyncio
+async def test_one_projects_usage_for_its_dashboard(as_role, monkeypatch):
+    as_role("admin")
+    registry = ProjectRegistry()
+    registry.register("u-1", "First", owner="pm@aipds.local")
+    monkeypatch.setattr(app_module, "registry", registry)
+    rec = UsageRecorder(app_module.s3_store_factory("u-1"), "u-1", "prototype")
+    rec.observe(_msg("m1", _usage(inp=1_000_000)))
+    await rec.flush()
+    body = TestClient(app_module.app).get("/admin/usage/u-1").json()
+    assert body["project_id"] == "u-1" and body["name"] == "First"
+    assert body["usage"]["by_source"]["prototype"]["cost_usd"] == pytest.approx(4.0)
+    assert body["pricing"]["source"] == "builtin"
+
+
+def test_an_unknown_project_is_404(as_role, monkeypatch):
+    as_role("admin")
+    monkeypatch.setattr(app_module, "registry", ProjectRegistry())
+    assert TestClient(app_module.app).get("/admin/usage/nope").status_code == 404
+
+
+@pytest.mark.parametrize("path", ["/admin/usage", "/admin/usage/u-1"])
+def test_a_non_admin_is_refused(as_role, path):
     as_role("pm")
-    assert TestClient(app_module.app).get("/admin/usage").status_code == 403
+    assert TestClient(app_module.app).get(path).status_code == 403

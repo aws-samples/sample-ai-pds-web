@@ -21,10 +21,9 @@ export interface UsageBucket {
   cache_hit_rate: number | null;
 }
 
+// No per-model breakdown: a project runs on the one model it was created with.
 export interface ProjectUsageSummary extends UsageBucket {
   by_source: Partial<Record<UsageSource, UsageBucket>>;
-  // Key is the model name; a `#regional` suffix marks usage through a regional endpoint.
-  by_model: Record<string, UsageBucket>;
   // Models with no price in the backend table — counted in tokens, not in cost_usd.
   unpriced_models: string[];
   updated_at: string | null;
@@ -48,15 +47,29 @@ export interface PricingSource {
   region?: string | null;
 }
 
+// One page, most expensive first — the backend sorts across all projects before cutting the page.
 export interface UsageReport {
   projects: ProjectUsage[];
-  total: UsageBucket & { unpriced_models: string[] };
+  total: number;
+  page: number;
+  size: number;
   estimate: boolean;
   pricing: PricingSource;
 }
 
-export async function getUsageReport(): Promise<UsageReport> {
-  return (await apiFetch<UsageReport>("/admin/usage")) as UsageReport;
+export interface ProjectUsageReport extends ProjectUsage {
+  estimate: boolean;
+  pricing: PricingSource;
+}
+
+export async function getUsageReport(page = 1, size = 10): Promise<UsageReport> {
+  return (await apiFetch<UsageReport>(`/admin/usage?page=${page}&size=${size}`)) as UsageReport;
+}
+
+// Admin only (403 otherwise) — callers check the role first rather than relying on the refusal.
+export async function getProjectUsage(projectId: string): Promise<ProjectUsageReport> {
+  return (await apiFetch<ProjectUsageReport>(
+    `/admin/usage/${encodeURIComponent(projectId)}`)) as ProjectUsageReport;
 }
 
 export function totalTokens(b: UsageBucket): number {

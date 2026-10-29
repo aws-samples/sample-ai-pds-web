@@ -147,7 +147,9 @@ about on-screen text language in it** (the project's language setting decides th
     {
       kind: "md",
       md: `Shows the tokens each project sent to the model and the **estimated cost**. The most expensive
-project comes first; click a row to break it down **by feature** and **by model**.
+project comes first; click a row to break it down **by feature**. A project runs on the one model it
+was created with, so there is no per-model split. The same cost also appears on each project's
+**dashboard**, for administrators only.
 
 - **Cache hit** is the share of the input sent that was read from cache. Cache reads cost far less than
   plain input, so the higher this is, the cheaper the same conversation runs. A low value most likely
