@@ -28,9 +28,11 @@ HISTORY_KEY = f"aiplc-docs/discovery/prototypes/{SLUG}/change-history.md"
 HISTORY_LOCAL = HISTORY_KEY
 
 
-def _complete_event(summary="할 일 앱", remaining="다크 모드", changes="없음"):
+def _complete_event(summary="할 일 앱", remaining="다크 모드", changes="없음",
+                    decisions="없음"):
     return AgentEvent(kind="build_complete", payload=json.dumps(
-        {"summary": summary, "remaining": remaining, "changes": changes},
+        {"summary": summary, "remaining": remaining, "changes": changes,
+         "decisions": decisions},
         ensure_ascii=False))
 
 
@@ -1528,6 +1530,37 @@ async def test_build_complete_appends_to_the_change_history(tmp_path):
     history = s3.blobs[HISTORY_KEY]
     assert history.startswith("# ")                 # header appears once
     assert "로그인 화면 제외" in history
+
+
+async def test_builder_decisions_get_their_own_block_in_the_history(tmp_path):
+    """Values the builder chose where the spec was silent are kept apart from the changes, so
+    spec reconciliation and the survey can find them (proto/prompts.BUILDER_DECISIONS_HEADING)."""
+    s3 = FakeS3Store()
+    s3.blobs[SPEC_KEY] = "# spec"
+    builder = FakeBuilder()
+    session = _session(s3, tmp_path, builder)
+    await session.start()
+
+    builder.script([_complete_event(decisions="승인 기한 기본값 7일"),
+                    AgentEvent(kind="done")])
+    [ev async for ev in session.send_message("go")]
+
+    history = s3.blobs[HISTORY_KEY]
+    assert "**빌더 결정 (명세에 없던 값)**\n승인 기한 기본값 7일" in history
+    assert history.index("**변경**") < history.index("**빌더 결정") < history.index("**요약**")
+
+
+async def test_a_session_that_decided_nothing_has_no_decisions_block(tmp_path):
+    s3 = FakeS3Store()
+    s3.blobs[SPEC_KEY] = "# spec"
+    builder = FakeBuilder()
+    session = _session(s3, tmp_path, builder)
+    await session.start()
+
+    builder.script([_complete_event(decisions="없음"), AgentEvent(kind="done")])
+    [ev async for ev in session.send_message("go")]
+
+    assert "빌더 결정" not in s3.blobs[HISTORY_KEY]
 
 
 async def test_the_change_history_accumulates_across_sessions(tmp_path):

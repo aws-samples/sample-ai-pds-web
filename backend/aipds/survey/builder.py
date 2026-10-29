@@ -256,10 +256,39 @@ answer could not be used for any judgement. The presence of those tables in a
 reference document is not permission to ask about them.
 """
 
+_CTX_DECISIONS_KO = """
+참고 — 빌더가 정한 값 (명세에 없던 것)
+프로토타입을 만들면서 명세가 정하지 않아 빌더가 임의로 정한 값·규칙이다. 응답자는
+화면에서 이 값을 보지만, 누군가 일부러 정한 것이 아니다.
+---
+{text}
+---
+이 목록을 쓰는 방법: 응답자의 실제 업무로 판단할 수 있는 값이 있으면, 그 값이
+**업무에 맞는지** 묻는 문항을 최대 2개까지 만들어라(예: "화면의 기본 기한 7일은
+실제 업무에 비해 어떻습니까?"). 문항에는 그 값이 예시로 정해진 값이라는 점을 밝혀라.
+화면 구현 세부(색, 버튼 위치)는 묻지 마라.
+"""
+
+_CTX_DECISIONS_EN = """
+Reference — values the builder chose (not in the spec)
+These values and rules were decided while building the prototype because the spec
+did not say. Respondents see them on screen, but nobody chose them on purpose.
+---
+{text}
+---
+How to use it: where a respondent could judge a value from their own work, write
+at most 2 questions asking **whether it fits that work** (e.g. "The screen's default
+deadline is 7 days — how does that compare with your work?"). Say in the question that
+the value is a placeholder. Do not ask about implementation details (colours, button
+placement).
+"""
+
 _CTX_PIECES = {
     "ko": (_CTX_PAIN_KO, _CTX_BIZ_KO, _CTX_GUARD_KO),
     "en": (_CTX_PAIN_EN, _CTX_BIZ_EN, _CTX_GUARD_EN),
 }
+
+_CTX_DECISIONS = {"ko": _CTX_DECISIONS_KO, "en": _CTX_DECISIONS_EN}
 
 
 def _context_block(language: str, context) -> str:
@@ -276,9 +305,14 @@ def _context_block(language: str, context) -> str:
         blocks.append(pain_tpl.format(text=context.pain_points))
     if context.business_context:
         blocks.append(biz_tpl.format(text=context.business_context))
+    # Builder decisions are facts about the prototype, not Envision evidence, so they come
+    # after the guard that fences the Envision documents.
+    tail = ""
+    if getattr(context, "builder_decisions", None):
+        tail = _CTX_DECISIONS[language].format(text=context.builder_decisions)
     if not blocks:
-        return ""
-    return "".join(blocks) + guard
+        return tail
+    return "".join(blocks) + guard + tail
 
 
 def build_prompt(prototype_md: str, language: str = "ko", *,

@@ -62,7 +62,7 @@ async def create_survey(pid: str, slug: str):
     # Also carries the basis the spec summary came from (pain point analysis, business
     # context). If absent, it proceeds without them — gather_context downgrades every lookup
     # failure to None, so this call never takes the 502 path below (survey/inputs.py).
-    context = await gather_context(s3)
+    context = await gather_context(s3, slug)
 
     token = new_token()
     try:

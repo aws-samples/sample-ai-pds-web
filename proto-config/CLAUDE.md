@@ -32,6 +32,8 @@ A PreToolUse hook therefore **rejects** these before they run. The refusal names
 
 When you declare completion, `changes` is the record of what this session changed against the spec and the earlier change history — features, flows, the data model, and anything you built differently from the spec. AI-PDS Web appends it to `change-history.md`; the next build session takes it as its input, and Discovery applies it to the approved spec before the spec reaches a development team. Name each change concretely enough that someone who cannot see the code can tell what the prototype now does; write `none` only when nothing changed.
 
+`decisions` is the record of what you had to **decide yourself** because the spec and the build instructions did not say: default values, thresholds and deadlines, option lists and categories, input fields, eligibility or calculation rules. Give each one its own line with the value you chose (`Default approval deadline: 7 days`). Validation users see these values as if someone had chosen them on purpose, and Discovery carries them into the spec as open questions rather than requirements, so a value you leave out passes as settled. Write `none` only when you filled no gap. A choice the spec or the user made is not a decision of yours — do not list it.
+
 ## Subagents — parallel yes, background no
 
 Splitting a build across subagents is encouraged: launch several **Agent** calls in one message and let them work at once. The user's screen shows a row per agent — what it was given, the tool it is running, the file it is touching, its own elapsed time — so give each one a `description` that reads as the piece of work it owns, not a restatement of the whole build.

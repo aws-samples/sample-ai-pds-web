@@ -48,8 +48,9 @@ _BUILD_COMPLETE_SCHEMA: dict[str, Any] = {
         "summary": {"type": "string"},
         "remaining": {"type": "string"},
         "changes": {"type": "string"},
+        "decisions": {"type": "string"},
     },
-    "required": ["summary", "changes"],
+    "required": ["summary", "changes", "decisions"],
 }
 
 
@@ -97,6 +98,7 @@ This list itself cannot go straight into ClaudeAgentOptions; the caller
         summary = args["summary"]
         remaining = args.get("remaining", "")
         changes = str(args.get("changes", "")).strip()
+        decisions = str(args.get("decisions", "")).strip()
 
         # The build cannot finish with the changes-versus-spec left empty. That record
         # is the input to the next improvement session and to rebuilds, and silence is
@@ -106,6 +108,15 @@ This list itself cannot go straight into ClaudeAgentOptions; the caller
             _log.warning("build_complete refused: changes missing (%s)",
                          workspace)
             return _text_result(prompts.build_complete_changes_missing(language))
+
+        # Same discipline for the values the builder chose where the spec was silent.
+        # Those values reach validation users as if they were requirements (invented input
+        # fields, default deadlines, eligibility rules), so the builder must name them -- or
+        # say there were none.
+        if not decisions:
+            _log.warning("build_complete refused: decisions missing (%s)",
+                         workspace)
+            return _text_result(prompts.build_complete_decisions_missing(language))
 
         # This event ends the session. If declared without artifacts, the user sees a
         # "build complete" card with nothing to host -- blocked here so the tool cannot
@@ -149,7 +160,8 @@ This list itself cannot go straight into ClaudeAgentOptions; the caller
         # event, so the marker is included in that generation (store.COMPLETED_MARKER).
         mark_completed(build_dir, digest)
         emit(AgentEvent(kind="build_complete", payload=json.dumps(
-            {"summary": summary, "remaining": remaining, "changes": changes},
+            {"summary": summary, "remaining": remaining, "changes": changes,
+             "decisions": decisions},
             ensure_ascii=False)))
         return _text_result(prompts.build_complete_recorded(language))
 

@@ -34,14 +34,14 @@ async def test_complete_emits_a_build_complete_event(tmp_path):
     handler = _handler(tmp_path, seen.append)
 
     await handler({"summary": "할 일 앱을 만들었다", "remaining": "다크 모드",
-                   "changes": "로그인 화면 제외"})
+                   "changes": "로그인 화면 제외", "decisions": "없음"})
 
     assert len(seen) == 1
     ev = seen[0]
     assert ev.kind == "build_complete"
     payload = json.loads(ev.payload)
     assert payload == {"summary": "할 일 앱을 만들었다", "remaining": "다크 모드",
-                       "changes": "로그인 화면 제외"}
+                       "changes": "로그인 화면 제외", "decisions": "없음"}
 
 
 async def test_remaining_is_optional(tmp_path):
@@ -49,7 +49,7 @@ async def test_remaining_is_optional(tmp_path):
     seen: list[AgentEvent] = []
     handler = _handler(tmp_path, seen.append)
 
-    await handler({"summary": "완성", "changes": "없음"})
+    await handler({"summary": "완성", "changes": "없음", "decisions": "없음"})
 
     assert json.loads(seen[0].payload)["remaining"] == ""
 
@@ -60,7 +60,7 @@ async def test_completion_is_refused_when_prototype_dir_is_missing(tmp_path):
     seen: list[AgentEvent] = []
     handler = _handler(tmp_path, seen.append)   # no prototype/
 
-    result = await handler({"summary": "다 했다", "changes": "없음"})
+    result = await handler({"summary": "다 했다", "changes": "없음", "decisions": "없음"})
 
     assert seen == []                            # no event is emitted
     text = result["content"][0]["text"]
@@ -72,7 +72,7 @@ async def test_completion_is_refused_when_prototype_dir_is_empty(tmp_path):
     seen: list[AgentEvent] = []
     handler = _handler(tmp_path, seen.append)
 
-    result = await handler({"summary": "다 했다", "changes": "없음"})
+    result = await handler({"summary": "다 했다", "changes": "없음", "decisions": "없음"})
 
     assert seen == []
     assert "prototype/" in result["content"][0]["text"]
@@ -82,7 +82,7 @@ async def test_a_successful_completion_returns_text_for_the_agent(tmp_path):
     _prototype_dir(tmp_path).joinpath("index.html").write_text("x")
     handler = _handler(tmp_path, lambda ev: None)
 
-    result = await handler({"summary": "완성", "changes": "없음"})
+    result = await handler({"summary": "완성", "changes": "없음", "decisions": "없음"})
 
     assert result["content"][0]["type"] == "text"
 
@@ -100,7 +100,7 @@ async def test_build_complete_is_refused_without_the_brand_theme(tmp_path):
     seen: list[AgentEvent] = []
     handler = _handler(tmp_path, seen.append)
 
-    result = await handler({"summary": "다 만들었다", "changes": "없음"})
+    result = await handler({"summary": "다 만들었다", "changes": "없음", "decisions": "없음"})
 
     assert "aipds-theme.css" in result["content"][0]["text"]
     # A rejection does not end the session — no event must be emitted.
@@ -124,7 +124,7 @@ async def test_build_complete_passes_once_the_theme_is_imported(tmp_path):
     seen: list[AgentEvent] = []
     handler = _handler(tmp_path, seen.append)
 
-    await handler({"summary": "다 만들었다", "changes": "없음"})
+    await handler({"summary": "다 만들었다", "changes": "없음", "decisions": "없음"})
 
     assert [e.kind for e in seen] == ["build_complete"]
 
@@ -150,7 +150,7 @@ async def test_build_complete_skips_the_theme_check_when_the_profile_has_no_toke
     seen: list[AgentEvent] = []
     handler = _handler(tmp_path, seen.append)
 
-    await handler({"summary": "다 만들었다", "changes": "없음"})
+    await handler({"summary": "다 만들었다", "changes": "없음", "decisions": "없음"})
 
     assert [e.kind for e in seen] == ["build_complete"]
 
@@ -162,7 +162,7 @@ async def test_build_complete_skips_the_theme_check_without_a_profile(tmp_path):
     seen: list[AgentEvent] = []
     handler = _handler(tmp_path, seen.append)
 
-    await handler({"summary": "다 만들었다", "changes": "없음"})
+    await handler({"summary": "다 만들었다", "changes": "없음", "decisions": "없음"})
 
     assert [e.kind for e in seen] == ["build_complete"]
 
@@ -181,13 +181,33 @@ async def test_completion_is_refused_without_changes(tmp_path):
     assert seen == []
 
 
+async def test_completion_is_refused_without_decisions(tmp_path):
+    """Values the builder chose where the spec was silent must be named (or 'none') --
+    otherwise they reach validation users as if they were requirements."""
+    _prototype_dir(tmp_path).joinpath("index.html").write_text("x")
+    seen: list[AgentEvent] = []
+    handler = _handler(tmp_path, seen.append)
+
+    for blank in ({"summary": "완성", "changes": "없음"},
+                  {"summary": "완성", "changes": "없음", "decisions": " "}):
+        result = await handler(blank)
+        assert "decisions" in result["content"][0]["text"]
+
+    assert seen == []
+
+
+def test_decisions_is_a_required_field_of_the_schema():
+    from aipds.proto.tools import _BUILD_COMPLETE_SCHEMA
+    assert "decisions" in _BUILD_COMPLETE_SCHEMA["required"]
+
+
 # ---- No completion is accepted if nothing changed since the last completion ----
 #
 # Every message that comes after completion opens a new improvement session. If a session that only received a
 # question declares completion without changing anything, the session closes as soon as it opens and the handoff
 # gets overwritten with "코드 안 바꿈" (code not changed).
 
-_ARGS = {"summary": "s", "changes": "없음"}
+_ARGS = {"summary": "s", "changes": "없음", "decisions": "없음"}
 
 
 def _text(result) -> str:

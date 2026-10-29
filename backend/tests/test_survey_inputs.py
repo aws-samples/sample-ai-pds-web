@@ -268,3 +268,63 @@ async def test_a_listing_failure_does_not_fail_the_survey(s3):
     s3.list = boom
     got = await inputs.gather_context(s3)
     assert got.pain_points is None and got.business_context is None
+
+
+# ---- Builder decisions from the prototype's change history ----
+
+_HISTORY = """# 수정 이력
+
+## 2026-10-28 05:24 UTC · gen 1
+
+**변경**
+목록 화면 추가
+
+**빌더 결정 (명세에 없던 값)**
+승인 기한 기본값 7일
+요청 유형 3종: 문의 / 변경 / 취소
+
+**요약**
+관리 화면 프로토타입
+
+## 2026-10-28 07:00 UTC · gen 2
+
+**변경**
+없음
+
+**요약**
+색 조정
+
+## 2026-10-28 08:00 UTC · gen 3
+
+**변경**
+임박 기준 추가
+
+**Builder decisions (not in the spec)**
+Deadline warning threshold: 3 days
+
+**요약**
+x
+"""
+
+
+def test_builder_decisions_are_collected_from_every_entry_in_order():
+    got = inputs.builder_decisions(_HISTORY)
+    assert got == ("승인 기한 기본값 7일\n"
+                   "요청 유형 3종: 문의 / 변경 / 취소\n"
+                   "Deadline warning threshold: 3 days")
+
+
+def test_a_history_without_decision_blocks_has_none():
+    assert inputs.builder_decisions("# 수정 이력\n\n## x\n\n**변경**\nA\n\n**요약**\nB\n") is None
+
+
+async def test_gather_context_reads_the_prototypes_history_only_when_a_slug_is_given(s3):
+    from aipds.proto import layout
+    s3.blobs[layout.change_history_key("prototype")] = _HISTORY
+    assert (await inputs.gather_context(s3)).builder_decisions is None
+    got = await inputs.gather_context(s3, "prototype")
+    assert "승인 기한 기본값 7일" in got.builder_decisions
+
+
+async def test_a_missing_history_leaves_builder_decisions_empty(s3):
+    assert (await inputs.gather_context(s3, "prototype")).builder_decisions is None

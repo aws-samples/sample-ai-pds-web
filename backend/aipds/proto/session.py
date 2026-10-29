@@ -114,9 +114,11 @@ def _completion_from(payload: str | None) -> dict | None:
         return None
     remaining = data.get("remaining")
     changes = data.get("changes")
+    decisions = data.get("decisions")
     return {"summary": summary,
             "remaining": remaining if isinstance(remaining, str) else "",
-            "changes": changes if isinstance(changes, str) else ""}
+            "changes": changes if isinstance(changes, str) else "",
+            "decisions": decisions if isinstance(decisions, str) else ""}
 
 
 def _is_uuid(value: object) -> bool:
@@ -396,7 +398,8 @@ class PrototypeSession:
             at=datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
             gen=gen,
             summary=completion["summary"],
-            changes=completion.get("changes") or "")
+            changes=completion.get("changes") or "",
+            decisions=completion.get("decisions") or "")
         await self._s3.put(layout.change_history_key(self.slug), existing + entry)
 
     async def _write_handoff(self, completion: dict) -> None:
