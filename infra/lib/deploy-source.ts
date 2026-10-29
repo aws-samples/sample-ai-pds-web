@@ -35,7 +35,7 @@
 // One more price: the boot must be able to reach GitHub.
 
 /** Public repo. HTTPS, so the instance needs no credentials. */
-export const REPO_URL = 'https://github.com/muylucir/ai-pds-web.git';
+export const REPO_URL = 'https://github.com/aws-samples/sample-ai-pds-web.git';
 
 /**
  * Deploy target branch. The instance at boot, and `aipds-update` when it runs, align to this

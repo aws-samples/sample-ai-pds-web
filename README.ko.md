@@ -77,7 +77,7 @@ proto-config/      빌드 에이전트 전용 CLAUDE_CONFIG_DIR — 위와 반�
 무수정으로 쓴다 — 사본은 갈라지고, 정본은 상류다. 서브모듈까지 clone한다:
 
 ```bash
-git clone --recurse-submodules https://github.com/muylucir/ai-pds-web.git
+git clone --recurse-submodules https://github.com/aws-samples/sample-ai-pds-web.git
 git submodule update --init --recursive      # 이미 서브모듈 없이 clone했다면
 ```
 

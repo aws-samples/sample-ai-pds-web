@@ -79,7 +79,7 @@ The ruleset is **not copied here.** It is the `steering-files/` submodule, pinne
 and used unmodified — a copy drifts, and the canonical source is upstream. Clone with it:
 
 ```bash
-git clone --recurse-submodules https://github.com/muylucir/ai-pds-web.git
+git clone --recurse-submodules https://github.com/aws-samples/sample-ai-pds-web.git
 git submodule update --init --recursive      # if you already cloned without it
 ```
 
