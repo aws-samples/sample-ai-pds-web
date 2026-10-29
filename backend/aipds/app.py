@@ -29,6 +29,7 @@ from aipds.project_store import restore_projects
 from aipds.pathsafe import reject_unsafe_segment
 from aipds.turn_job import TurnJobs
 from aipds.turn_marker import save_marker
+from aipds.token_usage import UsageRecorder
 
 _log = logging.getLogger(__name__)
 
@@ -443,7 +444,17 @@ def driver_factory(project_id: str, local_root: Path):
         anthropic_model=cli_model_id(project_model(project_id)),
         effort=project_effort(project_id),
         language=project_language(project_id),
+        usage=usage_recorder(project_id, "discovery"),
     )
+
+
+def usage_recorder(project_id: str, source: str) -> UsageRecorder | None:
+    """This project's token meter for `source` (aipds/token_usage.py). None without a bucket —
+    there is nowhere to keep the counts, and no admin screen to read them."""
+    if not durable_projects_enabled():
+        return None
+    return UsageRecorder(s3_store_factory(project_id), project_id, source,
+                         model_id=project_model(project_id))
 
 
 # ---- prototype build/hosting wiring (routes/prototypes.py) ----
@@ -512,6 +523,9 @@ def proto_session_factory(project_id: str, slug: str):
     # Read once and give the builder and the session the same value — if the two disagree,
     # the language of the prompt and of the tool descriptions diverges.
     language = project_language(project_id)
+    # One meter for the session, shared by the builders it starts (a resume or an improvement
+    # session builds a new one), so a response is never counted by two of them.
+    usage = usage_recorder(project_id, "prototype")
 
     def builder_factory(session_id: str, resume: bool):
         return PrototypeBuilder(
@@ -530,6 +544,7 @@ def proto_session_factory(project_id: str, slug: str):
             effort=project_effort(project_id),
             language=language,
             permission_mode=_proto_permission_mode(),
+            usage=usage,
         )
 
     return PrototypeSession(
@@ -541,6 +556,14 @@ def proto_session_factory(project_id: str, slug: str):
         design_profiles=design_profile_store(),
     )
 
+
+# For the Bedrock price snapshot (aipds/pricing_sync.py writes it, routes/usage.py reads it).
+# Outside projects/ because prices belong to the deployment, not to a project. Monkeypatched in tests.
+def pricing_root_s3_factory() -> S3StoreLike:
+    region = os.environ.get("AIPDS_S3_REGION", "ap-northeast-2")
+    bucket = os.environ.get("AIPDS_S3_BUCKET", "")
+    client = s3_client(region)
+    return S3Store(bucket=bucket, prefix="pricing/", client=client)
 
 # ---- validation survey wiring (routes/surveys.py) ----
 
@@ -570,7 +593,7 @@ def questionnaire_agent_factory(project_id: str):
     Previously it read os.environ["ANTHROPIC_MODEL"] directly, so even with a per-project
     model chosen, this path alone used the global env.
     """
-    return one_shot_agent_factory(project_id, max_tokens=8000)
+    return one_shot_agent_factory(project_id, max_tokens=8000, source="survey")
 
 
 def handoff_writer_factory(project_id: str):
@@ -588,10 +611,11 @@ def handoff_writer_factory(project_id: str):
     as the generation cap (package.CALL_TIMEOUT_S). It is a background task, not a request, so a long wait blocks nothing.
     """
     from aipds.handoff.package import CALL_TIMEOUT_S
-    return one_shot_agent_factory(project_id, max_tokens=64000, read_timeout=CALL_TIMEOUT_S)
+    return one_shot_agent_factory(project_id, max_tokens=64000, read_timeout=CALL_TIMEOUT_S,
+                                  source="handoff")
 
 
-def one_shot_agent_factory(project_id: str, *, max_tokens: int,
+def one_shot_agent_factory(project_id: str, *, max_tokens: int, source: str,
                            read_timeout: int | None = None):
     """`async (prompt, progress=None) -> str` running on that project's model. No tools, no session.
 
@@ -599,6 +623,7 @@ def one_shot_agent_factory(project_id: str, *, max_tokens: int,
     is given, it is called on every stream chunk — the handoff package uses it to show stage progress on screen.
     """
     model_id = project_model(project_id)
+    usage = usage_recorder(project_id, source)
 
     async def call(prompt: str, progress=None) -> str:
         if not model_id:
@@ -628,6 +653,11 @@ def one_shot_agent_factory(project_id: str, *, max_tokens: int,
         agent = Agent(model=model, tools=[],
                       callback_handler=on_event if progress is not None else None)
         result = await agent.invoke_async(prompt)
+        if usage is not None:
+            # A call that raised (max tokens, timeout) is not metered — Strands
+            # surfaces no usage with the exception.
+            usage.add_converse(getattr(result.metrics, "accumulated_usage", None))
+            await usage.flush()
         return str(result)
     return call
 
@@ -899,6 +929,9 @@ app.include_router(models_routes.admin_router, dependencies=_AUTH)
 
 from aipds.routes import design as design_routes  # noqa: E402
 app.include_router(design_routes.admin_router, dependencies=_AUTH)
+
+from aipds.routes import usage as usage_routes  # noqa: E402
+app.include_router(usage_routes.admin_router, dependencies=_AUTH)
 
 # ---- Public (unauthenticated) routers — exactly two (2 routers, 3 paths — see below) ----
 #

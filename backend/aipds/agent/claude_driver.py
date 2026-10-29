@@ -90,6 +90,7 @@ from aipds.pathsafe import workspace_relative as _rel
 from aipds.agent import tool_input_draft
 from aipds.performance import log_performance
 from aipds.s3store import S3StoreLike
+from aipds.token_usage import UsageRecorder
 from aipds.tool_trace import tool_detail
 from aipds.transcript_restore import MirrorOnlyStore
 from aipds.transcript_restore import restore as restore_transcript
@@ -265,8 +266,12 @@ class _MessageReader:
     (`disconnect`); never while the turn may still continue.
     """
 
-    def __init__(self, agen) -> None:
+    def __init__(self, agen, usage: "UsageRecorder | None" = None) -> None:
         self._agen = agen
+        # Token metering (aipds/token_usage.py). Done here rather than in `_pump`
+        # because this task reads every message of the turn even after the
+        # consumer walked away -- an abandoned turn's tokens are billed too.
+        self._usage = usage
         self.inbox: list = []
         # Translated events not yet delivered to the consumer. This is their
         # DURABLE HOME -- see `_relay`'s ownership rule. It lives on the reader
@@ -295,6 +300,8 @@ class _MessageReader:
             async for msg in self._agen:
                 self.inbox.append(msg)
                 self.wake.set()
+                if self._usage is not None:
+                    self._usage.observe(msg)
         except asyncio.CancelledError:
             # Deliberate teardown (see _retire_reader/disconnect) -- must not
             # be recorded as a turn failure.
@@ -308,6 +315,10 @@ class _MessageReader:
         finally:
             self.ended = True
             self.wake.set()
+            if self._usage is not None:
+                # A turn cut off before its ResultMessage (interrupt, retire,
+                # disconnect) still spent what was metered so far.
+                self._usage.flush_soon()
 
     async def settle(self, timeout: float) -> None:
         """Wait for something new, or `timeout`.
@@ -654,7 +665,8 @@ class ClaudeDriver:
                  client_factory: Callable[[dict], Any] | None = None,
                  session_store: Any = None,
                  shared_config_dir: str | None = None,
-                 launch: Any = None):
+                 launch: Any = None,
+                 usage: "UsageRecorder | None" = None):
         self._workspace = workspace
         self._rules_dir = rules_dir
         self._config_dir = config_dir
@@ -687,6 +699,8 @@ class ClaudeDriver:
         #: The main agent's context usage (aipds/context_usage.py). A project has one
         #: conversation (the session id is derived from the project), so it is carried across turns.
         self._context = ContextMeter()
+        #: This project's Discovery token meter (aipds/token_usage.py). None = not metered.
+        self._usage = usage
         # A plain list, not collections.deque -- same as builder.py, for the
         # same reason: everything here runs on one event loop, and a per-turn
         # queue is never long enough for deque's O(1) popleft to matter.
@@ -1949,7 +1963,7 @@ class ClaudeDriver:
                 _log,
                 self._current_session_id, "query", query_started)
             reader_for_turn = _MessageReader(
-                client.receive_response().__aiter__())
+                client.receive_response().__aiter__(), usage=self._usage)
             self._reader = reader_for_turn
             async for ev in self._pump(reader_for_turn):
                 if not first_sdk_event_logged:

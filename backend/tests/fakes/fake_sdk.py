@@ -30,6 +30,11 @@ class AssistantMessage:
     # claude_agent_sdk 0.2.143 types.py).
     # None means the message is from the orchestrating agent.
     parent_tool_use_id: str | None = None
+    # One API response's usage, repeated on every block of that response (same message_id).
+    # Only the token-usage tests set these.
+    usage: dict | None = None
+    message_id: str | None = None
+    model: str = "claude-opus-5-5"
 
 
 @dataclass

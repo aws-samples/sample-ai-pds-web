@@ -35,6 +35,7 @@ from aipds.models import AgentEvent
 from aipds.proto import prompts
 from aipds.proto.build_guard import (FETCH_HOSTS, WRITE_TOOLS, bash_denial, fetch_denial,
                                      settings_write_denial)
+from aipds.token_usage import UsageRecorder
 from aipds.tool_trace import tool_detail
 from aipds.transcript_restore import MirrorOnlyStore
 from aipds.transcript_restore import restore as restore_transcript
@@ -316,7 +317,8 @@ class PrototypeBuilder:
                  client_factory: Callable[[], Any] | None = None,
                  shared_config_dir: str | None = None,
                  launch: Any = None,
-                 answer_log: Any = None):
+                 answer_log: Any = None,
+                 usage: UsageRecorder | None = None):
         self._workspace = workspace
         self._config_dir = config_dir
         #: Source of the contents copied into config_dir on every connect (proto-config/). None means no copy.
@@ -330,6 +332,8 @@ class PrototypeBuilder:
         #: answers for history restore -- because the transcript only keeps the
         #: English sentences the CLI transcribed (agent/answer_store.py header).
         self._answer_log = answer_log
+        #: This prototype's token meter (aipds/token_usage.py). None = not metered.
+        self._usage = usage
         #: Measures the main agent's context usage (aipds/context_usage.py). One builder
         #: is one SDK session, so it is carried across turns -- only changed values are emitted.
         self._context = ContextMeter()
@@ -936,6 +940,8 @@ class PrototypeBuilder:
                     msg = next_msg.result()
                 except StopAsyncIteration:
                     break
+                if self._usage is not None:
+                    self._usage.observe(msg)
                 for ev in self._translate(msg):
                     if ev.kind == "done":
                         # HELD, not yielded here. `done` used to go out the
@@ -1023,6 +1029,10 @@ class PrototypeBuilder:
             # asyncio logs "Task was destroyed but it is pending!".
             if next_msg is not None and not next_msg.done():
                 next_msg.cancel()
+            if self._usage is not None:
+                # The ResultMessage already scheduled a write; this covers the turns
+                # that never reached one (interrupt, error, abandoned consumer).
+                self._usage.flush_soon()
         # CALL SITE 4 -- the terminal exit, reached only on a NORMAL loop exit
         # (both `except` arms return, so this is the success path only).
         #

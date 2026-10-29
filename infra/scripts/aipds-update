@@ -202,6 +202,28 @@ if [ -f "$NGINX_CONF" ] \
   fi
 fi
 
+# Bedrock price snapshot for the admin usage screen's cost estimate
+# (backend/aipds/pricing_sync.py → pricing/bedrock.json). Nothing restarts: cost is computed
+# when the screen loads, so the next load uses the new prices.
+#
+# Above the early exit for the same reason as the two steps above, plus one of its own: prices
+# change without a commit, so "already up to date" must still refresh them. Fail-soft — a
+# missing permission (pricing:GetProducts arrives with a `cdk deploy`), no network, or a price
+# list the parser no longer recognizes leaves the previous prices in place and the update
+# carries on. The bucket and region are the backend's own (its systemd unit), not a copy here.
+backend_env() {
+  systemctl show aipds-backend --property=Environment --value 2>/dev/null \
+    | tr ' ' '\n' | sed -n "s/^$1=//p" | head -n 1
+}
+PRICE_BUCKET=$(backend_env AIPDS_S3_BUCKET || true)
+PRICE_REGION=$(backend_env AIPDS_S3_REGION || true)
+if [ -n "$PRICE_BUCKET" ] && [ -n "$PRICE_REGION" ] && [ -x "$APP/backend/.venv/bin/python" ]; then
+  if ! runuser -u "$SVC" -- "$APP/backend/.venv/bin/python" -m aipds.pricing_sync \
+      --bucket "$PRICE_BUCKET" --region "$PRICE_REGION"; then
+    echo "aipds-update: price refresh failed — the usage screen keeps the previous prices" >&2
+  fi
+fi
+
 AFTER=$(gitsvc rev-parse HEAD)
 
 # The record is changed only **after** checkout succeeds -- a failed switch must not be left as "testing".

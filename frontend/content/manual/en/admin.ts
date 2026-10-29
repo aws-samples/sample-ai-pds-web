@@ -3,11 +3,11 @@ import type { ManualSection } from "../types";
 export const admin: ManualSection = {
   id: "admin",
   title: "Administrator screens",
-  lede: "Managing users, the model list, and the prototype brand. Visible only to the administrator role.",
+  lede: "Managing users, the model list, and the prototype brand, and viewing token usage. Visible only to the administrator role.",
   blocks: [
     {
       kind: "md",
-      md: `**User management**, **Model management** and **Brand design** are in the user menu (the round
+      md: `**User management**, **Model management**, **Brand design** and **Token usage** are in the user menu (the round
 icon) at the right of the header. They do not appear for non-administrators, and typing the address
 directly sends you back.`,
     },
@@ -142,6 +142,30 @@ already exist fall back to the default look the next time they are hosted.
 
 Every project reads this one file, English-language projects included — so **do not put instructions
 about on-screen text language in it** (the project's language setting decides that).`,
+    },
+    { kind: "heading", id: "token-usage", text: "Token usage" },
+    {
+      kind: "md",
+      md: `Shows the tokens each project sent to the model and the **estimated cost**. The most expensive
+project comes first; click a row to break it down **by feature** and **by model**.
+
+- **Cache hit** is the share of the input sent that was read from cache. Cache reads cost far less than
+  plain input, so the higher this is, the cheaper the same conversation runs. A low value most likely
+  means turns are more than 5 minutes apart and the cache keeps expiring.
+- Counting starts **when this feature is deployed**. Deleting a project deletes its usage too, and
+  export/import does not carry it — only what was spent on this instance is counted.`,
+    },
+    {
+      kind: "callout",
+      tone: "warn",
+      md: `**The cost is an estimate.** It uses Bedrock on-demand list prices (Seoul region, \`global.\`
+inference profiles), so it can differ from the actual bill after discounts, credits and tax. Models
+missing from the price table are counted in tokens but left out of the cost, and the screen names them.
+
+Prices are fetched again from the AWS Price List on every \`sudo aipds-update\` run and apply without a
+restart; the date they are from is shown at the top of the screen. If it says **built-in table**, no
+refresh has succeeded yet — after this feature arrives, one \`cdk deploy\` gives the instance permission
+to read prices.`,
     },
   ],
 };

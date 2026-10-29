@@ -117,6 +117,12 @@ export function UserMenu() {
               >
                 {t("user.manageDesign")}
               </Link>
+              <Link
+                href="/admin/usage"
+                className="block rounded-lg px-3 py-2 text-sm hover:bg-slate-50"
+              >
+                {t("user.manageUsage")}
+              </Link>
             </>
           )}
           {/* Kept outside the role condition — it acts on one's own account, so a pm

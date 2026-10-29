@@ -473,3 +473,61 @@ def test_the_test_branch_record_lives_next_to_the_applied_record():
     text = SCRIPT.read_text(encoding="utf-8")
     assert "STATE_DIR=/var/lib/aipds\n" in text
     assert "APPLIED_FILE=/var/lib/aipds/update-applied" in text
+
+
+# ---- The price snapshot refresh (backend/aipds/pricing_sync.py) ----------------------------
+
+def _run_with_backend_env(tmp_path: Path, app: Path, script: Path, *, env_line: str,
+                          python_exit: int) -> subprocess.CompletedProcess:
+    """Run the update with `systemctl show` answering the backend unit's Environment, and a
+    venv python that records its arguments."""
+    log = tmp_path / "calls"
+    python = app / "backend/.venv/bin/python"
+    python.parent.mkdir(parents=True, exist_ok=True)
+    python.write_text(f'#!/bin/bash\necho "python $*" >> "{log}"\nexit {python_exit}\n')
+    python.chmod(0o755)
+    pip = app / "backend/.venv/bin/pip"
+    pip.write_text(f'#!/bin/bash\necho "pip $*" >> "{log}"\n')
+    pip.chmod(0o755)
+    bin_dir = _install_stubs(tmp_path, pip_ok=True)
+    (bin_dir / "systemctl").write_text(
+        f'#!/bin/bash\necho "systemctl $*" >> "{log}"\n'
+        f'[ "$1" = show ] && echo "{env_line}"\nexit 0\n')
+    return subprocess.run(["bash", str(script)], capture_output=True, text=True, cwd="/",
+                          env={"PATH": f"{bin_dir}:/usr/bin:/bin", "HOME": str(tmp_path)})
+
+
+def test_prices_refresh_even_with_nothing_new_to_apply(tmp_path):
+    """Prices change without a commit, so the step sits above the early exit."""
+    _work, app, script, _applied = _deployed(tmp_path)
+    r = _run_with_backend_env(
+        tmp_path, app, script, python_exit=0,
+        env_line="HOME=/opt/aipds AIPDS_S3_REGION=ap-northeast-2 AIPDS_S3_BUCKET=artifacts-1")
+    assert r.returncode == 0, r.stderr
+    assert "already at" in r.stdout
+    calls = (tmp_path / "calls").read_text()
+    assert ("python -m aipds.pricing_sync --bucket artifacts-1 --region ap-northeast-2"
+            in calls)
+    # Prices are read at request time — refreshing them restarts nothing.
+    assert "restart" not in calls
+
+
+def test_a_failed_price_refresh_does_not_stop_the_update(tmp_path):
+    work, app, script, applied = _deployed(tmp_path)
+    (work / "backend/aipds/app.py").write_text("v2\n")
+    _git(work, "commit", "-qam", "code")
+    _git(work, "push", "-q", "origin", "HEAD:main")
+    r = _run_with_backend_env(
+        tmp_path, app, script, python_exit=1,
+        env_line="AIPDS_S3_REGION=ap-northeast-2 AIPDS_S3_BUCKET=artifacts-1")
+    assert r.returncode == 0, r.stderr
+    assert "price refresh failed" in r.stderr
+    assert "systemctl restart aipds-backend" in (tmp_path / "calls").read_text()
+    assert applied.read_text().strip() == _git(work, "rev-parse", "HEAD")
+
+
+def test_no_bucket_no_price_refresh(tmp_path):
+    _work, app, script, _applied = _deployed(tmp_path)
+    r = _run_with_backend_env(tmp_path, app, script, python_exit=0, env_line="HOME=/opt/aipds")
+    assert r.returncode == 0, r.stderr
+    assert "pricing_sync" not in (tmp_path / "calls").read_text()

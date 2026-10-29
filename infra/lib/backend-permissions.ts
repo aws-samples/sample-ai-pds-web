@@ -58,7 +58,7 @@ export const INVOKABLE_MODEL_ARNS = (account: string) => [
 // no room for restore_projects' scan or project deletion's delete_prefix to mistake its keys
 // for their own (backend/aipds/import_staging.py).
 const BACKEND_BUCKET_PREFIXES = [
-  'projects/*', 'sessions/*', 'surveys/*', 'models/*', 'design/*', 'imports/*',
+  'projects/*', 'sessions/*', 'surveys/*', 'models/*', 'design/*', 'imports/*', 'pricing/*',
 ] as const;
 
 // When an Anthropic model is called **for the first time** in an account, Bedrock automatically creates an AWS Marketplace
@@ -84,7 +84,12 @@ export function bedrockSubscribeStatement(): iam.PolicyStatement {
 
 // Common permissions the backend (the drill role or the EC2 instance role) needs:
 // Bedrock invoke (+ automatic Marketplace subscription on first call) + read/write/list on the artifact bucket's projects/*, sessions/*, surveys/*,
-// models/*, design/*.
+// models/*, design/*, pricing/* + reading the AWS Price List.
+//
+// pricing:GetProducts is for the price snapshot `aipds-update` refreshes (backend/aipds/pricing_sync.py,
+// written to pricing/bedrock.json) — the admin usage screen's cost estimate. The Price List API is public
+// list-price data and has no resource-level permissions, hence `*`. Without it the refresh fails, the update
+// carries on, and the screen prices with the backend's built-in table.
 export function backendPolicyStatements(
   bucket: s3.IBucket,
   account: string,
@@ -95,6 +100,10 @@ export function backendPolicyStatements(
       resources: INVOKABLE_MODEL_ARNS(account),
     }),
     bedrockSubscribeStatement(),
+    new iam.PolicyStatement({
+      actions: ['pricing:GetProducts'],
+      resources: ['*'],
+    }),
     new iam.PolicyStatement({
       actions: ['s3:GetObject', 's3:PutObject', 's3:DeleteObject'],
       resources: BACKEND_BUCKET_PREFIXES.map((p) => `${bucket.bucketArn}/${p}`),
