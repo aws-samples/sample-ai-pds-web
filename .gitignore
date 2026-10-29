@@ -1,0 +1,24 @@
+# Local environment / secrets (contain account IDs, ARNs, per-env config)
+.env
+.env.*
+!.env.example
+files/
+.superpowers/
+docs/
+proto-config/projects/
+proto-config/.credentials.json
+proto-config/.claude.json
+proto-config/settings.local.json
+discovery-config/projects/
+discovery-config/.credentials.json
+discovery-config/.claude.json
+discovery-config/settings.local.json
+proto-type/
+**/.pytest_cache/
+**/__pycache__/
+/node_modules/
+.worktrees/
+.vscode/
+.claude/
+/rule/
+.kiro/

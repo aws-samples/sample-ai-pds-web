@@ -1,0 +1,174 @@
+"use client";
+import { useState } from "react";
+import { ApiError } from "@/lib/api/client";
+import { errorMessage } from "@/lib/api/errorMessage";
+import { useT } from "@/lib/i18n/provider";
+import {
+  deleteModel, EFFORTS, patchModel, reorderModels, type AdminModel, type Effort,
+} from "@/lib/api/models";
+
+export function ModelTable({
+  models, onChanged,
+}: {
+  models: AdminModel[];
+  onChanged: () => void;
+}) {
+  const t = useT();
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState<AdminModel | null>(null);
+
+  // When the server reports a policy violation (the 5-item display limit, etc.), that
+  // sentence is shown as is — if the frontend duplicated the rules, the two places would
+  // drift (same discipline as UserTable).
+  async function run(key: string, fn: () => Promise<void>) {
+    setBusy(key);
+    setError(null);
+    try {
+      await fn();
+      onChanged();
+    } catch (err) {
+      setError(err instanceof ApiError ? errorMessage(t, err.detail) : t("err.generic"));
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  // Sends the whole order with the neighbors swapped. The server accepts only a full permutation,
+  // so even a one-step move carries the whole list.
+  function move(index: number, delta: -1 | 1) {
+    const ids = models.map((m) => m.model_id);
+    const target = index + delta;
+    [ids[index], ids[target]] = [ids[target], ids[index]];
+    void run("order", () => reorderModels(ids).then(() => undefined));
+  }
+
+  const arrow = "rounded px-1.5 text-slate-500 hover:bg-slate-100 disabled:opacity-30 disabled:hover:bg-transparent";
+
+  return (
+    <div>
+      {error && (
+        <p role="alert" className="mb-4 rounded-lg bg-rose-50 px-4 py-3 text-sm text-rose-700">
+          {error}
+        </p>
+      )}
+      <table className="w-full text-sm">
+        <thead className="text-left text-xs text-slate-500">
+          <tr className="border-b border-slate-200">
+            <th className="w-16 py-2 font-medium">{t("admin.colOrder")}</th>
+            <th className="py-2 font-medium">{t("admin.colName")}</th>
+            <th className="py-2 font-medium">{t("admin.modelId")}</th>
+            <th className="py-2 font-medium" title={t("admin.effortHelp")}>{t("admin.colEffort")}</th>
+            <th className="py-2 font-medium">{t("admin.colDisplay")}</th>
+            <th className="py-2" />
+          </tr>
+        </thead>
+        <tbody>
+          {models.map((m, i) => (
+            <tr key={m.model_id} className="border-b border-slate-100">
+              <td className="py-3">
+                <button
+                  type="button"
+                  aria-label={`${m.name} ${t("admin.moveUp")}`}
+                  disabled={i === 0 || busy !== null}
+                  onClick={() => move(i, -1)}
+                  className={arrow}
+                >
+                  ↑
+                </button>
+                <button
+                  type="button"
+                  aria-label={`${m.name} ${t("admin.moveDown")}`}
+                  disabled={i === models.length - 1 || busy !== null}
+                  onClick={() => move(i, 1)}
+                  className={arrow}
+                >
+                  ↓
+                </button>
+              </td>
+              <td className="py-3">{m.name}</td>
+              {/* Admins need to confirm what they registered, so the id is shown — the reason this
+                  differs from the combobox, which shows only the name. */}
+              <td className="py-3 font-mono text-xs text-slate-500">{m.model_id}</td>
+              <td className="py-3">
+                {/* A change applies starting from newly created projects — existing projects copied
+                    the value at creation. "" = CLI default (cleared to null). */}
+                <select
+                  aria-label={`${m.name} ${t("admin.colEffort")}`}
+                  value={m.effort ?? ""}
+                  disabled={busy === m.model_id}
+                  onChange={(e) => {
+                    const next = (e.target.value || null) as Effort | null;
+                    void run(m.model_id,
+                      () => patchModel(m.model_id, { effort: next }).then(() => undefined));
+                  }}
+                  className="rounded-md border border-slate-200 bg-white px-2 py-1 text-xs disabled:opacity-50"
+                >
+                  <option value="">{t("admin.effortDefault")}</option>
+                  {EFFORTS.map((v) => <option key={v} value={v}>{v}</option>)}
+                </select>
+              </td>
+              <td className="py-3">
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={m.display}
+                  aria-label={`${m.name} ${t("admin.colDisplay")}`}
+                  disabled={busy === m.model_id}
+                  onClick={() => run(m.model_id,
+                    () => patchModel(m.model_id, { display: !m.display }).then(() => undefined))}
+                  className={`h-6 w-11 rounded-full transition-colors disabled:opacity-50 ${
+                    m.display ? "bg-violet-600" : "bg-slate-300"}`}
+                >
+                  <span className={`block h-5 w-5 rounded-full bg-white transition-transform ${
+                    m.display ? "translate-x-5" : "translate-x-0.5"}`} />
+                </button>
+              </td>
+              <td className="py-3 text-right">
+                <button
+                  type="button"
+                  aria-label={`${m.name} ${t("admin.commonDelete")}`}
+                  onClick={() => setConfirmDelete(m)}
+                  className="text-xs text-rose-600 hover:underline"
+                >
+                  {t("admin.commonDelete")}
+                </button>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+
+      {confirmDelete && (
+        <div className="fixed inset-0 z-30 flex items-center justify-center bg-slate-900/40 p-4">
+          <div className="w-full max-w-sm rounded-xl bg-white p-6 shadow-lg">
+            <h2 className="text-lg font-bold">{t("admin.deleteModelTitle")}</h2>
+            <p className="mt-2 text-sm text-slate-600">
+              {t("admin.deleteModelBody").replace("{name}", confirmDelete.name)}
+            </p>
+            <div className="mt-5 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setConfirmDelete(null)}
+                className="rounded-lg border border-slate-200 px-4 py-2 text-sm"
+              >
+                {t("admin.commonCancel")}
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  const target = confirmDelete;
+                  setConfirmDelete(null);
+                  void run(target.model_id, () => deleteModel(target.model_id));
+                }}
+                className="rounded-lg bg-rose-600 px-4 py-2 text-sm text-white hover:bg-rose-700"
+              >
+                {t("admin.commonConfirmDelete")}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}

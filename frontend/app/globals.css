@@ -1,0 +1,21 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+body {
+  @apply bg-slate-50 text-slate-800;
+}
+
+/* Stage-timeline connector line (ported from files/ui/01-dashboard.html <style>). */
+.stage-line::before {
+  content: "";
+  position: absolute;
+  left: 19px;
+  top: 40px;
+  bottom: -8px;
+  width: 2px;
+  background: #e5e7eb;
+}
+.stage-line:last-child::before {
+  display: none;
+}

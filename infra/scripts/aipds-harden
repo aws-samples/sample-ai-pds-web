@@ -1,0 +1,439 @@
+#!/bin/bash
+# Instance setup for running agents and prototypes in a sandbox under a different uid from the backend.
+#
+#   sudo /usr/local/libexec/aipds/harden install [--no-restart]
+#   sudo /usr/local/libexec/aipds/harden sync
+#   sudo /usr/local/libexec/aipds/harden enable <AgentRoleArn>
+#   sudo /usr/local/libexec/aipds/harden disable
+#   sudo /usr/local/libexec/aipds/harden imds block|allow
+#   sudo /usr/local/libexec/aipds/harden status
+#   /opt/aipds/infra/scripts/aipds-harden boot      (new instance's user-data only, before services start)
+#
+# Operators call the root-owned copy (/usr/local/libexec/aipds/harden). This file in the repo is
+# writable by aipds, so running it directly as root would hand aipds root (same reason as the timer below).
+# The only time the repo copy runs as root is user-data at boot, before the services are up.
+#
+# install  Users (aipds-agent, aipds-proto), group (aipds-work), wrapper install and sudoers, tree permissions,
+#          permissions on plaintext secrets, the sync timer. **Does not touch wrapper settings (enable, imds)** -- on a
+#          new instance they stay off; on a running instance they stay as they were. Lays the foundation only. Idempotent.
+# enable   Turns the wrapper on (AIPDS_LAUNCHER=1 + AgentRole). AgentRole is an output of AipdsAgentCredsStack.
+# imds     IMDS access for processes the wrapper launches. **After enable, confirm Bedrock calls work, then
+#          block** -- in the reverse order, the agents' and prototypes' LLM calls are cut off together.
+# sync     Applies to the instance the values a separate stack left in SSM (infra/lib/instance-params.ts): if
+#          AgentRole is there, enable + imds block; if preview values are there, preview settings. If anything
+#          changed and the backend is up, restarts it. **A timer (aipds-harden-sync.timer) runs it every 2
+#          minutes** -- in a new environment's `cdk deploy --all`, the instance boots first along with
+#          HostingStack, and the two stacks write their values afterwards. Reading once at boot never sees them.
+#          If a value is missing or cannot be read, nothing changes (nothing is turned off). `disable` and
+#          `imds allow` are operator choices, so they pause sync (`/etc/aipds/hold`) -- `enable` and `imds block`
+#          release it. The first rollout's "confirm, then block" order is unnecessary for re-laying a configuration
+#          already verified.
+#          It also gives the frontend its app origin (APP_BASE_URL, from HostingStack's parameter -- restarts the
+#          frontend when it changed) and makes sure the artifact bucket's CORS contains that origin (direct browser
+#          upload for project import -- infra/lib/aipds-upload-cors-stack.ts). Both are independent of hold.
+# boot     Called by a new instance's user-data **before** services start. install + sync (no restart).
+#
+# Why this script rather than user-data: changing user-data makes a HostingStack deploy replace the EC2
+# instance (same situation as aipds-preview-configure). user-data calls `boot` on a new instance, and a
+# running instance gets this run via SSM.
+#
+# enable, disable, imds, and install restart the backend -- in-flight turns and builds are cut off. sync only
+# when a value changed.
+#
+# What the timer runs as root is the root-owned copy (/usr/local/libexec/aipds/harden). This file in the
+# repo is writable by aipds, so if the timer ran it directly, aipds would get root (same reason as the wrapper).
+set -euo pipefail
+if [ "$(id -u)" -ne 0 ]; then
+  echo "aipds-harden: run as root" >&2
+  exit 1
+fi
+
+ENV_FILE=/etc/aipds-deploy.env
+APP=/opt/aipds
+SVC=aipds
+if [ -r "$ENV_FILE" ]; then
+  # shellcheck source=/dev/null
+  . "$ENV_FILE"
+fi
+# The wrapper (aipds-launch) has this path as a constant -- if it differs, the startup check turns the wrapper off.
+if [ "$APP" != /opt/aipds ]; then
+  echo "aipds-harden: APP=$APP but the launcher is built for /opt/aipds" >&2
+  exit 1
+fi
+
+GROUP=aipds-work
+LIBEXEC=/usr/local/libexec/aipds
+SUDOERS=/etc/sudoers.d/aipds-launch
+CONF_DIR=/etc/aipds
+LAUNCH_CONF=$CONF_DIR/launch.conf
+DROPIN=/etc/systemd/system/aipds-backend.service.d
+FRONT_UNIT=/etc/systemd/system/aipds-frontend.service
+FRONT_DROPIN=/etc/systemd/system/aipds-frontend.service.d
+FRONT_ENV=$CONF_DIR/frontend.env
+# Same names as infra/lib/instance-params.ts (test/instance-params.assert.ts).
+PARAM_APP_ORIGIN=/aipds/app-origin
+PARAM_AGENT_ROLE=/aipds/agent-role-arn
+PARAM_PREVIEW_ORIGIN=/aipds/preview-origin
+PARAM_PREVIEW_SECRET=/aipds/preview-secret-arn
+HOLD=$CONF_DIR/hold
+SYNC_UNIT=aipds-harden-sync
+
+restart_backend() {
+  systemctl daemon-reload
+  systemctl restart aipds-backend
+  echo "aipds-harden: backend restarted"
+}
+
+write_launcher() {
+  mkdir -p "$DROPIN"
+  cat > "$DROPIN/launcher.conf" <<UNIT
+[Service]
+Environment=AIPDS_LAUNCHER=1
+Environment=AIPDS_AGENT_ROLE_ARN=$1
+UNIT
+  chmod 644 "$DROPIN/launcher.conf"
+}
+
+# So sync does not revert a state the operator chose.
+hold() {
+  mkdir -p "$CONF_DIR"
+  printf '%s at %s\n' "$1" "$(date -u +%FT%TZ)" > "$HOLD"
+}
+
+write_imds() {
+  printf 'imds_block=%s\n' "$1" > "$LAUNCH_CONF"
+  chmod 644 "$LAUNCH_CONF"
+}
+
+# A parameter's value. Empty string if absent (stack not deployed). Other failures (permissions, network) are
+# retried a few times and then yield an empty string -- boot is not blocked, but the log says so loudly.
+get_param() {
+  local out i
+  for i in 1 2 3; do
+    if out=$(aws ssm get-parameter --region "$REGION" --name "$1" \
+        --query Parameter.Value --output text 2>&1); then
+      printf '%s' "$out"
+      return 0
+    fi
+    case "$out" in *ParameterNotFound*) return 0 ;; esac
+    sleep $((i * 5))
+  done
+  echo "aipds-harden: WARNING cannot read $1: $out" >&2
+}
+
+# sudo clears AWS_REGION -- if absent, read it from IMDS (host root can reach it; only the sandbox units are blocked).
+instance_region() {
+  local token
+  token=$(curl -sf -m 3 -X PUT -H 'X-aws-ec2-metadata-token-ttl-seconds: 60' \
+    http://169.254.169.254/latest/api/token) || return 0
+  curl -sf -m 3 -H "X-aws-ec2-metadata-token: $token" \
+    http://169.254.169.254/latest/meta-data/placement/region || true
+}
+
+# The three files sync writes. Must not fail when one is missing (new instance) -- this runs under set -e/pipefail.
+settings_digest() {
+  local f
+  for f in "$DROPIN/launcher.conf" "$DROPIN/preview.conf" "$LAUNCH_CONF"; do
+    printf '%s\n' "$f"
+    if [ -e "$f" ]; then cat "$f"; fi
+  done | sha256sum
+}
+
+settings_summary() {
+  local launcher=off imds preview=off
+  [ -e "$DROPIN/launcher.conf" ] && launcher=on
+  imds=$(sed -n 's/^imds_block=//p' "$LAUNCH_CONF" 2>/dev/null || true)
+  [ -e "$DROPIN/preview.conf" ] && preview=on
+  echo "launcher=$launcher imds_block=${imds:-?} preview=$preview"
+}
+
+# One Environment= value of a systemd unit. The values used here (bucket name, URL) contain no spaces.
+unit_env() {
+  systemctl show "$1" -p Environment --value 2>/dev/null | tr ' ' '\n' | sed -n "s/^$2=//p" | head -1
+}
+
+# The frontend's APP_BASE_URL -- Cognito redirect URIs are built on it. It is not in user-data: HostingStack's
+# distribution reaches this instance through a VPC origin, so the instance cannot reference the distribution.
+# A new instance boots before the distribution exists, so boot usually finds nothing and the timer applies it
+# minutes later. With $1=1, restarts the frontend when the value changed (only if it is up).
+sync_app_origin() {
+  local restart=$1 origin want file=$FRONT_DROPIN/app-origin.conf
+  origin=$(get_param "$PARAM_APP_ORIGIN")
+  if [ -z "$origin" ]; then
+    echo "aipds-harden: no $PARAM_APP_ORIGIN — frontend APP_BASE_URL unchanged" >&2
+    return 0
+  fi
+  # The value goes into a unit file -- one https origin, nothing else.
+  if ! [[ "$origin" =~ ^https://[A-Za-z0-9.-]+$ ]]; then
+    echo "aipds-harden: WARNING $PARAM_APP_ORIGIN '$origin' is not an https origin — not applied" >&2
+    return 0
+  fi
+  want=$(printf '[Service]\nEnvironment=APP_BASE_URL=%s' "$origin")
+  [ "$(cat "$file" 2>/dev/null)" = "$want" ] && return 0
+  mkdir -p "$FRONT_DROPIN"
+  printf '%s\n' "$want" > "$file"
+  chmod 644 "$file"
+  systemctl daemon-reload
+  echo "aipds-harden: app origin — $origin"
+  if [ "$restart" = 1 ] && systemctl is-active --quiet aipds-frontend; then
+    systemctl restart aipds-frontend
+    echo "aipds-harden: frontend restarted"
+  fi
+}
+
+# The bucket CORS configuration (JSON) with the origin added to the PUT rule. Empty output if already present. If
+# there is no rule, create one shaped like DrillStack's (lib/aipds-drill-stack.ts `cors`) -- test/instance-params.assert.ts keeps them aligned.
+CORS_MERGE='
+import json, sys
+origin = sys.argv[1]
+rules = json.load(sys.stdin).get("CORSRules", [])
+put = [r for r in rules if "PUT" in r.get("AllowedMethods", [])]
+if any(origin in r.get("AllowedOrigins", []) for r in put):
+    sys.exit(0)
+if put:
+    put[0].setdefault("AllowedOrigins", []).append(origin)
+else:
+    rules.append({"AllowedOrigins": [origin], "AllowedMethods": ["PUT"],
+                  "AllowedHeaders": ["content-type"], "ExposeHeaders": ["ETag"],
+                  "MaxAgeSeconds": 3000})
+print(json.dumps({"CORSRules": rules}))
+'
+
+sync_cors() {
+  local bucket origin current merged
+  bucket=$(unit_env aipds-backend AIPDS_S3_BUCKET)
+  origin=$(unit_env aipds-frontend APP_BASE_URL)
+  origin=${origin%/}
+  [ -n "$bucket" ] && [ -n "$origin" ] || return 0
+  case "$origin" in
+    https://*) ;;
+    *) echo "aipds-harden: WARNING app origin '$origin' is not https — bucket CORS not changed" >&2
+       return 0 ;;
+  esac
+  if ! current=$(aws s3api get-bucket-cors --region "$REGION" --bucket "$bucket" --output json 2>&1); then
+    case "$current" in
+      *NoSuchCORSConfiguration*) current='{}' ;;
+      *) echo "aipds-harden: WARNING cannot read the CORS of $bucket — project import uploads from" \
+           "$origin fail until AipdsUploadCorsStack is deployed: $current" >&2
+         return 0 ;;
+    esac
+  fi
+  if ! merged=$(printf '%s' "$current" | python3 -I -c "$CORS_MERGE" "$origin"); then
+    echo "aipds-harden: WARNING could not merge the CORS of $bucket" >&2
+    return 0
+  fi
+  [ -n "$merged" ] || return 0
+  if aws s3api put-bucket-cors --region "$REGION" --bucket "$bucket" \
+      --cors-configuration "$merged" >/dev/null 2>&1; then
+    echo "aipds-harden: cors — added $origin to $bucket"
+  else
+    echo "aipds-harden: WARNING cannot write the CORS of $bucket" >&2
+  fi
+}
+
+# Apply the values the stacks left. With $1=1, restart the backend when something changed (only if it is up).
+sync_apply() {
+  local restart=$1
+  REGION=${AWS_REGION:-${AWS_DEFAULT_REGION:-$(instance_region)}}
+  if [ -z "$REGION" ]; then
+    echo "aipds-harden: WARNING no region (AWS_REGION unset, IMDS unreachable) — launcher and" \
+      "preview settings not applied (existing ones unchanged)" >&2
+    return 0
+  fi
+  # First: CORS reads the origin this applies.
+  sync_app_origin "$restart"
+  sync_cors
+  if [ -e "$HOLD" ]; then
+    echo "aipds-harden: sync held ($HOLD — 'enable' or 'imds block' releases it)"
+    return 0
+  fi
+  local before after arn origin secret
+  before=$(settings_digest)
+  arn=$(get_param "$PARAM_AGENT_ROLE")
+  case "$arn" in
+    # Blocking IMDS without the wrapper blocks nothing (IPAddressDeny applies only to units the wrapper launches).
+    arn:aws:iam::*:role/*)
+      write_launcher "$arn"
+      write_imds 1
+      ;;
+    *) echo "aipds-harden: WARNING no $PARAM_AGENT_ROLE — launcher settings not applied (existing" \
+         "ones unchanged; until AipdsAgentCredsStack is deployed a new instance runs agents and" \
+         "prototypes unsandboxed)" >&2 ;;
+  esac
+  origin=$(get_param "$PARAM_PREVIEW_ORIGIN")
+  secret=$(get_param "$PARAM_PREVIEW_SECRET")
+  if [ -n "$origin" ] && [ -n "$secret" ]; then
+    # Do not stop even if a value is bad -- boot runs inside user-data (set -e), and stopping there makes the whole app 502.
+    "$LIBEXEC/preview-configure" --no-restart "$origin" "$secret" >/dev/null \
+      || echo "aipds-harden: WARNING preview parameters rejected — prototype previews stay closed" >&2
+  else
+    echo "aipds-harden: no preview parameters — preview settings not applied (existing ones unchanged)" >&2
+  fi
+  after=$(settings_digest)
+  if [ "$before" = "$after" ]; then
+    echo "aipds-harden: sync — no change"
+    return 0
+  fi
+  systemctl daemon-reload
+  echo "aipds-harden: sync — applied: $(settings_summary)"
+  if [ "$restart" = 1 ] && systemctl is-active --quiet aipds-backend; then
+    restart_backend
+  fi
+}
+
+install_all() {
+  local restart=1
+  [ "${1:-}" = "--no-restart" ] && restart=0
+
+  # --- Users and group. No login shell or home -- the wrapper sets HOME to the agent home. ---
+  getent group "$GROUP" >/dev/null || groupadd --system "$GROUP"
+  for u in aipds-agent aipds-proto; do
+    id -u "$u" >/dev/null 2>&1 || useradd --system --no-create-home --home-dir /nonexistent \
+      --shell /sbin/nologin --gid "$GROUP" "$u"
+  done
+  # The backend reads and deletes files the agent wrote.
+  usermod -aG "$GROUP" "$SVC"
+
+  # --- Wrapper. Files in the repo are writable by aipds, so only root-owned copies go into sudoers. ---
+  install -d -o root -g root -m 0755 "$LIBEXEC"
+  install -o root -g root -m 0755 "$APP/infra/scripts/aipds-launch" "$LIBEXEC/launch"
+  install -o root -g root -m 0755 "$APP/infra/scripts/aipds-claude" "$LIBEXEC/claude"
+  install -o root -g root -m 0755 "$APP/infra/scripts/aipds-harden" "$LIBEXEC/harden"
+  install -o root -g root -m 0755 "$APP/infra/scripts/aipds-preview-configure" "$LIBEXEC/preview-configure"
+
+  # env_keep is the same list as the wrapper's PASS_EXACT/PASS_PREFIX/PASS_CHECKED. The wrapper filters again.
+  # !log_allowed: so each call's full CLI arguments (system prompt, MCP config) are not left in syslog.
+  local tmp
+  tmp=$(mktemp)
+  cat > "$tmp" <<SUDO
+Defaults!$LIBEXEC/launch env_keep += "CLAUDE_CODE_* CLAUDE_AGENT_SDK_* ANTHROPIC_MODEL AWS_REGION AWS_DEFAULT_REGION AWS_CONTAINER_CREDENTIALS_FULL_URI AWS_CONTAINER_AUTHORIZATION_TOKEN NEXT_PUBLIC_BASE_PATH PROTO_BASE_PATH BEDROCK_MODEL_ID PORT"
+Defaults!$LIBEXEC/launch !log_allowed
+$SVC ALL=(root) NOPASSWD: $LIBEXEC/launch
+SUDO
+  visudo -cqf "$tmp"
+  install -o root -g root -m 0440 "$tmp" "$SUDOERS"
+  rm -f "$tmp"
+
+  # --- Trees. The backend and sandbox uids share them through the group. No access for other. ---
+  install -d -o "$SVC" -g "$GROUP" -m 0770 "$APP/agent-home"
+  for d in "$APP/workspaces" "$APP/protos" "$APP/agent-home"; do
+    mkdir -p "$d"
+    chgrp -R "$GROUP" "$d"
+    chmod -R g+rwX,o-rwx "$d"
+  done
+
+  # --- Backend: new files get group aipds-work with group write. Agent home path matches the wrapper's. ---
+  mkdir -p "$DROPIN"
+  cat > "$DROPIN/sandbox.conf" <<UNIT
+[Service]
+Group=$GROUP
+UMask=0007
+Environment=AIPDS_AGENT_HOME_DIR=$APP/agent-home
+UNIT
+  chmod 644 "$DROPIN/sandbox.conf"
+
+  install -d -o root -g root -m 0755 "$CONF_DIR"
+  [ -e "$LAUNCH_CONF" ] || printf 'imds_block=0\n' > "$LAUNCH_CONF"
+  chmod 644 "$LAUNCH_CONF"
+
+  # --- Plaintext secrets. Unit files and the nginx config are 644, so anyone can read them. ---
+  local front_restart=0
+  if grep -q '^Environment=COGNITO_CLIENT_SECRET=' "$FRONT_UNIT" 2>/dev/null; then
+    umask 077
+    grep '^Environment=COGNITO_CLIENT_SECRET=' "$FRONT_UNIT" \
+      | sed 's/^Environment=//' > "$FRONT_ENV"
+    umask 022
+    chmod 600 "$FRONT_ENV"
+    sed -i '/^Environment=COGNITO_CLIENT_SECRET=/d' "$FRONT_UNIT"
+    front_restart=1
+  fi
+  if [ -e "$FRONT_ENV" ] && ! grep -q "^EnvironmentFile=$FRONT_ENV" "$FRONT_UNIT" 2>/dev/null; then
+    mkdir -p "$FRONT_DROPIN"
+    printf '[Service]\nEnvironmentFile=%s\n' "$FRONT_ENV" > "$FRONT_DROPIN/secret.conf"
+    chmod 644 "$FRONT_DROPIN/secret.conf"
+  fi
+  # The nginx master reads its config as root. The X-Origin-Verify value is in this file in plaintext.
+  [ -e /etc/nginx/conf.d/aipds.conf ] && chmod 600 /etc/nginx/conf.d/aipds.conf
+
+  # --- Sync of the values the stacks left. First run is 2 minutes after enabling -- boot already applied them once. ---
+  cat > "/etc/systemd/system/$SYNC_UNIT.service" <<UNIT
+[Unit]
+Description=AI-PDS: apply app, sandbox and preview settings from SSM (aipds-harden sync)
+[Service]
+Type=oneshot
+ExecStart=$LIBEXEC/harden sync
+UNIT
+  cat > "/etc/systemd/system/$SYNC_UNIT.timer" <<UNIT
+[Unit]
+Description=AI-PDS: aipds-harden sync every 2 minutes
+[Timer]
+OnActiveSec=2min
+OnUnitActiveSec=2min
+[Install]
+WantedBy=timers.target
+UNIT
+
+  systemctl daemon-reload
+  systemctl enable --now "$SYNC_UNIT.timer" >/dev/null 2>&1
+  if [ "$restart" = 1 ]; then
+    systemctl restart aipds-backend
+    [ "$front_restart" = 1 ] && systemctl restart aipds-frontend
+    echo "aipds-harden: installed; backend restarted (launcher and IMDS settings unchanged)"
+  else
+    echo "aipds-harden: installed (launcher and IMDS settings unchanged, services not restarted)"
+  fi
+}
+
+case "${1:-}" in
+  install)
+    install_all "${2:-}"
+    ;;
+  boot)
+    install_all --no-restart
+    sync_apply 0
+    ;;
+  sync)
+    [ -x "$LIBEXEC/preview-configure" ] || { echo "aipds-harden: run 'install' first" >&2; exit 1; }
+    sync_apply 1
+    ;;
+  enable)
+    ARN="${2:-}"
+    case "$ARN" in
+      arn:aws:iam::*:role/*) ;;
+      *) echo "usage: aipds-harden enable <AgentRoleArn>" >&2; exit 1 ;;
+    esac
+    [ -x "$LIBEXEC/launch" ] || { echo "aipds-harden: run 'install' first" >&2; exit 1; }
+    write_launcher "$ARN"
+    rm -f "$HOLD"
+    restart_backend
+    ;;
+  disable)
+    rm -f "$DROPIN/launcher.conf"
+    hold "disable"
+    restart_backend
+    ;;
+  imds)
+    case "${2:-}" in
+      block) write_imds 1; rm -f "$HOLD" ;;
+      allow) write_imds 0; hold "imds allow" ;;
+      *) echo "usage: aipds-harden imds block|allow" >&2; exit 1 ;;
+    esac
+    # The resident Discovery CLI keeps running with the settings it started with. On restart, the startup
+    # sweep stops that unit and it comes back up with the new settings on the next turn.
+    restart_backend
+    ;;
+  status)
+    id aipds-agent aipds-proto 2>&1 || true
+    ls -l "$LIBEXEC" "$SUDOERS" 2>&1 || true
+    cat "$LAUNCH_CONF" 2>/dev/null || echo "no $LAUNCH_CONF"
+    [ -e "$HOLD" ] && echo "sync held: $(cat "$HOLD")"
+    systemctl list-timers --no-legend "$SYNC_UNIT.timer" 2>/dev/null || true
+    ls "$DROPIN" 2>/dev/null || true
+    runuser -u "$SVC" -- sudo -n "$LIBEXEC/launch" check 2>&1 || true
+    systemctl list-units --no-legend 'aipds-run-*' 2>/dev/null || true
+    ;;
+  *)
+    echo "usage: aipds-harden install|boot|sync|enable <arn>|disable|imds block|allow|status" >&2
+    exit 1
+    ;;
+esac

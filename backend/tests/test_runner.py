@@ -1,0 +1,597 @@
+import json
+from pathlib import Path
+import pytest
+from aipds.runner import AgentRunner
+from aipds.models import AgentEvent
+from fakes.in_memory_s3 import FakeS3Store
+
+Q_PAYLOAD = json.dumps({"interrupt_id": "i-7", "questions": {"name": "q", "questions": []}})
+SESSION = {"session_id": "p1", "bucket": "", "region": "ap-northeast-2", "prefix": "sessions"}
+
+
+class FakeDriver:
+    """A minimal driver that actually touches workspace (local_root) files.
+    run() writes files_written into the local workspace, then emits the scripted events."""
+    def __init__(self, events=None, files_written=None, answers_events=None,
+                 pending_payload=None, workspace=None):
+        self._events = events or [AgentEvent(kind="message", text="ok"), AgentEvent(kind="done")]
+        self._files = files_written or {}
+        self._answers_events = answers_events
+        self._pending = pending_payload
+        self._workspace = workspace
+        self.answer_calls = []
+
+    async def _emit(self, evs):
+        for k, v in self._files.items():
+            (Path(self._workspace) / k).parent.mkdir(parents=True, exist_ok=True)
+            (Path(self._workspace) / k).write_text(v, encoding="utf-8")
+        for e in evs:
+            yield e
+
+    def run(self, text, session):
+        return self._emit(self._events)
+
+    def run_answers(self, interrupt_id, answers, session):
+        self.answer_calls.append((interrupt_id, answers))
+        return self._emit(self._answers_events or [AgentEvent(kind="done")])
+
+    async def pending(self, session):
+        return self._pending
+
+
+def _runner(tmp_path, driver=None, s3=None):
+    root = tmp_path / "ws"
+    driver = driver or FakeDriver(workspace=root)
+    if driver._workspace is None:
+        driver._workspace = root
+    return AgentRunner(project_id="p1", driver=driver, s3=s3 or FakeS3Store(),
+                       local_root=root, session=SESSION)
+
+
+async def _collect(aiter):
+    return [e async for e in aiter]
+
+
+async def test_file_ops_go_to_s3(tmp_path):
+    r = _runner(tmp_path)
+    await r.write_file("aiplc-docs/x.md", "hi")
+    assert await r.read_file("aiplc-docs/x.md") == "hi"
+    assert r._s3.blobs["aiplc-docs/x.md"] == "hi"
+
+
+async def test_path_safety_rejected(tmp_path):
+    r = _runner(tmp_path)
+    with pytest.raises(ValueError):
+        await r.write_file("../evil.md", "x")
+    with pytest.raises(ValueError):
+        await r.list_files("../*")
+
+
+async def test_list_files_double_star_glob(tmp_path):
+    r = _runner(tmp_path)
+    await r.write_file("aiplc-docs/top-questions.md", "t")
+    await r.write_file("aiplc-docs/sub/nested-questions.md", "n")
+    await r.write_file("aiplc-docs/audit.md", "a")
+    found = sorted(await r.list_files("aiplc-docs/**/*-questions.md"))
+    assert found == ["aiplc-docs/sub/nested-questions.md", "aiplc-docs/top-questions.md"]
+
+
+async def test_send_message_relays_and_terminates(tmp_path):
+    r = _runner(tmp_path)
+    evs = await _collect(r.send_message("go"))
+    assert evs[-1].kind == "done"
+
+
+async def test_turn_logs_structured_performance_phases(tmp_path, caplog):
+    import logging
+
+    caplog.set_level(logging.INFO, logger="aipds.runner")
+    r = _runner(tmp_path)
+    await _collect(r.send_message("go"))
+
+    messages = [record.getMessage() for record in caplog.records]
+    assert any("turn_performance project_id=p1 phase=restore" in m
+               for m in messages)
+    assert any("turn_performance project_id=p1 phase=sync" in m
+               for m in messages)
+    assert any("turn_performance project_id=p1 phase=turn_total" in m
+               for m in messages)
+
+
+async def test_performance_logs_can_be_disabled(tmp_path, caplog, monkeypatch):
+    import logging
+
+    monkeypatch.setenv("AIPDS_PERFORMANCE_LOGS", "false")
+    caplog.set_level(logging.INFO)
+    r = _runner(tmp_path)
+    await _collect(r.send_message("go"))
+
+    assert not any("turn_performance" in record.getMessage()
+                   for record in caplog.records)
+
+
+async def test_turn_syncs_written_files_to_s3(tmp_path):
+    root = tmp_path / "ws"
+    d = FakeDriver(files_written={"aiplc-docs/aiplc-state.md": "stage: Discovery",
+                                  "prototype/app.py": "print('hi')",
+                                  "node_modules/pkg.js": "DROP"}, workspace=root)
+    r = _runner(tmp_path, driver=d)
+    await _collect(r.send_message("start"))
+    assert r._s3.blobs["aiplc-docs/aiplc-state.md"] == "stage: Discovery"
+    assert r._s3.blobs["prototype/app.py"] == "print('hi')"
+    assert "node_modules/pkg.js" not in r._s3.blobs  # outside the sync globs
+
+
+async def test_audit_md_redacted_at_rest(tmp_path):
+    root = tmp_path / "ws"
+    raw = "Setup.\nkey sk-abc123def456ghi789 used.\nEnd."
+    d = FakeDriver(files_written={"aiplc-docs/audit.md": raw}, workspace=root)
+    r = _runner(tmp_path, driver=d)
+    await _collect(r.send_message("go"))
+    synced = r._s3.blobs["aiplc-docs/audit.md"]
+    assert "sk-abc123def456ghi789" not in synced
+    assert "[CREDENTIAL REDACTED]" in synced
+
+
+async def test_restore_pushes_s3_into_local_before_turn(tmp_path):
+    root = tmp_path / "ws"
+    s3 = FakeS3Store()
+    s3.blobs["uploads/의견.md"] = "# 의견"
+    d = FakeDriver(workspace=root)
+    r = _runner(tmp_path, driver=d, s3=s3)
+    await _collect(r.send_message("읽어줘"))
+    assert (root / "uploads" / "의견.md").read_text(encoding="utf-8") == "# 의견"
+
+
+async def test_warm_restore_downloads_only_changed_s3_files(tmp_path):
+    class CountingS3(FakeS3Store):
+        def __init__(self):
+            super().__init__()
+            self.get_calls = []
+
+        async def get(self, key):
+            self.get_calls.append(key)
+            return await super().get(key)
+
+    s3 = CountingS3()
+    s3.blobs["aiplc-docs/a.md"] = "a1"
+    s3.blobs["aiplc-docs/b.md"] = "b1"
+    r = _runner(tmp_path, s3=s3)
+
+    await r._restore_workspace_from_s3()
+    assert sorted(s3.get_calls) == ["aiplc-docs/a.md", "aiplc-docs/b.md"]
+
+    s3.get_calls.clear()
+    await r._restore_workspace_from_s3()
+    assert s3.get_calls == []
+
+    s3.blobs["aiplc-docs/a.md"] = "a2"
+    await r._restore_workspace_from_s3()
+    assert s3.get_calls == ["aiplc-docs/a.md"]
+    assert (r._local_root / "aiplc-docs/a.md").read_text() == "a2"
+
+
+async def test_warm_restore_removes_files_deleted_from_s3(tmp_path):
+    s3 = FakeS3Store()
+    s3.blobs["aiplc-docs/gone.md"] = "old"
+    r = _runner(tmp_path, s3=s3)
+
+    await r._restore_workspace_from_s3()
+    del s3.blobs["aiplc-docs/gone.md"]
+    await r._restore_workspace_from_s3()
+
+    assert not (r._local_root / "aiplc-docs/gone.md").exists()
+
+
+async def test_turn_end_sync_uploads_only_changed_files(tmp_path):
+    class CountingS3(FakeS3Store):
+        def __init__(self):
+            super().__init__()
+            self.put_calls = []
+
+        async def put(self, key, content):
+            self.put_calls.append(key)
+            return await super().put(key, content)
+
+    s3 = CountingS3()
+    s3.blobs["aiplc-docs/a.md"] = "a1"
+    s3.blobs["aiplc-docs/b.md"] = "b1"
+    r = _runner(tmp_path, s3=s3)
+    await r._restore_workspace_from_s3()
+
+    await r._sync_workspace_to_s3()
+    assert s3.put_calls == []
+
+    (r._local_root / "aiplc-docs/a.md").write_text("a2")
+    await r._sync_workspace_to_s3()
+    assert s3.put_calls == ["aiplc-docs/a.md"]
+
+
+async def test_turn_end_sync_uploads_only_the_synced_subtrees(tmp_path):
+    """The turn-end sync uploads only the `_SYNC_GLOBS` subtrees — not the root's rules copy or CLI state.
+    Narrowing the walked range to those subtrees must leave the uploaded set the same."""
+    s3 = FakeS3Store()
+    r = _runner(tmp_path, s3=s3)
+    root = r._local_root
+    for rel in ("aiplc-docs/inception/a.md", "prototype/app/page.tsx",
+                "uploads/u.md", ".claude/settings.json", "rules/core.md",
+                "notes.md"):
+        (root / rel).parent.mkdir(parents=True, exist_ok=True)
+        (root / rel).write_text(rel)
+
+    await r._sync_workspace_to_s3()
+
+    assert sorted(s3.blobs) == ["aiplc-docs/inception/a.md",
+                                "prototype/app/page.tsx"]
+
+
+async def test_uploaded_originals_survive_a_turn_byte_for_byte(tmp_path):
+    """Image and PDF originals are restored locally byte for byte, and the turn-end sync does not overwrite the
+    source-of-truth copy. Going through the text path breaks both into U+FFFD — once on restore, and
+    once more when the broken copy is uploaded as the source-of-truth one."""
+    png = b"\x89PNG\r\n\x1a\n\xff\xfe\x00\x80binary"
+    s3 = FakeS3Store()
+    await s3.put_bytes("uploads/ab12cd34/screen.png", png)
+    s3.blobs["uploads/ab12cd34/spec.pdf.md"] = "# 변환본"
+    d = FakeDriver(workspace=tmp_path / "ws")
+    r = _runner(tmp_path, driver=d, s3=s3)
+
+    await _collect(r.send_message("go"))
+
+    root = tmp_path / "ws"
+    assert (root / "uploads/ab12cd34/screen.png").read_bytes() == png
+    assert (root / "uploads/ab12cd34/spec.pdf.md").read_text(encoding="utf-8") == "# 변환본"
+    assert await s3.get_bytes("uploads/ab12cd34/screen.png") == png
+
+
+async def test_turn_end_sync_does_not_follow_a_symlinked_subtree(tmp_path):
+    """If `aiplc-docs` is a link pointing outside the workspace, the outside files are not uploaded.
+
+    Walking from the root did not follow directory links. Given a subtree as the starting point
+    it does follow them, so that difference is blocked explicitly.
+    """
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "secret.md").write_text("host file")
+    s3 = FakeS3Store()
+    r = _runner(tmp_path, s3=s3)
+    r._local_root.mkdir(parents=True, exist_ok=True)
+    (r._local_root / "aiplc-docs").symlink_to(outside, target_is_directory=True)
+
+    await r._sync_workspace_to_s3()
+
+    assert list(s3.blobs) == []
+
+
+async def test_turn_end_sync_does_not_follow_a_symlinked_file(tmp_path):
+    """File links are not followed either. `rglob` returns file links inside the subtree —
+    reading them would upload what lies past the link (backend settings, other projects) to the source-of-truth copy."""
+    outside = tmp_path / "outside.md"
+    outside.write_text("host file")
+    s3 = FakeS3Store()
+    r = _runner(tmp_path, s3=s3)
+    docs = r._local_root / "aiplc-docs"
+    docs.mkdir(parents=True)
+    (docs / "real.md").write_text("mine")
+    (docs / "leak.md").symlink_to(outside)
+
+    await r._sync_workspace_to_s3()
+
+    assert list(s3.blobs) == ["aiplc-docs/real.md"]
+
+
+async def test_restore_does_not_write_through_a_symlink_the_agent_planted(tmp_path):
+    """If the agent replaces `aiplc-docs` or a file with a link pointing outside, restore writes the S3 body
+    past it as the backend uid (arbitrary file write). It replaces the link with a real directory/file and writes."""
+    outside_dir = tmp_path / "outside"
+    outside_dir.mkdir()
+    outside_file = tmp_path / "outside.txt"
+    outside_file.write_text("untouched")
+    s3 = FakeS3Store()
+    s3.blobs["aiplc-docs/a.md"] = "from s3"
+    s3.blobs["prototype/b.md"] = "from s3 too"
+    r = _runner(tmp_path, s3=s3)
+    root = r._local_root
+    root.mkdir(parents=True)
+    (root / "aiplc-docs").symlink_to(outside_dir, target_is_directory=True)
+    (root / "prototype").mkdir()
+    (root / "prototype/b.md").symlink_to(outside_file)
+
+    await r._restore_workspace_from_s3()
+
+    assert list(outside_dir.iterdir()) == []
+    assert outside_file.read_text() == "untouched"
+    assert not (root / "aiplc-docs").is_symlink()
+    assert (root / "aiplc-docs/a.md").read_text() == "from s3"
+    assert not (root / "prototype/b.md").is_symlink()
+    assert (root / "prototype/b.md").read_text() == "from s3 too"
+
+
+async def test_immediate_publish_is_not_uploaded_again_at_turn_end(tmp_path):
+    class CountingS3(FakeS3Store):
+        def __init__(self):
+            super().__init__()
+            self.put_calls = []
+
+        async def put(self, key, content):
+            self.put_calls.append(key)
+            return await super().put(key, content)
+
+    class CallbackDriver(FakeDriver):
+        def set_file_published_callback(self, callback):
+            self.on_published = callback
+
+    root = tmp_path / "ws"
+    s3 = CountingS3()
+    driver = CallbackDriver(workspace=root)
+    r = _runner(tmp_path, driver=driver, s3=s3)
+    await r._restore_workspace_from_s3()
+    path = root / "aiplc-docs/new.md"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("new")
+
+    canonical = path.read_text()
+    etag = await s3.put("aiplc-docs/new.md", canonical)
+    driver.on_published("aiplc-docs/new.md", canonical, etag)
+    await r._sync_workspace_to_s3()
+
+    assert s3.put_calls == ["aiplc-docs/new.md"]
+
+
+async def test_sync_completes_before_done_yield(tmp_path):
+    root = tmp_path / "ws"
+    d = FakeDriver(files_written={"aiplc-docs/aiplc-state.md": "stage: mid"}, workspace=root)
+    r = _runner(tmp_path, driver=d)
+    saw_done = False
+    async for e in r.send_message("go"):
+        if e.kind == "done":
+            saw_done = True
+            assert await r.read_file("aiplc-docs/aiplc-state.md") == "stage: mid"
+    assert saw_done
+
+
+async def test_concurrent_turn_busy_signal(tmp_path):
+    r = _runner(tmp_path)
+    r._turn_active = True
+    evs = await _collect(r.send_message("second"))
+    assert len(evs) == 1 and evs[0].kind == "error"
+    assert "in progress" in evs[0].text
+
+
+async def test_questions_event_arms_interrupt_and_answers_resume(tmp_path):
+    root = tmp_path / "ws"
+    d = FakeDriver(events=[AgentEvent(kind="questions", payload=Q_PAYLOAD),
+                          AgentEvent(kind="done")], workspace=root)
+    r = _runner(tmp_path, driver=d)
+    await _collect(r.send_message("시작"))
+    await _collect(r.send_answers({"1": "A"}))
+    assert d.answer_calls == [("i-7", {"1": "A"})]
+
+
+async def test_send_answers_without_pending_errors(tmp_path):
+    r = _runner(tmp_path)
+    evs = await _collect(r.send_answers({"1": "A"}))
+    assert evs[0].kind == "error" and "no pending questions" in evs[0].text
+
+
+async def test_malformed_questions_payload_does_not_arm(tmp_path):
+    root = tmp_path / "ws"
+    d = FakeDriver(events=[AgentEvent(kind="questions", payload="not-json{"),
+                          AgentEvent(kind="done")], workspace=root)
+    r = _runner(tmp_path, driver=d)
+    evs = await _collect(r.send_message("시작"))
+    assert evs[-1].kind == "done"
+    assert r._pending_interrupt_id is None
+    follow = await _collect(r.send_answers({"1": "A"}))
+    assert follow[0].kind == "error"
+
+
+async def test_pending_delegates_to_driver_and_arms(tmp_path):
+    r = _runner(tmp_path, driver=FakeDriver(pending_payload=Q_PAYLOAD, workspace=tmp_path/"ws"))
+    assert await r.pending() == Q_PAYLOAD
+    assert r._pending_interrupt_id == "i-7"
+
+
+async def test_pending_degrades_to_none_on_driver_error(tmp_path):
+    class Raising(FakeDriver):
+        async def pending(self, session):
+            raise RuntimeError("dead")
+    r = _runner(tmp_path, driver=Raising(workspace=tmp_path/"ws"))
+    assert await r.pending() is None
+
+
+async def test_stop_removes_local_root(tmp_path):
+    r = _runner(tmp_path)
+    await r.write_file("aiplc-docs/x.md", "hi")  # writes to S3 only
+    (r._local_root).mkdir(parents=True, exist_ok=True)
+    (r._local_root / "scratch.txt").write_text("x", encoding="utf-8")
+    await r.stop()
+    assert not r._local_root.exists()
+
+
+# ---- stop() wiring to the driver's optional disconnect() (Task 8) ----
+
+async def test_stop_calls_disconnect_when_the_driver_has_one(tmp_path):
+    # ClaudeDriver holds a claude subprocess -- without this call, every
+    # deleted project leaks it for the life of the backend.
+    class WithDisconnect(FakeDriver):
+        def __init__(self, *a, **k):
+            super().__init__(*a, **k)
+            self.disconnect_calls = 0
+
+        async def disconnect(self):
+            self.disconnect_calls += 1
+
+    driver = WithDisconnect(workspace=tmp_path / "ws")
+    r = _runner(tmp_path, driver=driver)
+    await r.stop()
+    assert driver.disconnect_calls == 1
+
+
+async def test_stop_tolerates_a_driver_with_no_disconnect(tmp_path):
+    # StrandsDriver has no subprocess to tear down and no disconnect() method
+    # at all -- stop() must not crash project deletion over that (FakeDriver,
+    # like StrandsDriver, has no disconnect).
+    driver = FakeDriver(workspace=tmp_path / "ws")
+    assert not hasattr(driver, "disconnect")
+    r = _runner(tmp_path, driver=driver)
+    await r.stop()  # must not raise
+    assert not r._local_root.exists()
+
+
+async def test_stop_tolerates_disconnect_raising(tmp_path):
+    # Best-effort, like the rest of stop()'s neighbors in projects.py: a
+    # broken teardown must not block the local-root cleanup or the delete.
+    class BoomOnDisconnect(FakeDriver):
+        async def disconnect(self):
+            raise RuntimeError("subprocess already dead")
+
+    driver = BoomOnDisconnect(workspace=tmp_path / "ws")
+    r = _runner(tmp_path, driver=driver)
+    await r.stop()  # must not raise
+    assert not r._local_root.exists()
+
+
+# ---- interrupt() tolerates a driver with no interrupt() (StrandsDriver) ----
+
+async def test_interrupt_tolerates_a_driver_with_no_interrupt(tmp_path):
+    # StrandsDriver has no subprocess to interrupt and no interrupt() method
+    # at all -- the runner must no-op instead of raising (FakeDriver, like
+    # StrandsDriver, has no interrupt).
+    driver = FakeDriver(workspace=tmp_path / "ws")
+    assert not hasattr(driver, "interrupt")
+    r = _runner(tmp_path, driver=driver)
+    await r.interrupt()  # must not raise
+
+
+# ---- sync must survive a consumer that walks away (real-world SSE disconnect) ----
+
+async def test_sync_runs_when_the_consumer_abandons_the_stream(tmp_path):
+    """The bug this pins: sync used to run only on the line that yields
+    done/error. send_message is a GENERATOR, so a consumer that stops
+    iterating -- an SSE client disconnecting, a proxy timeout, the user
+    navigating away -- never reached it. The agent's document existed only in
+    the volatile local workspace, so the doc panel showed an empty file and
+    the next refresh dropped it from the list entirely."""
+    root = tmp_path / "ws"
+    d = FakeDriver(
+        events=[AgentEvent(kind="document", payload='{"path":"aiplc-docs/discovery/discovery-document.md","version":"v1"}'),
+                AgentEvent(kind="done")],
+        files_written={"aiplc-docs/discovery/discovery-document.md": "# 실제 내용"},
+        workspace=root)
+    r = _runner(tmp_path, driver=d)
+
+    agen = r.send_message("문서 만들어줘")
+    async for ev in agen:
+        if ev.kind == "document":
+            await agen.aclose()      # consumer leaves right after the event
+            break
+
+    assert r._s3.blobs["aiplc-docs/discovery/discovery-document.md"] == "# 실제 내용"
+
+
+async def test_sync_runs_when_the_driver_raises_mid_turn(tmp_path):
+    """A driver that blows up past the point where files were written must not
+    strand them either -- the turn is lost, but the work is not."""
+    root = tmp_path / "ws"
+
+    class Boom(FakeDriver):
+        async def _emit(self, evs):
+            (Path(self._workspace) / "aiplc-docs").mkdir(parents=True, exist_ok=True)
+            (Path(self._workspace) / "aiplc-docs" / "aiplc-state.md").write_text(
+                "stage: mid", encoding="utf-8")
+            yield AgentEvent(kind="message", text="작업 중")
+            raise RuntimeError("driver exploded")
+
+    r = _runner(tmp_path, driver=Boom(workspace=root))
+
+    with pytest.raises(RuntimeError):
+        await _collect(r.send_message("go"))
+
+    assert r._s3.blobs["aiplc-docs/aiplc-state.md"] == "stage: mid"
+
+
+async def test_sync_runs_once_per_turn_not_once_per_terminal_event(tmp_path):
+    """Guard against the obvious over-correction: syncing in `finally` AND on
+    the done event would upload every file twice per turn."""
+    root = tmp_path / "ws"
+    d = FakeDriver(files_written={"aiplc-docs/aiplc-state.md": "s"}, workspace=root)
+    r = _runner(tmp_path, driver=d)
+    calls = 0
+    original = r._sync_workspace_to_s3
+
+    async def counted():
+        nonlocal calls
+        calls += 1
+        await original()
+
+    r._sync_workspace_to_s3 = counted  # type: ignore[method-assign]
+    await _collect(r.send_message("go"))
+    assert calls == 1
+
+
+async def test_answers_turn_also_syncs_when_abandoned(tmp_path):
+    """send_answers has the same generator shape and the same bug."""
+    root = tmp_path / "ws"
+    d = FakeDriver(
+        answers_events=[AgentEvent(kind="document", payload='{"path":"aiplc-docs/discovery/discovery-document.md","version":"v2"}'),
+                        AgentEvent(kind="done")],
+        files_written={"aiplc-docs/discovery/discovery-document.md": "# 답변 반영"},
+        workspace=root)
+    r = _runner(tmp_path, driver=d)
+    r._pending_interrupt_id = "i-7"
+
+    agen = r.send_answers({"1": "A"})
+    async for ev in agen:
+        if ev.kind == "document":
+            await agen.aclose()
+            break
+
+    assert r._s3.blobs["aiplc-docs/discovery/discovery-document.md"] == "# 답변 반영"
+
+
+# ---- The web records user input in the audit log (aipds/audit_log) ----
+
+class _SeesAuditAtStart(FakeDriver):
+    """Captures audit.md at the moment the agent starts — both local and canonical."""
+    def __init__(self, s3, **kw):
+        super().__init__(**kw)
+        self._s3 = s3
+        self.local_at_start = None
+        self.remote_at_start = None
+
+    def run(self, text, session):
+        async def go():
+            path = Path(self._workspace) / "aiplc-docs/audit.md"
+            self.local_at_start = path.read_text(encoding="utf-8") if path.exists() else None
+            try:
+                self.remote_at_start = await self._s3.get("aiplc-docs/audit.md")
+            except FileNotFoundError:
+                self.remote_at_start = None
+            async for e in self._emit(self._events):
+                yield e
+        return go()
+
+
+async def test_the_users_input_is_in_the_audit_log_before_the_agent_starts(tmp_path):
+    """After restore, before the agent: restore brings back the earlier records, and this is appended after them. It is also uploaded
+    to the source-of-truth copy right away — even if the turn is cut, what the user entered must remain."""
+    from aipds.audit_log import UserInput
+    s3 = FakeS3Store()
+    await s3.put("aiplc-docs/audit.md", "# AI-PLC Audit Log\n\n## 이전 항목\n**AI Response**: 지난 턴\n")
+    driver = _SeesAuditAtStart(s3)
+    runner = _runner(tmp_path, driver=driver, s3=s3)
+
+    await _collect(runner.send_message("Path A", UserInput(text="Path A", source="chat")))
+
+    for text in (driver.local_at_start, driver.remote_at_start):
+        assert text is not None
+        assert text.index("## 이전 항목") < text.index("> Path A")
+
+
+async def test_no_record_means_no_audit_write(tmp_path):
+    s3 = FakeS3Store()
+    driver = _SeesAuditAtStart(s3)
+    runner = _runner(tmp_path, driver=driver, s3=s3)
+    await _collect(runner.send_message("x"))
+    assert driver.local_at_start is None and driver.remote_at_start is None

@@ -1,0 +1,121 @@
+"use client";
+import { useState } from "react";
+import { ApiError } from "@/lib/api/client";
+import { errorMessage } from "@/lib/api/errorMessage";
+import { useT } from "@/lib/i18n/provider";
+import { addModel, EFFORTS, type Effort } from "@/lib/api/models";
+
+export function AddModelModal({
+  onAdded, onClose,
+}: {
+  onAdded: () => void;
+  onClose: () => void;
+}) {
+  const [name, setName] = useState("");
+  const [modelId, setModelId] = useState("");
+  const [display, setDisplay] = useState(true);
+  // "" = CLI default (sent as null). The default differs per model, so the frontend does not pick one.
+  const [effort, setEffort] = useState<Effort | "">("");
+  const [busy, setBusy] = useState(false);
+  const t = useT();
+  const [error, setError] = useState<string | null>(null);
+
+  async function submit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!name.trim() || !modelId.trim()) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await addModel(name.trim(), modelId.trim(), display, effort || null);
+      onAdded();
+      onClose();
+    } catch (err) {
+      // On failure the modal stays open — so the user does not have to retype the input.
+      setError(err instanceof ApiError ? errorMessage(t, err.detail) : t("err.generic"));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-30 flex items-center justify-center bg-slate-900/40 p-4">
+      <div className="w-full max-w-md rounded-xl bg-white p-6 shadow-lg">
+        <h2 className="text-lg font-bold">{t("admin.addModelTitle")}</h2>
+        <form onSubmit={submit} className="mt-4 space-y-4">
+          <div>
+            <label htmlFor="model-name" className="block text-sm font-medium">
+              {t("admin.modelDisplayName")}
+            </label>
+            <input
+              id="model-name"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder={t("admin.modelNamePlaceholder")}
+              className="mt-1 w-full rounded-lg border border-slate-200 p-2.5 text-sm"
+            />
+          </div>
+          <div>
+            <label htmlFor="model-id" className="block text-sm font-medium">
+              {t("admin.modelId")}
+            </label>
+            <input
+              id="model-id"
+              value={modelId}
+              onChange={(e) => setModelId(e.target.value)}
+              placeholder={t("admin.modelIdPlaceholder")}
+              className="mt-1 w-full rounded-lg border border-slate-200 p-2.5 font-mono text-xs"
+            />
+            <p className="mt-1 text-xs text-slate-500">
+              {t("admin.modelIdHelp")}
+            </p>
+          </div>
+          <div>
+            <label htmlFor="model-effort" className="block text-sm font-medium">
+              {t("admin.modelEffort")}
+            </label>
+            <select
+              id="model-effort"
+              value={effort}
+              onChange={(e) => setEffort(e.target.value as Effort | "")}
+              className="mt-1 w-full rounded-lg border border-slate-200 bg-white p-2.5 text-sm"
+            >
+              <option value="">{t("admin.effortDefault")}</option>
+              {EFFORTS.map((v) => <option key={v} value={v}>{v}</option>)}
+            </select>
+            <p className="mt-1 text-xs text-slate-500">{t("admin.effortHelp")}</p>
+          </div>
+          <label className="flex items-center gap-2 text-sm">
+            <input
+              type="checkbox"
+              checked={display}
+              onChange={(e) => setDisplay(e.target.checked)}
+              aria-label={t("admin.showInCombo")}
+            />
+            {t("admin.showInComboLabel")}
+          </label>
+          {error && (
+            <p role="alert" className="rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-700">
+              {error}
+            </p>
+          )}
+          <div className="flex justify-end gap-2">
+            <button
+              type="button"
+              onClick={onClose}
+              className="rounded-lg border border-slate-200 px-4 py-2 text-sm"
+            >
+              {t("admin.commonCancel")}
+            </button>
+            <button
+              type="submit"
+              disabled={busy || !name.trim() || !modelId.trim()}
+              className="rounded-lg bg-violet-600 px-4 py-2 text-sm text-white hover:bg-violet-700 disabled:opacity-50"
+            >
+              {t("admin.add")}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}

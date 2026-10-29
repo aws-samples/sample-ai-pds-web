@@ -1,0 +1,23 @@
+import type { Config } from "tailwindcss";
+
+// Palette + font are lifted directly from files/ui/01–03 so ported components
+// render pixel-faithfully. Violet is the primary; slate is the neutral. We rely
+// on Tailwind's default violet/slate/emerald/amber/rose/sky scales (the mockups
+// use them unmodified) and only pin the font family here.
+const config: Config = {
+  content: ["./app/**/*.{ts,tsx}", "./components/**/*.{ts,tsx}"],
+  theme: {
+    extend: {
+      fontFamily: {
+        sans: ["var(--font-noto-sans-kr)", "sans-serif"],
+      },
+      // When a new document arrives, the drawer handle bounces **only twice** (WorkspaceDocPanel).
+      // The default animate-ping repeats forever and keeps drawing the eye while the user is answering.
+      animation: {
+        nudge: "ping 1s cubic-bezier(0, 0, 0.2, 1) 2",
+      },
+    },
+  },
+  plugins: [require("@tailwindcss/typography")],
+};
+export default config;

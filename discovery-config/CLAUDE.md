@@ -1,0 +1,99 @@
+# AI-PDS Web runtime integration contract
+
+This file defines only the runtime boundary between the AI-PDS workflow and the web application. Follow the workspace `CLAUDE.md` and its referenced rule files
+for the workflow, stage order, terminology, document formats, and project language. Where this contract overrides the upstream rules, the override applies only because the web runtime handles that interaction differently.
+
+## Required artifacts
+
+- Keep `aiplc-docs/aiplc-state.md` current as required by `common/workflow-changes.md` and each stage's "Update State Tracking" step. Preserve the `- **Current Stage**: <name>` line and the `## Stage Progress` checklist; AI-PDS Web reads this file to draw the user's phase progress.
+- **In `aiplc-state.md`, the labels and the stage names stay in the upstream English, whatever the project language.** `**Current Stage**`, `## Stage Progress` and each checklist entry's stage name (`Envision`, `Prototype & Validation`, `Go-to-Market`, …, as the rule files name them) are keys a parser reads, not prose; this overrides the project language rule for this file. A translated heading hides the checklist, and a stage under a name the rules do not use drops out of the progress the user sees. A note after the stage name follows the project language.
+- Write discovery documents under `aiplc-docs/` with Write/Edit and nothing else. AI-PDS Web derives the document drawer and the document-updated notice from the write itself, so there is no separate call to announce a document.
+- **AI-PDS Web records the user's input in `audit.md`.** Before each turn starts, it appends the input exactly as the user gave it — a chat message, the answers submitted through a question form, or a document approval — with the real time, under a `## User Input (recorded by AI-PDS Web)` heading (written in the project language). This covers the upstream rule's "complete raw input, never summarized, with timestamp" for the user's side: the web receives the input, so the web records it.
+- **Append only your side, with Edit, right after that entry.** Your entry carries **Timestamp**, **AI Response** and **Context** as the upstream template shows, but no **User Input** — do not copy, quote or summarize the user's input again. Get the timestamp from `date -u +%Y-%m-%dT%H:%M:%SZ`; never estimate it.
+- **Never replace `audit.md` with Write.** It already exists from the first turn and holds the web's records; hooks reject a Write to it.
+
+## Turn-ending writes
+
+Writing either of these files hands control to the user and immediately ends the
+turn:
+
+| File | Handoff |
+|---|---|
+| A question file containing `[Answer]:` tags | Shows the question form |
+| `build-instructions.md` | Shows the prototype card |
+
+Any tool calls placed after that write are discarded. Before the turn-ending write, provide the user-facing message and complete every required document write, `audit.md` Edit, and `aiplc-state.md` update. This keeps the ordering already required by `core-workflow.md`.
+
+## Question files
+
+The question file is the web form.
+Follow `aws-aiplc-rule-details/common/question-format-guide.md` with numbered questions, lettered options, and an `[Answer]:` line under each question.
+
+- **AskUserQuestion is not available.** Write the complete question file under `aiplc-docs/`; AI-PDS Web renders it without the tool's question or option limits.
+- **Use `## Question <number>` headings.** Keep the number stable. Answers are matched by question **number**.
+- **Place file-wide preamble text above the first `##` heading.** A preface put under a `##` heading becomes the *first question's* context. Put context for one question under a `##` heading immediately before that question.
+- **Mark a multi-answer question with a parenthesised note at the end of the question sentence**, written in the project language and meaning "select all that apply" — in English write exactly `(select all that apply)`. The upstream format has no notation for this, so this marker is what AI-PDS Web reads: it renders checkboxes instead of radio buttons and records the chosen letters as a comma-separated value (`A,C`). The parentheses are the boundary, so a question whose prose merely discusses selecting several things stays single-answer. Without the marker the question renders single-answer and the user's only route to a second answer is the free-text `Other` field, which loses the letters.
+- **AI-PDS Web fills the `[Answer]:` tags. Do not write them yourself.** Read them when continuing after the user submits the form.
+- **Write the question file last.** Do not continue with more tools after the write.
+- **Do not restate the questions in chat.** Explain why the question round is needed before writing the file.
+- **Do not send the user to edit the file or wait for a separate "done".** The web form is the editing surface, and submitting it is confirmation. If an expected answer is still missing, present it again through a question file.
+- **Keep the audit trail.** Record the resulting decisions in `audit.md`.
+
+## Prototype handoff
+
+Discovery writes specifications; the Prototypes tab builds and runs them.
+
+- **You write only under `aiplc-docs/`.** This boundary is enforced, not trusted: hooks reject writes elsewhere and reject build or serve commands.
+- **Use the path defined by the applicable workflow path.**
+  - Path A.1:
+    `aiplc-docs/discovery/prototype/prototype-spec.md`
+  - Path B:
+    `aiplc-docs/discovery/prototypes/{slug}/PROTOTYPE-{slug}.md`
+  Do not produce a slugged duplicate for Path A.1. The document that governs a path beats the overview diagram. For Path B, the slug must equal the directory name and contain lowercase letters, digits and hyphens only.
+- **Do not execute the prototype build instructions.** Do not create executable source files, install packages, start processes, choose a port, or report a local server URL from Discovery.
+- **End Path A.1 build preparation at `build-instructions.md`.** Explain the handoff to the user before writing it; that write is the handoff, and it ends your turn. Steps that require a running prototype are not abandoned; they are deferred until the user builds it in the Prototypes tab.
+- **End each Path B prototype the same way.** In `prototype-building.md`, run Steps 2.1–2.3 for the prototype (specification summary and the user's confirmation, through a question file) without the LLM provider, model or port lines, and skip Steps 2.4–2.7. Once the user confirms, write `aiplc-docs/discovery/prototypes/{slug}/build-instructions.md` next to its `PROTOTYPE-{slug}.md`, recording the confirmed settings (tools, brand, device, frontend) and any change the user asked for. That write is that prototype's handoff and ends your turn; take up the next `PROTOTYPE-*.md` file when the user returns.
+- **The model and credentials are already provisioned. Never ask for them.** Do not offer provider selection, do not write a model ID or port into the specification, and do not inspect the environment for credentials.
+- **The hosted runtime is Node.** Describe the agent's behavior rather than interpreter setup or a second backend process. When an agentic specification must identify the implementation SDK, use the server-side TypeScript package `@strands-agents/sdk`.
+
+## Survey results
+
+The Prototypes tab runs validation surveys. **Synthesize results** writes the aggregate next to the spec as `survey-aggregate.md` (Path A.1: `aiplc-docs/discovery/prototype/`, Path B: `aiplc-docs/discovery/prototypes/{slug}/`).
+
+- **It is the feedback file Step 6 imports.** When the user returns after a survey, read it as the file `prototype-validation.md` Step 5 lets the user provide, together with whatever else the user reports.
+- **AI-PDS Web owns it. Do not write to it.** It is rebuilt from the responses on every synthesis, so anything written there would be lost; hooks reject the write.
+- **Keep the persona split when the aggregate has one.** A survey built from a spec with target users asks each respondent's role first, and the aggregate splits every other question by that answer. Where personas disagree, report each persona's signal instead of the overall figure, and weigh the personas the spec targets. Respondents who chose "None of these / Other" are outside the target users: report how many there were and what they said, but do not count them as validating or refuting the hypothesis.
+- **Write the Step 6 synthesis to `validation-results.md` yourself,** in the same directory, as the rule specifies. AI-PDS Web never writes or deletes that file, so it stays the evidence Step 8 and Product Strategy cite. Record the aggregate's response count, survey start time and aggregation time there, because the aggregate itself will change as more responses arrive. The start time is the validation window to compare with `change-history.md`; do not ask the user for it.
+
+## Spec reconciliation before the Living Document
+
+The approved spec is fixed at its gate, but the Prototypes tab keeps changing the prototype afterwards. Each build session appends what it changed to `change-history.md` next to the spec (Path A.1: `aiplc-docs/discovery/prototype/`, Path B: `aiplc-docs/discovery/prototypes/{slug}/`). The history is a list of one-line session notes, not a spec, so without this step the spec a developer receives describes a prototype that no longer exists. The handoff package takes `spec-as-built.md` as the spec of record and checks that it is current.
+
+- **When:** the Build Decision is Proceed, before Step 8 (Write to Living Document), and again whenever the user asks to bring the spec up to date (the handoff tab sends them here when `spec-as-built.md` is missing or stops before the newest history entry). Do this only if `change-history.md` exists; if it does not, the spec was never changed after approval and nothing is reconciled. If `spec-as-built.md` already exists, update it rather than starting over, and present it through the same gate.
+- **Write `spec-as-built.md` in the same directory.** Start from the approved spec and apply `change-history.md` on top of it, oldest entry first. Do not edit the approved spec itself; it stays as the record of what was approved. Where the two disagree, the history wins.
+- **Classify every feature, flow and data-model item** as unchanged, changed, dropped or added, and say which history entry (date and gen) made the change.
+- **List every history entry you applied, entries that changed nothing included,** in the document's basis section, each by its heading timestamp exactly as written (`2026-10-13 16:27 UTC · gen 1`). The handoff checks for the newest entry's timestamp; an entry you read but did not list counts as not applied.
+- **Mark what validation covered.** Compare the validation window in `validation-results.md` with the dates of the history entries. A feature changed after the window was not validated in its final form; say so instead of counting it as validated. Mark anything that exists only to make the prototype run (mock data, stubbed integrations) as prototype-only so it does not pass as a product requirement.
+- **AI-PDS Web owns `change-history.md`. Read it; never write to it.** Build sessions append to it, and the next build session reads it as its own input, so an edit here changes what the builder believes was built; hooks reject the write. What you conclude from it goes into `spec-as-built.md`.
+- **Do not read or guess from source code.** You cannot see it and must not try; the history is the evidence. If an entry is too vague to classify an item, list it under open questions rather than inventing the detail.
+- **Gate.** Explain what changed, then present it through a question file (approve / revise) and wait. Step 8 and Product Strategy treat `spec-as-built.md` as the spec of record once it is approved.
+
+## Depth of what you write
+
+<!-- depth-bar-items: derive, prose, unknowns, brackets, defaults -->
+
+Apply this quality bar to every document under `aiplc-docs/`:
+
+- **Derive, do not only transcribe.** Add a calculation, relationship, or product implication where the evidence supports it.
+- **Use prose for meaning.** Lists can carry facts, but explain what the facts imply for the decision.
+- **State material unknowns.** Identify what a later stage still needs and why it matters.
+- **Treat bracketed template guidance as a checklist.** Cover each requested item, replace example rows, and leave no placeholder answers.
+- **Use explicit assumptions when evidence is missing.** Never present an assumption as customer evidence.
+
+Be concise, avoid duplication, and do not invent evidence.
+
+## Keep the conversation visible
+
+- Include user-facing conversational text in every turn; never return tool activity alone.
+- On a question or prototype-handoff turn, say what was completed and what the user should do next before the turn-ending write.
+- Use the language specified by the workspace `CLAUDE.md`.

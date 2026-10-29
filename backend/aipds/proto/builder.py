@@ -1,0 +1,1214 @@
+# backend/aipds/proto/builder.py — the prototype build agent, running
+# IN-PROCESS in the backend (was harness/sdk_driver.py inside a Tokyo MicroVM).
+#
+# One build session = one connected ClaudeSDKClient. Hook/tool callbacks run on
+# the SDK's tasks while run() drains on the caller's loop -- both on the SAME
+# event loop, so a plain list handoff is safe.
+#
+# Three things differ from the VM-era driver:
+#   1. CLAUDE_CONFIG_DIR is always injected. The bundled binary is ordinary
+#      Claude Code and reads ~/.claude when this is unset -- harmless in the
+#      VM (empty home) but on the workshop EC2 that is the operator's personal
+#      skills/agents/CLAUDE.md, which would leak into every workshop build and
+#      make results depend on host config.
+#   2. session_store + resume make the transcript durable, so a session can be
+#      resumed days later or after a backend redeploy.
+#   3. disconnect() exists. Stopping the VM used to reclaim the process; now
+#      the idle timer must do it explicitly.
+from __future__ import annotations
+
+import asyncio
+import json
+import logging
+from aipds.pathsafe import workspace_relative as _rel
+from typing import Any, AsyncIterator, Callable, Iterable
+
+from aipds.agent_activity import (AGENT_ACTIVITY, TERMINAL_TASK_STATUSES,
+                                  activity_payload)
+from aipds.agent.questions_payload import (normalize_sdk_questions,
+                                                 question_file_from_sdk)
+from aipds.agent.claude_driver import _transcript_path
+from aipds.agent_home import copy_config
+from aipds.cli_settings import cli_context_env
+from aipds.context_usage import ContextMeter, wants_sample
+from aipds.models import AgentEvent
+from aipds.proto import prompts
+from aipds.proto.build_guard import (FETCH_HOSTS, WRITE_TOOLS, bash_denial, fetch_denial,
+                                     settings_write_denial)
+from aipds.tool_trace import tool_detail
+from aipds.transcript_restore import MirrorOnlyStore
+from aipds.transcript_restore import restore as restore_transcript
+
+_log = logging.getLogger(__name__)
+
+_FILE_TOOLS = {"Write", "Edit", "MultiEdit"}
+_LETTERS = "ABCDEFGHIJ"
+
+# A workshop build runs unattended -- there is no operator to approve a Write,
+# so any mode that can prompt stalls the turn until the idle timer kills it.
+DEFAULT_PERMISSION_MODE = "bypassPermissions"
+
+
+# Marks an AgentEvent as having been handed to the consumer. Set at the `yield`
+# in `_relay_queue` (see the comment there for why not after it) and read only by
+# `_drop_answered_question_card`.
+#
+# A private attribute rather than an AgentEvent field on purpose: `kind` and the
+# event shape ARE the frontend contract (models.py), and this is purely internal
+# bookkeeping that must never reach the browser. Measured: `model_dump_json()` is
+# byte-identical with the mark set, so routes/prototypes.py's
+# `_redacted(event).model_dump_json()` is unaffected.
+#
+# `object.__setattr__` is a DEFENSIVE choice, not a required one, and the reason
+# matters because it is easy to get backwards. Plain `ev._aipds_delivered = True`
+# also works: pydantic's `_setattr_handler` (pydantic/main.py:1066-1074) routes any
+# non-field name that fails `is_valid_field_name` -- i.e. any LEADING-UNDERSCORE
+# name -- straight to `_object_setattr`. What pydantic rejects is a
+# non-underscore unknown name (`ev.aipds_delivered = True` ->
+# ValueError: "AgentEvent" object has no field "aipds_delivered"). So the underscore
+# prefix is what makes assignment legal here; `object.__setattr__` only makes that
+# independent of pydantic's dunder routing. CONSEQUENCE IF YOU RENAME THIS: a name
+# without the leading underscore must become a real model field or the assignment
+# raises -- and `object.__setattr__` would silently bypass exactly the check that
+# tells you so, while `__pydantic_extra__`/`model_dump` behavior diverges.
+#
+# The mark lives in the event's `__dict__`, so it PROPAGATES THROUGH COPIES:
+# measured, `_redacted()` returns a distinct object that DOES carry the mark
+# (`model_copy` copies `__dict__` wholesale), as do `model_copy(deep=True)`,
+# `model_copy(update=...)`, and pickle. Only
+# `model_validate(model_dump())` drops it, since the mark is not a field.
+#
+# That propagation is harmless TODAY for one specific reason -- not because copies
+# are unmarked: the redacted copy is serialized and discarded, never re-queued, and
+# `_drop_answered_question_card` only ever inspects objects in `self._queue`. IF
+# ANYONE ADDS A RE-QUEUE OR RETRY BUFFER that puts a `_redacted` copy (or any other
+# copy) back on the queue, that assumption breaks: an event marked by a
+# SERIALIZATION step rather than by a `yield` would become eligible for the
+# answered-card drop. Audit this if you add such a path.
+_DELIVERED_ATTR = "_aipds_delivered"
+
+
+def _mark_delivered(event: AgentEvent) -> None:
+    object.__setattr__(event, _DELIVERED_ATTR, True)
+
+
+def _was_delivered(event: AgentEvent) -> bool:
+    return getattr(event, _DELIVERED_ATTR, False) is True
+
+
+def _interrupt_id_of(event: AgentEvent) -> str | None:
+    """The interrupt_id inside a `questions` event's payload, or None.
+
+    Same shape and same fail-soft posture as proto/session.py's
+    `_interrupt_id_from` and claude_driver's `_iid_of`: a malformed or
+    contract-drifted payload degrades to None rather than raising, because the
+    only caller is `_drop_answered_question_card` and a parse failure there must
+    not blow up an otherwise valid `submit_answers`. Returning None simply keeps
+    the event (the conservative direction -- a re-shown card is recoverable, a
+    dropped one is the message loss this whole change is about).
+    """
+    if not event.payload:
+        return None
+    try:
+        value = json.loads(event.payload).get("interrupt_id")
+    except (json.JSONDecodeError, AttributeError):
+        return None
+    return value if isinstance(value, str) else None
+
+
+def _validate_permission_mode(mode: str) -> str:
+    """Reject an unknown mode here rather than letting it reach the CLI.
+
+    An unrecognized --permission-mode kills the subprocess during connect(),
+    which run() reports as a generic "agent turn failed" -- the exact
+    late-and-opaque failure mode the --session-id/--resume clash produced.
+    The valid set is read off the SDK's own Literal so it cannot drift.
+    """
+    from typing import get_args
+
+    from claude_agent_sdk.types import PermissionMode
+
+    valid = get_args(PermissionMode)
+    if mode not in valid:
+        raise ValueError(
+            f"unknown permission_mode {mode!r}; expected one of {', '.join(valid)}")
+    return mode
+
+
+def _proto_tools_for(builder: "PrototypeBuilder") -> list:
+    """Custom tools bound to the builder's queue.
+
+    The key point is that emit is `self._queue.append` -- the same path
+    `_on_post_tool_use` uses to enqueue `file_changed`, so it inherits
+    `_relay_queue`'s ownership discipline unchanged (pop after delivery; the
+    event stays in the queue even if the consumer leaves midway). A separate
+    path would lose that guarantee.
+    """
+    from aipds.proto.tools import build_proto_tools
+    return build_proto_tools(builder._workspace, builder._queue.append,
+                            builder._language)
+
+
+def _default_client_factory(builder: "PrototypeBuilder") -> Callable[[], Any]:
+    def make():
+        from claude_agent_sdk import (ClaudeAgentOptions, ClaudeSDKClient,
+                                      create_sdk_mcp_server)
+        from claude_agent_sdk.types import HookMatcher
+
+        from aipds.proto.tools import (BUILD_COMPLETE_TOOL,
+                                            PROTO_MCP_SERVER_NAME)
+
+        env = {
+            "CLAUDE_CODE_USE_BEDROCK": "1",
+            # Swap the config HOME rather than disabling settings entirely
+            # (setting_sources=[]): this keeps a place to put OUR skills and
+            # subagents later, and keeps the local transcript copy under a
+            # AI-PDS-owned path instead of the operator's home.
+            #
+            # This is a per-prototype directory (aipds/agent_home.py). The shared
+            # proto-config remains only as the source of the contents (CLAUDE.md,
+            # skills/, agents/), copied on every connect.
+            "CLAUDE_CONFIG_DIR": builder._config_dir,
+        }
+        if builder._shared_config_dir:
+            copy_config(builder._shared_config_dir, builder._config_dir,
+                        builder._workspace)
+        if builder._anthropic_model:
+            env["ANTHROPIC_MODEL"] = builder._anthropic_model
+        # Uses the same values as the Discovery driver -- if only one side turns
+        # these on, compaction timing diverges within the same project
+        # (cli_settings header).
+        env.update(cli_context_env())
+        # Launch wrapper (aipds/launcher.py) -- same as the Discovery driver.
+        cli_path = None
+        if builder._launch is not None:
+            cli_path, launch_env = builder._launch.claude()
+            env.update(launch_env)
+        options = ClaudeAgentOptions(
+            cli_path=cli_path,
+            permission_mode=builder._permission_mode,
+            cwd=builder._workspace,
+            env=env,
+            # Same as the Discovery driver -- None means the CLI default.
+            effort=builder._effort,
+            # "user" now means OUR config dir, so this is safe -- and it is
+            # what `skills` needs open to discover anything.
+            setting_sources=["user", "project"],
+            # Enable only the skills we ship, by name. The former "all" assumed
+            # it enabled only what is under CLAUDE_CONFIG_DIR, but that was
+            # **wrong**: "all" also enables the skills bundled with the CLI, and
+            # that list includes `run` ("Launch and drive this project's
+            # app... browser-driven"). Observed incident: the build agent
+            # launched Playwright chromium (confirmed by Unit=aipds-backend.service
+            # in the core dump), its verification targeted port 3000, and the
+            # AI-PDS frontend was killed with SIGKILL
+            # (2026-08-01 16:13/16:18, journalctl status=9/KILL). The backend
+            # and frontend run as the same user (aipds), so nothing stopped it.
+            #
+            # With a name list the SDK allows only the `Skill(<name>)`
+            # form (subprocess_cli.py:_apply_skills_defaults), so bundled
+            # skills do not get in. When adding a skill, update this list too --
+            # this is where we deliberately gave up the "add with a single
+            # commit" convenience of "all".
+            #
+            # Caution: as the SDK docs state, this is **a context filter, not a
+            # sandbox**. It only hides skills and cannot block Bash itself, so
+            # the agent launching browsers/servers directly is also blocked by
+            # the CLAUDE.md conventions (the "프로세스·포트" (processes/ports)
+            # section of proto-config/CLAUDE.md). Real isolation means running
+            # the build agent as a separate user, which is a separate matter.
+            skills=["shadcn-design", "antd-design"],
+            # Custom tool for declaring the build complete. Same shape as
+            # Discovery (claude_driver.py:423-439). Entries in allowed_tools
+            # must be "mcp__<server key>__<tool name>" -- the SDK builds that
+            # name when it serializes --mcp-config, so any other spelling
+            # silently stays pending approval.
+            #
+            # This does not conflict with the skills option: the SDK's
+            # _apply_skills_defaults copies allowed_tools and then appends the
+            # skill entries (subprocess_cli.py:434-452), so this tool and
+            # the skills both stay live. The only difference is that with a
+            # name list, `Skill(<name>)` is appended instead of "Skill".
+            mcp_servers={PROTO_MCP_SERVER_NAME: create_sdk_mcp_server(
+                name=PROTO_MCP_SERVER_NAME, tools=_proto_tools_for(builder))},
+            allowed_tools=[BUILD_COMPLETE_TOOL],
+            # Web search is not needed for builds, and it is a path for sending
+            # workspace contents out inside search queries. Docs are opened with
+            # WebFetch (allowed hosts only, build_guard.fetch_denial).
+            disallowed_tools=["WebSearch"],
+            # Exactly one of the two, never both: the CLI rejects
+            # `--session-id` alongside `--resume` unless `--fork-session` is
+            # also passed ("--session-id can only be used with --continue or
+            # --resume if --fork-session is also specified"), which killed
+            # every resumed build at connect(). Forking is not the fix either
+            # -- it would continue under a NEW id, orphaning the transcript
+            # that session.py persisted. `--resume=<id>` alone already keeps
+            # the session on that same id, which is all session_id bought us.
+            session_id=None if builder._resume else builder._session_id,
+            resume=builder._session_id if builder._resume else None,
+            # Writes only go to the mirror. Resume reads the local copy -- if it is
+            # missing, `_ensure_client` restores it from S3 before connecting. If
+            # the SDK is left to do the load, it resumes in a temporary config dir
+            # without CLAUDE.md or skills (measured; see the
+            # aipds/transcript_restore.py header).
+            session_store=(MirrorOnlyStore(builder._session_store)
+                           if builder._session_store is not None else None),
+            # Kept even under bypassPermissions, which the SDK warns shadows
+            # this callback entirely. The warning overstates our case: probed
+            # against the real CLI, Bash/Write do skip the callback, but
+            # AskUserQuestion still reaches it -- and that is the only tool we
+            # intercept (it is how a question becomes an SSE `questions` event).
+            # Dropping the callback to silence the warning would break that.
+            can_use_tool=builder._on_can_use_tool,
+            # PreToolUse is the only effective gate for Bash. The can_use_tool
+            # above is not called for Bash under bypassPermissions -- the SDK
+            # documents both that fact and the fix itself (types.py's
+            # _get_can_use_tool_shadowed_warning: "To gate every tool call, use
+            # a PreToolUse hook instead"). The decision logic is in
+            # proto/build_guard.py.
+            #
+            # **Do not add AskUserQuestion to the matcher.** If a PreToolUse
+            # hook returns *allow*, can_use_tool is skipped too, and since the
+            # interception that turns a question into an SSE event lives in that
+            # callback, the entire question round trip dies. For the same reason
+            # _on_pre_tool_use returns **an empty dict**, not "allow", when it
+            # passes. Discovery avoids the same trap the same way (the hooks
+            # comment in claude_driver.py).
+            hooks={
+                # Bash, file writes (blocks only CLI settings files), WebFetch
+                # (docs hosts only). Subagents outliving the turn is blocked by a
+                # CLI switch, not by tool input (cli_settings.cli_context_env).
+                "PreToolUse": [HookMatcher(
+                    matcher="Bash|Write|Edit|MultiEdit|NotebookEdit|WebFetch",
+                    hooks=[builder._on_pre_tool_use])],
+                "PostToolUse": [HookMatcher(matcher="Write|Edit|MultiEdit",
+                                            hooks=[builder._on_post_tool_use])],
+            },
+        )
+        return ClaudeSDKClient(options=options)
+    return make
+
+
+def _suppress_shadowed_callback_warning() -> None:
+    """Mute CanUseToolShadowedWarning -- for THIS wiring it is a false positive.
+
+    See the can_use_tool comment above: the callback exists only for
+    AskUserQuestion, which still reaches it under bypassPermissions. The
+    warning fires on every connect() and would otherwise train operators to
+    ignore backend warnings. Scoped to this one category, never a blanket
+    filter, so a genuinely new SDK warning still surfaces.
+    """
+    import warnings
+    try:
+        from claude_agent_sdk import CanUseToolShadowedWarning
+    except ImportError:  # older/newer SDK without the category -- nothing to mute
+        return
+    warnings.filterwarnings("ignore", category=CanUseToolShadowedWarning)
+
+
+class PrototypeBuilder:
+    def __init__(self, workspace: str, config_dir: str, session_id: str,
+                 resume: bool, session_store: Any = None,
+                 anthropic_model: str | None = None,
+                 effort: str | None = None,
+                 language: str = "ko",
+                 permission_mode: str = DEFAULT_PERMISSION_MODE,
+                 client_factory: Callable[[], Any] | None = None,
+                 shared_config_dir: str | None = None,
+                 launch: Any = None,
+                 answer_log: Any = None):
+        self._workspace = workspace
+        self._config_dir = config_dir
+        #: Source of the contents copied into config_dir on every connect (proto-config/). None means no copy.
+        self._shared_config_dir = shared_config_dir
+        #: aipds.launcher.Launch, or None (= run directly as the backend uid).
+        self._launch = launch
+        self._session_id = session_id
+        self._resume = resume
+        self._session_store = session_store
+        #: aipds.proto.history.AnswerLog, or None (= do not record). Keeps received
+        #: answers for history restore -- because the transcript only keeps the
+        #: English sentences the CLI transcribed (agent/answer_store.py header).
+        self._answer_log = answer_log
+        #: Measures the main agent's context usage (aipds/context_usage.py). One builder
+        #: is one SDK session, so it is carried across turns -- only changed values are emitted.
+        self._context = ContextMeter()
+        self._anthropic_model = anthropic_model
+        self._effort = effort
+        # This project's output language. The build_complete tool's description
+        # and return strings are chosen by this value -- all three are prompts the
+        # model reads (proto/prompts.py).
+        self._language = language
+        self._permission_mode = _validate_permission_mode(permission_mode)
+        self._factory = client_factory or _default_client_factory(self)
+        self._client: Any = None
+        # A plain list, not collections.deque: tests assert `_queue == []`
+        # after draining, and deque never compares equal to a list literal.
+        self._queue: list[AgentEvent] = []
+        self._turn_active = False
+        self._interrupted = False
+        self._pending_question: asyncio.Future | None = None
+        self._pending_payload: str | None = None
+        self._pending_iid: str | None = None
+        # Subagents alive right now: Agent tool call id -> that task's id.
+        #
+        # **This table joins two streams.** Per-agent heartbeats arrive as `Task*`
+        # messages (keyed by `task_id`), while which files that agent is touching
+        # arrives as the subagent's `AssistantMessage` (keyed by
+        # `parent_tool_use_id`). `TaskStarted` is the only message carrying both
+        # values, so the table is filled there -- measured, all 5 messages joined
+        # (test_proto_builder_subagents header).
+        #
+        # Its lifetime is **one turn**: `run` clears it every turn (see the
+        # comment there for why).
+        self._agent_tasks: dict[str, str] = {}
+        # Task whose termination was already reported -> whether **the summary**
+        # was included at that time.
+        #
+        # `task_updated` and `task_notification` both send a terminal status, and
+        # the measured order is updated -> notification, but **only the latter
+        # carries the summary**. Blocking at the first termination would always
+        # discard the summary the agent left (the most useful line in the trace),
+        # so "summary not yet sent" is tracked separately and emitted one more
+        # time. Not counting a termination twice is the frontend upsert's job --
+        # the backend cannot know which termination message is the last one (the
+        # SDK states that sometimes only one of the two arrives).
+        self._agent_closed: dict[str, bool] = {}
+        #: Hosts of URLs the user wrote directly in this session. The WebFetch gate
+        #: opens these in addition to the docs hosts (build_guard.user_url_hosts) --
+        #: the session extracts them from the user's original text and passes them
+        #: in (`allow_fetch_hosts`), because the builder never sees the original:
+        #: the opening turn's `run(text)` is a server-wrapped prompt.
+        self._user_fetch_hosts: set[str] = set()
+
+    def allow_fetch_hosts(self, hosts: Iterable[str]) -> None:
+        self._user_fetch_hosts.update(hosts)
+
+    # There is deliberately NO `drain_queue()` batch pop here anymore. A batch
+    # pop moves events out of the queue that OWNS them and into the caller's
+    # frame, which `GeneratorExit` destroys -- so every one not yet yielded is
+    # lost when the consumer walks away mid-sequence (SSE disconnect, proxy
+    # timeout, navigation; routes/prototypes.py's EventSourceResponse takes
+    # that path routinely). Reproduced on this file before the fix: three
+    # `file_changed` events queued by one MultiEdit burst, consumer takes the
+    # first and disconnects -> `_queue == []` and the other two reached no
+    # consumer, this turn or any later one. Its Discovery-side twin was deleted
+    # for the same reason (claude_driver.py:537) -- a method whose SHAPE is the
+    # bug invites reintroduction at the next call site, so every consumer of
+    # `_queue` goes through `_relay_queue` instead.
+
+    async def _relay_queue(self) -> AsyncIterator[AgentEvent]:
+        """Yield queued hook/callback events, popping each only AFTER delivery.
+
+        The ownership rule, copied verbatim in effect from
+        claude_driver._relay_queue / `_pump`'s `relay` closure (read those for
+        the full argument -- it survived five review rounds there):
+
+            An event lives in exactly one place that outlives this generator,
+            and it leaves that place only after the consumer has actually
+            received it.
+
+        `queue[0]` -> `yield` -> `pop(0)`, never `pop(0)` -> `yield`, is the
+        whole fix. Reaching the line after the `yield` IS the proof of
+        delivery: it only runs when the consumer came back for the next item.
+        So a consumer abandoned at any `yield` leaves the remainder still owned
+        by `self._queue`, and the next turn's poll loop relays it.
+
+        The identity re-check before popping is LOAD-BEARING -- not defensive,
+        which is what an earlier draft of this docstring wrongly claimed on the
+        grounds that producers "only ever append". They do not: this very class
+        has a head-MUTATING producer, and it is reachable precisely while this
+        generator is suspended at its `yield`.
+
+        There are TWO such producers, both rewriting the list in place
+        (`self._queue[:] = [...]`), and both invoked from a SEPARATE HTTP request
+        that can land while this generator is parked mid-delivery:
+
+          - `_drop_dead_question_cards()`, from `interrupt()` (`POST /interrupt`)
+            and from `disconnect()` (idle timer / `DELETE /session`).
+          - `_drop_answered_question_card()`, from `submit_answers()`
+            (`POST /answers`) -- added in round 2 (`eeda393`, which both defines it
+            and calls it); round 3 only replaced its discriminator. Either way it
+            makes this window reachable on the ordinary answer path too, not just
+            on a stop.
+
+        Reproduced for the interrupt case: the agent asks a question, the card is
+        delivered and this generator suspends with it still at `queue[0]`; the
+        agent's last `Write` queues `file_changed: realwork.js` BEHIND it; the
+        user hits stop; the drop removes the head and shifts `realwork.js` into
+        slot 0. `queue[0] is ev` then fails, nothing is popped, and `realwork.js`
+        is delivered on the next pass. Mutated to an unconditional `pop(0)`, it
+        is destroyed outright -- the exact defect class this change exists to
+        eliminate -- and the whole suite still passes, which is why
+        `test_a_head_mutation_during_a_suspended_relay_does_not_eat_the_next_event`
+        exists to pin it.
+
+        So the guard is not merely load-bearing for one caller: it is what makes
+        EVERY out-of-band queue rewrite safe to perform while a relay is
+        suspended, and it is the reason those two methods can filter the queue at
+        all without auditing what the parked generator happens to be holding.
+
+        Accepts at-least-once delivery at the abandonment boundary -- a consumer
+        cancelled at its `__anext__` await AFTER this generator produced the
+        value leaves the event un-popped, so the next turn relays it again.
+        That is the deliberate trade the Discovery driver made and it holds here
+        too: see the duplicate-safety note on `_on_post_tool_use`.
+
+        SCOPE -- the ownership story in this file is ASYMMETRIC, deliberately so,
+        and a reader should not generalize from this method. The QUEUE side (hook
+        and can_use_tool events, everything routed through here) honors the rule.
+        The MESSAGE side does NOT: `_translate()` returns a plain list that `run`
+        yields one item at a time, so an `AssistantMessage` carrying several
+        blocks still loses its un-yielded remainder when the consumer walks away
+        (reproduced; byte-identical before and after this change, i.e.
+        pre-existing rather than introduced here). Closing that half needs the
+        durable-inbox structure `claude_driver._MessageReader` was built for -- a
+        task that owns `receive_response()` and drains into a list on the driver,
+        so no suspension of the relaying generator can destroy an in-flight
+        message. It is not reachable by another `_relay_queue`-shaped fix, which
+        is why it was left for its own change.
+        """
+        while self._queue:
+            ev = self._queue[0]
+            # HANDED OUT, recorded BEFORE the yield rather than after it.
+            #
+            # `_drop_answered_question_card` needs to know whether the consumer
+            # has already seen this event, and the pop site below cannot tell it:
+            # in the exact window that matters the pop site is NEVER REACHED.
+            # Measured -- the card is yielded, sse_starlette hands the frame to
+            # the client and then awaits the network write, the client is gone so
+            # that await is where the task dies, and this generator stays
+            # suspended at the `yield` forever. So "delivered" has to be recorded
+            # on the near side of the suspension.
+            #
+            # That makes this marker deliberately optimistic: it means "handed to
+            # the consumer", which is one step weaker than the pop's "consumer
+            # provably came back for more". It never gates a POP, so it cannot
+            # cause event loss through the relay itself: the pop still requires
+            # the round trip to complete.
+            #
+            # THE MIRROR WINDOW. The mark can say "seen" for an event the browser
+            # never rendered, and the SEND SIDE is how that happens in production:
+            #
+            #   `gen()` (routes/prototypes.py) DOES receive the event and DOES
+            #   serialize it -- `_redacted(event).model_dump_json()` -- and then
+            #   `sse_starlette._stream_response` awaits `send(...)` with that
+            #   chunk (sse/py:364). If the client is gone, THAT await is where the
+            #   task dies, after the mark and after the frame was built but before
+            #   it reached the wire.
+            #
+            # Measured through the real `PrototypeSession`: wire frames `[]`, card
+            # marked delivered, `_pending_interrupt_id` captured, then
+            # `send_answers -> True` and `_queue == []` -- a card the user never
+            # saw, destroyed. There is NO re-fetch that recovers it; the build
+            # simply stops asking.
+            #
+            # NOT the trigger, though two earlier drafts of this comment said so:
+            # "the consumer is cancelled at its `__anext__` and asyncio discards
+            # the produced value." Under a plain `async for` -- which is exactly
+            # what `_stream_response:360` uses -- the mark, the iid capture and
+            # `model_dump_json()` all run in the SAME event-loop step, so no
+            # suspension separates them. Swept 90 real-time cancellation offsets
+            # plus 400 plain trials: that state occurred ZERO times. It is
+            # reachable only by wrapping `__anext__` in a task and abandoning its
+            # result -- which `run()` does for `next_msg`, but the SSE layer does
+            # not.
+            #
+            # It is not reachable from the real UI today, and these are the two
+            # facts that make it unreachable -- both must stay true:
+            #   1. the prototype path exposes NO `GET /pending` route
+            #      (routes/prototypes.py; Discovery's turns.py:55 has one, this
+            #      does not), so nothing can re-surface a card out of band; and
+            #   2. `usePrototypeStream.ts:71-74` populates `pendingQuestions`
+            #      ONLY from the SSE `questions` event, so a card the browser
+            #      never received produces no form and no `POST /answers`.
+            # Adding a pending endpoint to this path, or another source for
+            # `pendingQuestions`, is therefore a KNOWN TRIGGER for this window and
+            # must come with a fix here.
+            #
+            # Why it is not simply closed: the network write happens in a different
+            # coroutine entirely. This event travels a chain of async generators
+            # (`_relay_queue` -> `run` -> `PrototypeSession.send_message` ->
+            # `gen`), each of which suspends independently, and only the SSE layer
+            # driving that chain ever calls `send(...)`. Nothing reports the result
+            # back down the chain -- verified: at the moment `send()` runs, this
+            # generator is not on the stack at all. This generator's only signal
+            # succeeded is being resumed for the next item -- which is precisely the
+            # pop site, and round 3 measured that as too late, since in the window
+            # this marker exists for the pop site is never reached at all. A true
+            # "acknowledged" mark would need the ASGI send result plumbed back into
+            # the builder, which is a different design, not a tightening of this one.
+            # So the choice is only which way to be wrong, and this direction is
+            # preferred because facts 1/2 above make it unreachable from the UI while
+            # the opposite direction is the 409 users actually hit.
+            #
+            # Marked on the EVENT, not in an id()-keyed side table: `id()` is
+            # reused after GC, so a later unrelated event could inherit a stale
+            # "delivered" mark. `_mark_delivered` uses a private attribute rather
+            # than an AgentEvent field, so the wire contract (models.py, and the
+            # fixed `kind` set) is untouched and nothing new is serialized to the
+            # browser.
+            _mark_delivered(ev)
+            yield ev
+            # Reached only if the consumer came back for the next item.
+            if self._queue and self._queue[0] is ev:
+                self._queue.pop(0)
+
+    async def _ensure_client(self):
+        if self._client is None:
+            await self._restore_transcript()
+            _suppress_shadowed_callback_warning()
+            self._client = self._factory()
+            await self._client.connect()
+        return self._client
+
+    async def _restore_transcript(self) -> None:
+        """Restore the local transcript from the S3 mirror if the session to resume lacks one.
+
+        The session (proto/session.py) has already decided whether to resume, based on
+        the S3 record. This only makes that record findable locally by the CLI. On
+        failure it connects without the restore, and the CLI ends with "No conversation
+        found" -- the same failure as when restore was left to the SDK.
+        """
+        if not self._resume or self._session_store is None:
+            return
+        if _transcript_path(self._config_dir, self._workspace,
+                            self._session_id).is_file():
+            return
+        try:
+            await restore_transcript(self._session_store, self._config_dir,
+                                     self._workspace, self._session_id)
+        except Exception:
+            _log.exception("transcript restore failed for build session %s",
+                           self._session_id)
+
+    # DUPLICATE-DELIVERY SAFETY for the prototype path, checked against these
+    # consumers rather than inherited from the Discovery ruling.
+    #
+    # `_relay_queue` pops only after delivery, so the one item in flight when a
+    # consumer is cancelled at its `__anext__` is re-sent on the next turn:
+    # at-least-once, never at-most-once (the alternative loses it outright,
+    # which is the defect). What a duplicate does to the prototype tab, per kind:
+    #
+    #   file_changed -> usePrototypeStream.ts:68-70 dedupes by path
+    #                   (`prev.includes(path) ? prev : [...prev, path]`), so
+    #                   `changedPaths` is idempotent. The trace entry (line 85-87)
+    #                   does append a second row -- cosmetic, in a collapsed
+    #                   "추론 과정" (reasoning) accordion, and it accurately reports that the
+    #                   file was written.
+    #   status       -> trace-only, same append-only cosmetic story.
+    #   message      -> NOT queued here; messages come from `_translate`, never
+    #                   through this queue, so text cannot be doubled by it.
+    #   questions    -> the ONE kind a duplicate would harm: a re-shown card
+    #                   whose future is gone answers with a 409
+    #                   (routes/prototypes.py:212). Handled structurally instead
+    #                   of by luck -- `_drop_dead_question_cards` removes it at
+    #                   exactly the two points its answerer dies (interrupt,
+    #                   disconnect). A card whose future is still LIVE is
+    #                   correctly re-shown: it is still answerable.
+    #   stage/document -> never produced on this path at all. Both are derived
+    #                   from Discovery's workspace writes (agent/reconcile.py),
+    #                   which this path never touches, and
+    #                   usePrototypeStream has no stage/document branch. So the
+    #                   brief's "document panel and artifact list" concern maps
+    #                   here to `changedPaths` only, which is dedupe-safe.
+    #
+    # Conclusion: the Discovery ruling does transfer, but for a reason that had
+    # to be re-checked -- this tab's reducers are dedupe-by-path or append-only
+    # cosmetic, and the one non-idempotent kind is dropped at its death points.
+    async def _on_pre_tool_use(self, input_data, tool_use_id, context) -> dict:
+        """The build agent's gate for Bash, settings files, and WebFetch. Decisions live in proto/build_guard.py.
+
+        Why a hook: builds run under `bypassPermissions`, so Bash is auto-approved
+        and never reaches can_use_tool -- the only gate the SDK designates is
+        PreToolUse (rationale in the hooks comment of the factory above and the
+        build_guard header).
+
+        **Passing is an empty dict.** Returning "allow" would skip can_use_tool as
+        well and kill the AskUserQuestion interception (can_use_tool docs in types.py).
+        """
+        name = input_data.get("tool_name", "")
+        tool_input = input_data.get("tool_input") or {}
+        if name == "Bash":
+            offender = bash_denial(tool_input.get("command"))
+            reason = (None if offender is None
+                      else prompts.unsafe_command_refused(self._language, offender))
+        elif name in WRITE_TOOLS:
+            path = tool_input.get("file_path") or tool_input.get("notebook_path")
+            offender = settings_write_denial(path, self._workspace)
+            reason = (None if offender is None
+                      else prompts.settings_write_refused(self._language, offender))
+        elif name == "WebFetch":
+            offender = fetch_denial(tool_input.get("url"), self._user_fetch_hosts)
+            reason = (None if offender is None
+                      else prompts.fetch_refused(self._language, offender, FETCH_HOSTS,
+                                                 tuple(sorted(self._user_fetch_hosts))))
+        else:
+            # The matcher only hooks the tools above, but if the hook config and
+            # these branches drift apart, we must pass silently -- blocking an
+            # unknown tool would stall the build.
+            return {}
+        if reason is None:
+            return {}
+        # Log it: the denial reason goes only to the model, so the operator needs
+        # a separate way to see what was blocked.
+        _log.warning("build gate denied %s: %s", name, offender)
+        return self._deny(reason)
+
+    @staticmethod
+    def _deny(reason: str) -> dict:
+        """Shape of a PreToolUse denial response. The wording is owned by proto/prompts.py --
+        text the model reads must be in the project language, and pointing out the
+        offending fragment is also its job (without that, the model retries with only
+        the form changed and gets stuck in a loop)."""
+        return {"hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "permissionDecision": "deny",
+            "permissionDecisionReason": reason,
+        }}
+
+    async def _on_post_tool_use(self, input_data, tool_use_id, context) -> dict:
+        name = input_data.get("tool_name", "")
+        if name in _FILE_TOOLS:
+            fp = (input_data.get("tool_input") or {}).get("file_path", "")
+            rel = _rel(fp, self._workspace)
+            if rel is None:
+                self._queue.append(AgentEvent(
+                    kind="status", text="file outside workspace ignored"))
+            else:
+                self._queue.append(AgentEvent(kind="file_changed", path=rel))
+        return {}
+
+    def _answer_to_sdk(self, value: str, sdk_options: list[dict]) -> str:
+        """QuestionForm answer value → SDK label(s). Accepted forms:
+        "A" | "A,C" | "A: note" | free text (unmatched passes through)."""
+        def label(letter: str) -> str | None:
+            idx = _LETTERS.find(letter.strip())
+            if 0 <= idx < len(sdk_options):
+                return sdk_options[idx].get("label", "")
+            return None
+        if ":" in value:
+            head, _, note = value.partition(":")
+            l = label(head)
+            if l is not None:
+                return f"{l}:{note}"
+        parts = [label(p) for p in value.split(",")]
+        if parts and all(p is not None for p in parts):
+            return ", ".join(parts)
+        return value  # free text (Other)
+
+    async def _on_can_use_tool(self, tool_name, input_data, context):
+        from claude_agent_sdk.types import PermissionResultAllow, PermissionResultDeny
+        if tool_name != "AskUserQuestion":
+            return PermissionResultAllow(updated_input=input_data)
+        import json as _json, uuid
+        # Normalize a payload that arrived as a string -- same reason and same
+        # helper as claude_driver (see its comment and normalize_sdk_questions'
+        # docstring).
+        sdk_questions = normalize_sdk_questions(input_data.get("questions"))
+        # question_file_from_sdk raises ValueError on unusable input (e.g. a
+        # question with zero options) -- mirror ask_questions in tools.py:
+        # deny with a message the model can read and retry from, instead of
+        # letting the exception escape. Unlike ask_questions (which returns a
+        # tool-result string), the can_use_tool contract only speaks
+        # PermissionResult -- PermissionResultDeny is the SDK-native way to
+        # hand the model an explanation and no other shape is invented here.
+        try:
+            qfile = question_file_from_sdk(sdk_questions, name="prototype-questions")
+        except ValueError as e:
+            _log.warning("AskUserQuestion payload rejected: %s", e)
+            return PermissionResultDeny(
+                message=f"질문을 만들 수 없다: {e}\n"
+                        "각 질문에 옵션을 최소 1개 넣어 AskUserQuestion을 다시 호출해라.")
+        # Restore join key -- reads the same value the same way as claude_driver (see its comment).
+        tool_use_id = getattr(context, "tool_use_id", None) or ""
+        iid = uuid.uuid4().hex
+        payload = _json.dumps({"interrupt_id": iid, "questions": qfile},
+                              ensure_ascii=False)
+        self._pending_payload = payload
+        self._pending_iid = iid
+        loop = asyncio.get_running_loop()
+        self._pending_question = loop.create_future()
+        self._queue.append(AgentEvent(kind="questions", payload=payload))
+        try:
+            answers = await self._pending_question  # stays open until /answers
+        except asyncio.CancelledError:
+            # interrupt() cancels this future and clears pending state
+            # itself, but guard defensively in case cancellation reached
+            # us some other way (e.g. task cancellation from outside).
+            self._pending_payload = None
+            self._pending_question = None
+            raise
+        try:
+            # "number -> letter/text" (our contract) → "question text ->
+            # label" (SDK contract).
+            sdk_answers = {}
+            for k, v in answers.items():
+                try:
+                    q = sdk_questions[int(k) - 1]
+                except (ValueError, IndexError):
+                    continue
+                sdk_answers[q.get("question", "")] = self._answer_to_sdk(
+                    v, q.get("options", []))
+        finally:
+            self._pending_payload = None
+            self._pending_question = None
+        # Written **before** returning updated_input -- this return resumes the
+        # turn (same reason as the same spot in claude_driver). save swallows failures.
+        if self._answer_log is not None:
+            await self._answer_log.save(tool_use_id=tool_use_id, interrupt_id=iid,
+                                        questions=qfile, answers=answers)
+        return PermissionResultAllow(updated_input={
+            "questions": sdk_questions,
+            "answers": sdk_answers,
+        })
+
+    def _agent_row(self, **fields) -> AgentEvent:
+        return AgentEvent(kind=AGENT_ACTIVITY, payload=activity_payload(**fields))
+
+    def _close_agent_row(self, task_id: str, *, status: str,
+                         summary: str | None = None) -> list[AgentEvent]:
+        """Close the row. Emit nothing if there is nothing new to say.
+
+        `task_updated` and `task_notification` both report termination, and **cases
+        where only one of them arrives are real** (the SDK says so: a background task
+        or one killed by TaskStop may skip the notification), so we listen to both.
+
+        But the measured order is updated -> notification, and **only the latter
+        carries the summary**. So "always ignore once closed" would always discard the
+        summary. There are only two rules:
+
+          - not closed yet -> close it
+          - closed, the summary was not sent, and this one has a summary -> emit once more
+
+        Everything else passes silently. Folding the second `done` into one trace line
+        is the frontend's job (upsert by `task_id`) -- this side cannot know which
+        termination is the last.
+        """
+        if not task_id:
+            return []
+        has_summary = bool(summary and summary.strip())
+        summary_sent = self._agent_closed.get(task_id)
+        if summary_sent is not None and (summary_sent or not has_summary):
+            return []
+        self._agent_closed[task_id] = has_summary
+        # Also remove it from the join table: a tool call arriving late under a
+        # finished agent's tool_use_id must not revive a dead row.
+        self._agent_tasks = {tuid: tid for tuid, tid in self._agent_tasks.items()
+                             if tid != task_id}
+        return [self._agent_row(task_id=task_id, state="done", status=status,
+                                summary=summary)]
+
+    def _translate(self, msg) -> list[AgentEvent]:
+        events: list[AgentEvent] = []
+        tname = type(msg).__name__
+        # ---- Subagent heartbeats ----
+        #
+        # In the real SDK all four kinds are subclasses of `SystemMessage`, so
+        # `type(msg).__name__` arrives as each one's own class name. While these
+        # branches were missing, all of them were silently dropped, which is why
+        # the build screen looked frozen.
+        if tname == "TaskStartedMessage":
+            task_id = getattr(msg, "task_id", "") or ""
+            tool_use_id = getattr(msg, "tool_use_id", None)
+            if task_id:
+                if tool_use_id:
+                    self._agent_tasks[tool_use_id] = task_id
+                events.append(self._agent_row(
+                    task_id=task_id, state="started",
+                    label=getattr(msg, "description", None) or None))
+            return events
+        if tname == "TaskProgressMessage":
+            task_id = getattr(msg, "task_id", "") or ""
+            tool = getattr(msg, "last_tool_name", None)
+            # A heartbeat without a tool name has nothing to show. `description` is
+            # deliberately unused -- it is English prose generated by the CLI, which
+            # mismatches the screen language in ko projects (agent_activity header).
+            if task_id and tool and task_id not in self._agent_closed:
+                events.append(self._agent_row(task_id=task_id, state="progress",
+                                              tool=tool))
+            return events
+        if tname == "TaskNotificationMessage":
+            status = str(getattr(msg, "status", "") or "")
+            if status in TERMINAL_TASK_STATUSES:
+                return self._close_agent_row(
+                    getattr(msg, "task_id", "") or "", status=status,
+                    summary=getattr(msg, "summary", None))
+            return events
+        if tname == "TaskUpdatedMessage":
+            status = str(getattr(msg, "status", "") or "")
+            # Closing the row on a non-terminal transition (pending/running/paused) would make it vanish as soon as it appears.
+            if status in TERMINAL_TASK_STATUSES:
+                return self._close_agent_row(
+                    getattr(msg, "task_id", "") or "", status=status)
+            return events
+        if tname == "AssistantMessage":
+            # If a subagent sent the message, this is where we decide which row
+            # it belongs to. A parent not in the table (TaskStarted not seen, or
+            # the agent already finished) is **dropped** -- forwarding it as the
+            # orchestrating agent's `status` makes the subagent's work look like the
+            # lead's, which was the former behavior that made the pinned line
+            # flicker between names.
+            parent = getattr(msg, "parent_tool_use_id", None)
+            task_id = self._agent_tasks.get(parent) if parent else None
+            for block in getattr(msg, "content", []):
+                btype = type(block).__name__
+                if btype == "TextBlock":
+                    if parent is not None:
+                        # `forward_subagent_text` stays off -- if the three
+                        # narratives mix into the chat bubbles, there is no point
+                        # in having moved progress display out of the conversation
+                        # flow (LiveActivityBar header). The SDK does not even send
+                        # it today, but the day that option is turned on, this rule
+                        # must already be in the code.
+                        continue
+                    events.append(AgentEvent(kind="message", text=block.text))
+                elif btype == "ToolUseBlock":
+                    if parent is not None:
+                        if task_id is not None:
+                            events.append(self._agent_row(
+                                task_id=task_id, state="progress",
+                                tool=block.name,
+                                detail=tool_detail(block.name,
+                                                   getattr(block, "input", None),
+                                                   file_tools=True)))
+                        continue
+                    # Send what was done as well -- a bare `Bash` misses the point
+                    # of the trace (tool_trace module header). Only values are
+                    # sent; the frontend draws icons and separators in the UI language.
+                    detail = tool_detail(block.name, getattr(block, "input", None))
+                    # Include detail in the duplicate-folding key. Folding by name
+                    # alone collapses three consecutive Reads of different files
+                    # into a single `Read` line -- claude_driver already uses this key.
+                    key = (block.name, detail)
+                    if key != self._last_status:
+                        self._last_status = key
+                        events.append(AgentEvent(
+                            kind="status", text=block.name,
+                            payload=(json.dumps({"detail": detail},
+                                                ensure_ascii=False)
+                                     if detail else None)))
+        elif tname == "ResultMessage":
+            events.append(AgentEvent(kind="done"))
+        return events
+
+    async def run(self, text: str) -> AsyncIterator[AgentEvent]:
+        if self._turn_active:
+            yield AgentEvent(kind="error", text="turn already in progress")
+            return
+        self._turn_active = True
+        self._interrupted = False
+        self._last_status: tuple[str, str | None] | None = None
+        # A subagent lives as long as the turn that launched it. Carrying the
+        # table across turns would attribute a reused tool_use_id to an
+        # already-finished agent's row, reviving a dead agent on screen.
+        self._agent_tasks = {}
+        self._agent_closed = {}
+        next_msg: asyncio.Future | None = None
+        # The turn's ONE terminal event, held rather than yielded the moment
+        # `_translate` produces it -- see the terminal harvest after the loop.
+        terminal: AgentEvent | None = None
+        try:
+            client = await self._ensure_client()
+            await client.query(text)
+            # Race the next message against the hook/tool-callback queue:
+            # while an AskUserQuestion is pending, receive_response() yields
+            # nothing at all, so a plain `async for` would never let a
+            # queued `questions` event reach the SSE stream. Poll the queue
+            # on a short timeout instead of blocking indefinitely on the
+            # next message.
+            agen = client.receive_response().__aiter__()
+            next_msg = asyncio.ensure_future(agen.__anext__())
+            while True:
+                assert next_msg is not None  # loop invariant (narrows Optional)
+                done, _ = await asyncio.wait({next_msg}, timeout=0.05)
+                # CALL SITE 1 -- the normal turn's per-poll relay. This is the
+                # one that runs thousands of times a build and the one the
+                # reproduction hit: a MultiEdit burst queues three
+                # `file_changed` events, the SSE client disconnects after the
+                # first, and the batch pop took the other two down with the
+                # frame. `_relay_queue` leaves them owned instead.
+                async for ev in self._relay_queue():
+                    yield ev
+                if not done:
+                    continue
+                try:
+                    msg = next_msg.result()
+                except StopAsyncIteration:
+                    break
+                for ev in self._translate(msg):
+                    if ev.kind == "done":
+                        # HELD, not yielded here. `done` used to go out the
+                        # moment the ResultMessage was translated, which put it
+                        # AHEAD of the post-loop queue relay (old call site 4)
+                        # -- and sse.ts:29 closes the EventSource on `done`, so
+                        # every event that relay yielded afterwards was dropped
+                        # client-side. The terminal harvest below drains the
+                        # queue first and emits this last.
+                        terminal = ev
+                        continue
+                    yield ev
+                # Context usage. The end-of-turn (ResultMessage) value also goes out
+                # here -- since terminal is being held, it precedes `done` (sse.ts
+                # closes the stream on `done`).
+                if wants_sample(msg):
+                    usage = await self._context.sample(client)
+                    if usage is not None:
+                        yield usage
+                if terminal is not None:
+                    # The SDK's receive_response() returns right after the
+                    # ResultMessage, so re-arming would only buy a
+                    # StopAsyncIteration on an already-finished iterator.
+                    #
+                    # What this `break` gives up, since the original re-armed
+                    # `__anext__()` specifically to drive that generator to its
+                    # `return`: `agen` is left SUSPENDED rather than finalized,
+                    # so its cleanup runs at GC / loop `shutdown_asyncgens()`
+                    # instead of here. Measured and accepted -- no
+                    # "async generator ignored GeneratorExit", no "Task was
+                    # destroyed but it is pending", no leaked tasks over 25 turns
+                    # under asyncio debug mode -- because the object that actually
+                    # owns the subprocess and the anyio streams is the CLIENT, and
+                    # `disconnect()` closes the query independently of this
+                    # iterator.
+                    #
+                    # To be precise about the cost, since an earlier draft of this
+                    # comment got it backwards and contradicted the two lines
+                    # above: re-arming would NOT hang. `receive_response()`
+                    # returns immediately after the ResultMessage, so the next
+                    # `__anext__()` raises StopAsyncIteration promptly (measured)
+                    # -- which is exactly what those two lines say, and it would
+                    # also finalize the generator. What the `break` buys is
+                    # therefore not stall-avoidance but simplicity: it skips one
+                    # more scheduler round trip and an exception whose only
+                    # purpose is to re-derive a fact we already know, at the cost
+                    # of deferring a cleanup that owns nothing.
+                    break
+                next_msg = asyncio.ensure_future(agen.__anext__())
+        except asyncio.CancelledError:
+            # interrupt() cancels the pending-question future; that
+            # cancellation surfaces here via next_msg.result(). It is OUR
+            # deliberate interrupt, not the consumer cancelling us -- so the
+            # stream must still end with a proper terminal event (the UI
+            # otherwise shows a dead connection for a user-initiated stop).
+            # A genuine external cancellation (consumer task cancelled) has
+            # _interrupted unset and must propagate untouched.
+            if not self._interrupted:
+                raise
+            # CALL SITE 2 -- the interrupt path. Relayed BEFORE the terminal
+            # pair for the same sse.ts:29 reason as everywhere else: whatever
+            # the agent wrote just before the user hit stop is real work, and
+            # anything emitted after `done` never reaches onEvent.
+            async for ev in self._relay_queue():
+                yield ev
+            yield AgentEvent(kind="status", text="interrupted")
+            yield AgentEvent(kind="done")
+            return
+        except Exception:
+            _log.exception("sdk turn failed")
+            # CALL SITE 3 -- the error path. Order matters here specifically:
+            # sse.ts:29 closes the EventSource on `error` as well as on `done`,
+            # so a queue relayed after the terminal event is silently dropped
+            # client-side and the artifact list ends the turn disagreeing with
+            # what the agent actually wrote.
+            async for ev in self._relay_queue():
+                yield ev
+            yield AgentEvent(kind="error", text="agent turn failed")
+            return
+        finally:
+            self._turn_active = False
+            # The consumer may abandon this generator mid-stream (SSE client
+            # disconnect -> aclose() -> GeneratorExit): without this cancel
+            # the in-flight __anext__ future outlives the generator and
+            # asyncio logs "Task was destroyed but it is pending!".
+            if next_msg is not None and not next_msg.done():
+                next_msg.cancel()
+        # CALL SITE 4 -- the terminal exit, reached only on a NORMAL loop exit
+        # (both `except` arms return, so this is the success path only).
+        #
+        # What actually changed here vs. the old shape: the old code yielded
+        # `done` EAGERLY, the moment `_translate` produced it, and then drained
+        # the queue below -- i.e. after the terminal event. sse.ts:29 /
+        # prototypes.ts:164 close the EventSource on `done`, so those events were
+        # written by the backend and dropped by the client. Holding `terminal`
+        # and emitting it last is that fix.
+        #
+        # HONEST NOTE on the drain below: it is DEFENSIVE, not load-bearing, and
+        # measured to be so -- instrumented across the whole suite, this line is
+        # reached 13 times and `self._queue` is empty every single time. That is
+        # structural rather than lucky: the loop's own relay (call site 1) runs
+        # at the top of every pass and drains the queue to exhaustion, and
+        # between that last drain and the `break` there is no suspension point
+        # for a hook to append through (`_translate` is synchronous, and a
+        # ResultMessage translates to the terminal event alone, so no `yield`
+        # intervenes). Mutating this drain to run AFTER the terminal event
+        # therefore changes no observable behavior. It stays because it costs
+        # nothing and it keeps the invariant true under future edits that DO add
+        # a suspension there -- but no test pins its ordering, because no test
+        # honestly can.
+        while self._queue:
+            async for ev in self._relay_queue():
+                yield ev
+        if self._interrupted:
+            # Moved here from inside `_translate`'s loop along with `done`, so
+            # the interrupt marker stays immediately before the terminal event
+            # rather than being emitted at translate time and separated from it
+            # by the harvest above.
+            yield AgentEvent(kind="status", text="interrupted")
+        # Exactly one terminal event, always LAST. `terminal` is None only when
+        # the message stream ended with no ResultMessage at all; that yielded
+        # ZERO terminal events before this change, which hangs the SSE client
+        # forever (sse.ts only closes on done/error/transport failure).
+        yield terminal if terminal is not None else AgentEvent(kind="done")
+
+    async def interrupt(self) -> None:
+        if self._client is None or not self._turn_active:
+            return  # idempotent no-op
+        self._interrupted = True
+        # A pending question cannot survive an interrupt: _on_can_use_tool's
+        # await is abandoned along with the rest of this turn, so leaving
+        # _pending_payload set would make pending() report a question that
+        # can never be answered, and a later submit_answers() would resolve
+        # a future nobody is listening on anymore (returns True but nothing
+        # continues). Clear it before touching the client, so our state is
+        # consistent even if client.interrupt() raises.
+        if self._pending_question is not None and not self._pending_question.done():
+            self._pending_question.cancel()
+        self._pending_payload = None
+        self._pending_question = None
+        self._pending_iid = None
+        self._drop_dead_question_cards()
+        await self._client.interrupt()
+
+    def _drop_dead_question_cards(self) -> None:
+        """Drop any `questions` event still OWNED by `self._queue`.
+
+        A consequence of the delivery-then-pop ownership rule, and one of the two
+        places it needs a counterweight (the other is `_drop_answered_question_card`
+        below -- same idea, different trigger). If a turn was abandoned while its
+        `questions` event was being delivered, that event correctly stays at the
+        head of the queue for the next turn to relay -- which is what stops the
+        loss. But once the question's future has been cancelled (interrupt) or its
+        subprocess torn down (disconnect), no `submit_answers` can ever resolve
+        it: relaying it later hands the user a card that looks live, and
+        answering it gets a 409 from routes/prototypes.py because the session's
+        `_pending_interrupt_id` no longer matches.
+
+        So it is dropped exactly where the thing that could ANSWER it dies --
+        never merely because a consumer walked away. Mirrors the same two lines
+        in claude_driver.disconnect (claude_driver.py:1242), which is where this
+        hole was found on the Discovery side.
+
+        Unconditional on kind (not keyed by interrupt id) because both callers
+        are killing the subprocess or the whole turn: every question the builder
+        is holding becomes unanswerable at once, not just one round's.
+        """
+        self._queue[:] = [ev for ev in self._queue if ev.kind != "questions"]
+
+    def _drop_answered_question_card(self, interrupt_id: str) -> None:
+        """Retire the owned `questions` event for the round just ANSWERED --
+        but only if the consumer has ALREADY SEEN it.
+
+        The third drop point, ported from claude_driver.py:1181-1183 (its
+        `run_answers`). Without it, a successfully answered question can be
+        re-shown: a regression this ownership change introduced, since the old
+        batch pop had already destroyed the event.
+
+        Reproduced end-to-end through the real `PrototypeSession`: the card is
+        delivered and appears on screen; sse_starlette then awaits the network
+        write, the client is gone, and the task dies THERE -- leaving `gen()`,
+        `send_message`, `run` and `_relay_queue` all suspended at their yields
+        with the card still owned. The pending future survives, because
+        `can_use_tool` runs on a detached SDK task
+        (claude_agent_sdk/_internal/query.py:231 `spawn_detached`), not on the
+        abandoned generator. So the user answers from the still-open tab,
+        `submit_answers` returns True -- and the next turn relayed the card again:
+        a question already answered, whose re-answer returns False -> 409
+        (routes/prototypes.py:212) -> "답변을 제출하지 못했습니다" (failed to submit answers).
+
+        WHY THE DISCRIMINATOR IS DELIVERY AND NOT TURN LIVENESS. Round 2 used
+        `_turn_active`, and it is simply the wrong signal: BOTH cases have it
+        True at answer time.
+
+          - live `run()` that has NOT yet relayed the card -- must NOT drop, or
+            the card is retired out from under the live generator and the user
+            never sees the question at all (measured: consumer got `['done']`;
+            caught by the pre-existing test_question_roundtrip, which was right).
+          - card already delivered, stream then died before the next `__anext__`
+            -- MUST drop, or it is re-shown and 409s.
+
+        `_turn_active` cannot separate those; "has the consumer seen it" can, and
+        that is exactly what `_mark_delivered` records at the `yield` in
+        `_relay_queue`. Note the mark has to be set BEFORE the yield, not at the
+        pop site: in this very window the pop site is never reached (measured),
+        because the generator never resumes.
+
+        Still keyed by interrupt id, unlike `_drop_dead_question_cards` -- but the
+        honest reason is DEFENSIVENESS, not preserving something answerable, and an
+        earlier draft of this docstring claimed the latter. Measured:
+
+          - The keying only changes an outcome when TWO *delivered* `questions`
+            cards are owned simultaneously; otherwise `_was_delivered` alone
+            already decides every case.
+          - And a second round makes the first permanently unanswerable anyway,
+            because `_on_can_use_tool` overwrites the single `_pending_iid` slot:
+            with rounds A then B live, `submit_answers(iid_A)` returns False
+            (measured). So the card the keying preserves can now only produce a
+            409 -- it is not a card the user can act on.
+
+        It is kept regardless, for two reasons worth stating rather than dressing
+        up: dropping another round's event is a strictly wider blast radius than
+        keeping it, and `_pending_iid` being a single slot is not a property this
+        method should depend on -- if the builder ever tracks concurrent rounds,
+        unkeyed dropping silently becomes the message-loss defect wearing a
+        different hat. `test_answering_one_round_does_not_retire_a_different_rounds_card`
+        pins the keying with BOTH cards marked delivered, which is the only shape
+        in which the keying is load-bearing.
+
+        Not a loss: the answers this call carries are that event's entire purpose,
+        so a delivered card has been fulfilled rather than discarded.
+        """
+        self._queue[:] = [
+            ev for ev in self._queue
+            if not (ev.kind == "questions"
+                    and _interrupt_id_of(ev) == interrupt_id
+                    and _was_delivered(ev))]
+
+    async def submit_answers(self, interrupt_id: str,
+                             answers: dict[str, str]) -> bool:
+        if (self._pending_question is None
+                or getattr(self, "_pending_iid", None) != interrupt_id
+                or self._pending_question.done()):
+            return False
+        # Before resolving: this round's card is now fulfilled, so it must not be
+        # relayed to the user again. See `_drop_answered_question_card`.
+        self._drop_answered_question_card(interrupt_id)
+        self._pending_question.set_result(answers)
+        return True
+
+    async def pending(self) -> str | None:
+        return self._pending_payload
+
+    async def disconnect(self) -> None:
+        """Tear down the claude subprocess. Idempotent -- close() and the idle
+        timer can both reach here.
+
+        Also clears the pending question and drops any `questions` event still
+        owned by the queue: the future that would resolve it dies with the
+        subprocess, so a later turn relaying that card would be advertising a
+        question nothing can answer. Same reasoning as interrupt() above --
+        see `_drop_dead_question_cards`.
+        """
+        if self._pending_question is not None and not self._pending_question.done():
+            self._pending_question.cancel()
+        self._pending_payload = None
+        self._pending_question = None
+        self._pending_iid = None
+        self._drop_dead_question_cards()
+        client, self._client = self._client, None
+        if client is None:
+            return
+        try:
+            await client.disconnect()
+        except Exception:
+            _log.exception("builder disconnect failed")

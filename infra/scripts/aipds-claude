@@ -1,0 +1,9 @@
+#!/bin/sh
+# The SDK's `cli_path` (backend/aipds/launcher.py). The SDK only appends CLI arguments after this path, so
+# which project and what it is for is handed over by the backend via env. The wrapper (aipds-launch) makes
+# every actual decision — this file only reshapes the arguments.
+#
+# Install: `aipds-harden install` copies it to /usr/local/libexec/aipds/claude (root 0755).
+exec /usr/bin/sudo -n /usr/local/libexec/aipds/launch run \
+  "$AIPDS_LAUNCH_KIND" "$AIPDS_LAUNCH_PROJECT" ${AIPDS_LAUNCH_SLUG:+"$AIPDS_LAUNCH_SLUG"} \
+  -- "$@"

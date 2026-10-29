@@ -1,0 +1,350 @@
+#!/usr/bin/python3 -I
+# Launches agent and prototype processes under a uid different from the backend, in a sandbox
+# where only their own project tree is visible. The backend (aipds) calls it via sudo — this file is **a path to root**.
+#
+#   aipds-launch run   <kind> <project_id> [<slug>] -- <args…>
+#   aipds-launch stop  <kind> <project_id> <slug>
+#   aipds-launch sweep
+#   aipds-launch check
+#
+# Install: `aipds-harden install` **copies** this file to /usr/local/libexec/aipds/launch (root 0755),
+# and sudoers allows only that copy. This file in the repo is writable by aipds, so if sudoers
+# pointed at it directly, aipds would gain root.
+#
+# Rules (all input is untrusted):
+# - Paths are **computed** from kind, project_id, and slug. The caller does not supply paths.
+# - The executable is determined by kind (the claude bundled binary or /usr/bin/npm). npm arguments are allowlisted.
+# - env passes only an allowlist of names, and those whose values matter (the credentials URI, PORT) are format-checked.
+# - Arguments do not go through a shell (exec with an array). systemd expands `${VAR}` in ExecStart
+#   arguments, so every `$` in every argument is escaped as `$$` (measured: systemd 252).
+#
+# Isolation (measured evidence in the docs plan 3·4-BC §6.1):
+# - The unit starts as root, creates a PID namespace with `unshare --pid --mount-proc`, then
+#   drops to the kind's uid with `setpriv`. That is because other units with the same uid can read each
+#   other's mount namespaces through `/proc/<pid>/root` (ProtectProc=invisible hides only other uids).
+# - The whole app tree (/opt/aipds) is covered with an empty tmpfs and only its own tree is bound back.
+#   CLI kinds additionally get only the bundled binary, read-only. The app tree contains not only other
+#   projects (workspaces/, protos/, agent-home/) but also the app's source and git checkout — see build_run below.
+# - IMDS blocking is a per-unit IPAddressDeny (cgroup BPF) — the instance has no iptables.
+#   Only when `imds_block=1` in /etc/aipds/launch.conf (`aipds-harden imds block`).
+from __future__ import annotations
+
+import hashlib
+import json
+import os
+import re
+import secrets
+import subprocess
+import sys
+from pathlib import Path
+
+APP = Path("/opt/aipds")
+WORKSPACES = APP / "workspaces"
+PROTOS = APP / "protos"
+AGENT_HOME = APP / "agent-home"
+CONF = Path("/etc/aipds/launch.conf")
+CLAUDE_GLOB = "backend/.venv/lib/python3*/site-packages/claude_agent_sdk/_bundled/claude"
+NPM = "/usr/bin/npm"
+SYSTEMD_RUN = "/usr/bin/systemd-run"
+SYSTEMCTL = "/usr/bin/systemctl"
+UNSHARE = "/usr/bin/unshare"
+SETPRIV = "/usr/bin/setpriv"
+CHMOD = "/usr/bin/chmod"
+GROUP = "aipds-work"
+UNIT_PREFIX = "aipds-run-"
+
+#: kind → (uid, executable kind, whether slug is required, MemoryMax). Memory to be calibrated from measurements in stage A.
+KINDS = {
+    "discovery": ("aipds-agent", "claude", False, "1G"),
+    "build": ("aipds-agent", "claude", True, "3G"),
+    "host-build": ("aipds-proto", "npm", True, "3G"),
+    "proto": ("aipds-proto", "npm", True, "512M"),
+}
+
+#: Every argument the npm kind accepts. Any combination not listed here is rejected.
+NPM_ARGS = {
+    "host-build": (("install",), ("run", "build")),
+    "proto": (("run", "start"), ("run", "dev")),
+}
+
+#: Hosting kinds must have deterministic unit names — `stop` looks them up by name
+#: (killing the systemd-run client does not stop the unit, measured).
+DETERMINISTIC = {"host-build", "proto"}
+
+#: env names passed through as is. Must be the same list as env_keep in sudoers (aipds-harden).
+PASS_EXACT = {
+    "ANTHROPIC_MODEL", "AWS_REGION", "AWS_DEFAULT_REGION",
+    "AWS_CONTAINER_AUTHORIZATION_TOKEN",
+    "NEXT_PUBLIC_BASE_PATH", "PROTO_BASE_PATH", "BEDROCK_MODEL_ID",
+}
+PASS_PREFIX = ("CLAUDE_CODE_", "CLAUDE_AGENT_SDK_")
+#: env whose value format is checked too. Dropped if it does not match.
+PASS_CHECKED = {
+    # Only the backend's credentials endpoint on loopback (aipds/credentials.py). Allowing other addresses
+    # would let the agent's AWS SDK fetch credentials from a place the caller chose.
+    "AWS_CONTAINER_CREDENTIALS_FULL_URI":
+        re.compile(r"http://127\.0\.0\.1:[0-9]{1,5}/[A-Za-z0-9/_-]*\Z"),
+    "PORT": re.compile(r"[0-9]{1,5}\Z"),
+}
+
+#: Characters that cannot be used in a path segment. `/` and NUL break paths; whitespace, `:`, quotes, and `\` break
+#: systemd's BindPaths list parsing; `%` and `$` break systemd substitution. Hangul project ids pass.
+_BAD_SEGMENT = re.compile(r"[/\x00-\x20\x7f:\"'\\%$]")
+
+
+class LaunchError(Exception):
+    pass
+
+
+def check_segment(value: str, what: str) -> str:
+    if (not value or value in (".", "..") or len(value.encode("utf-8")) > 200
+            or _BAD_SEGMENT.search(value)):
+        raise LaunchError(f"invalid {what}: {value!r}")
+    return value
+
+
+def read_conf(path: Path = CONF) -> dict[str, str]:
+    """`key=value` 줄. 없으면 빈 dict(= IMDS 차단 꺼짐)."""
+    conf: dict[str, str] = {}
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        return conf
+    for line in text.splitlines():
+        line = line.strip()
+        if line and not line.startswith("#") and "=" in line:
+            key, _, value = line.partition("=")
+            conf[key.strip()] = value.strip()
+    return conf
+
+
+def unit_name(kind: str, project_id: str, slug: str | None) -> str:
+    """unit 이름. project id가 임의 문자열(한글 포함)이라 이름에는 해시를 쓴다 — 이스케이프가
+    필요 없고, `a-b`+`c`와 `a`+`b-c`가 부딪히지 않는다. 사람이 읽을 값은 Description에."""
+    digest = hashlib.sha256(f"{project_id}\0{slug or ''}".encode("utf-8")).hexdigest()[:16]
+    name = f"{UNIT_PREFIX}{kind}-{digest}"
+    if kind not in DETERMINISTIC:
+        # Agents can overlap in the same project (right after a reconnect, the previous process may still be exiting).
+        name += "-" + secrets.token_hex(4)
+    return name + ".service"
+
+
+def layout(kind: str, project_id: str, slug: str | None) -> tuple[Path, Path]:
+    """(작업 디렉터리, agent-home). 둘 다 RW로 bind되는 유일한 경로다."""
+    if kind == "discovery":
+        return WORKSPACES / project_id, AGENT_HOME / "discovery" / project_id
+    assert slug is not None
+    if kind == "build":
+        return PROTOS / project_id / slug, AGENT_HOME / "build" / project_id / slug
+    return (PROTOS / project_id / slug / "prototype",
+            AGENT_HOME / "proto" / project_id / slug)
+
+
+def _real_dir(path: Path) -> Path:
+    """존재하는 실제 디렉터리여야 한다. 경로 어디에도 심볼릭 링크가 끼면 거부 — 링크로
+    다른 곳(다른 프로젝트, /etc)을 RW bind하게 만드는 길을 막는다."""
+    if os.path.realpath(path) != str(path) or not path.is_dir():
+        raise LaunchError(f"not a real directory: {path}")
+    return path
+
+
+def find_claude(app: Path = APP) -> Path:
+    found = sorted(app.glob(CLAUDE_GLOB))
+    if len(found) != 1:
+        raise LaunchError(f"expected one bundled claude, found {len(found)}")
+    return found[0]
+
+
+def pass_env(environ: dict[str, str]) -> dict[str, str]:
+    out: dict[str, str] = {}
+    for key, value in environ.items():
+        if key in PASS_EXACT or key.startswith(PASS_PREFIX):
+            out[key] = value
+        elif key in PASS_CHECKED and PASS_CHECKED[key].match(value):
+            out[key] = value
+    return out
+
+
+def _dollar(arg: str) -> str:
+    return arg.replace("$", "$$")
+
+
+def build_run(kind: str, project_id: str, slug: str | None, args: list[str],
+              environ: dict[str, str], conf: dict[str, str],
+              claude: Path | None = None) -> tuple[list[str], dict[str, str]]:
+    """systemd-run argv와 그 프로세스의 env. 부작용 없음 — 테스트가 이것을 직접 부른다."""
+    if kind not in KINDS:
+        raise LaunchError(f"unknown kind: {kind!r}")
+    user, exe_kind, needs_slug, memory = KINDS[kind]
+    check_segment(project_id, "project id")
+    if needs_slug:
+        if slug is None:
+            raise LaunchError(f"{kind} needs a slug")
+        check_segment(slug, "slug")
+    elif slug is not None:
+        raise LaunchError(f"{kind} takes no slug")
+
+    work, home = layout(kind, project_id, slug)
+    _real_dir(work)
+    _real_dir(home)
+    _real_dir(home / "home")
+
+    env = pass_env(environ)
+    env["HOME"] = str(home / "home")
+    env["PATH"] = "/usr/local/bin:/usr/bin:/bin"
+    if exe_kind == "claude":
+        _real_dir(home / "config")
+        # The caller-supplied value is not used — if it pointed at the shared config dir, other projects'
+        # transcripts would be visible.
+        env["CLAUDE_CONFIG_DIR"] = str(home / "config")
+        command = [str(claude or find_claude()), *args]
+    else:
+        if tuple(args) not in NPM_ARGS[kind]:
+            raise LaunchError(f"{kind}: npm {' '.join(args)!r} is not allowed")
+        command = [NPM, *args]
+
+    label = project_id if slug is None else f"{project_id}/{slug}"
+    props = [
+        f"Description=AI-PDS {kind} {label}",
+        "Type=exec",
+        f"WorkingDirectory={work}",
+        "UMask=0007",
+        f"MemoryMax={memory}",
+        "TimeoutStopSec=10",
+        "ProtectSystem=strict",
+        "ProtectHome=yes",
+        "PrivateTmp=yes",
+        "PrivateDevices=yes",
+        "NoNewPrivileges=yes",
+        "ProtectKernelTunables=yes",
+        "ProtectKernelModules=yes",
+        "ProtectKernelLogs=yes",
+        "ProtectControlGroups=yes",
+        "ProtectClock=yes",
+        "ProtectHostname=yes",
+        "RestrictRealtime=yes",
+        "RestrictSUIDSGID=yes",
+        "LockPersonality=yes",
+        # Only the two needed for unshare. Blocking user namespaces closes the path to regaining privileges.
+        "RestrictNamespaces=pid mnt",
+        # The first four are for the trampoline (unshare → setpriv), the last two for the chmod in ExecStopPost (below). Both
+        # are used only by our fixed commands running as root — the agent loses them all via setpriv's --bounding-set=-all.
+        "CapabilityBoundingSet=CAP_SYS_ADMIN CAP_SETUID CAP_SETGID CAP_SETPCAP"
+        " CAP_FOWNER CAP_DAC_READ_SEARCH",
+        # Hide the whole app tree. Not only other projects' trees but also the app source and git checkout
+        # live here. Previously only workspaces/, protos/, and agent-home/ were covered, and the rest was
+        # visible read-only — two things were measured (2026-10-07):
+        # - From the workspace, git climbs upward and picks up the app repository (/opt/aipds) as its own.
+        #   The bundled CLI runs `git update-index` on that repository before any Bash that can change files,
+        #   and since it is read-only and owned by another uid, it fails after ~12 seconds every time
+        #   (`bashEditDiff: update-index exit 1`). Two Bash calls stalled that way on every new project's first turn.
+        # - Agents read the app source and commit history (the build agent dug through /opt/aipds/frontend,
+        #   and Discovery's `git log` showed the app's history).
+        f"TemporaryFileSystem={APP}",
+        # Places where secrets sit in plaintext (unit files, nginx config, backend config). File permissions are the
+        # first line of defense, and this is layered on top.
+        "InaccessiblePaths=-/etc/aipds",
+        "InaccessiblePaths=-/etc/nginx",
+        "InaccessiblePaths=-/etc/systemd/system",
+        "InaccessiblePaths=-/etc/sudoers.d",
+        f"BindPaths={work}",
+        f"BindPaths={home}",
+    ]
+    if exe_kind == "claude":
+        # The only file in the app tree this kind executes. It is a single executable (ripgrep is built in too —
+        # `Ripgrep … mode=embedded` in the debug log).
+        props.append(f"BindReadOnlyPaths={command[0]}")
+    if conf.get("imds_block") == "1":
+        props.append("IPAddressDeny=169.254.169.254/32 fd00:ec2::254/128")
+    # agent-home is a tree shared with the backend through the group (the backend restores transcripts and
+    # deletes projects). UMask=0007 might seem enough, but depending on the version, the bundled CLI creates its
+    # config dir and transcripts **explicitly** as 0700/0600 (confirmed in operation: the bundle in SDK 0.2.157
+    # followed the umask and the one in 0.2.159 does not). At that moment the backend can neither resume nor delete
+    # that project. So every time a unit ends, the group permissions are restored — the path is the value computed
+    # here, all of the unit's processes have exited by then, and chmod -R does not follow symlinks while
+    # recursing. ExecStopPost runs however the unit stops (normal exit, stop, sweep after a backend restart).
+    #
+    # **No prefix (`+`, `!`, `:`) is added.** With one, systemd-run promotes the property to ExecStopPostEx,
+    # and systemd 252 writes it under that name into the transient unit file, but the unit file parser does not
+    # know that key — on the next daemon-reload it is dropped with "Unknown key name 'ExecStopPostEx'" and the chmod
+    # does not run (measured in operation: it vanished on a reload 2 seconds after a build started; this instance
+    # reloads every few minutes). So the chmod runs as root inside the sandbox: it touches only its own tree visible
+    # through BindPaths, and the bounding set above grants the two capabilities to traverse other users' 0700
+    # directories (CAP_DAC_READ_SEARCH) and change other users' file modes (CAP_FOWNER).
+    props.append(f"ExecStopPost={CHMOD} -R g+rwX {home}")
+
+    trampoline = [
+        UNSHARE, "--pid", "--fork", "--mount-proc", "--kill-child", "--",
+        SETPRIV, f"--reuid={user}", f"--regid={GROUP}", "--init-groups",
+        "--inh-caps=-all", "--bounding-set=-all", "--no-new-privs", "--",
+    ]
+    argv = [SYSTEMD_RUN, "--pipe", "--wait", "--collect", "--quiet",
+            f"--unit={unit_name(kind, project_id, slug)}"]
+    argv += [f"--property={p}" for p in props]
+    # Pass names only — values are read from systemd-run's own env. If values were on argv, the credentials
+    # token would be visible in `ps`.
+    argv += [f"--setenv={key}" for key in sorted(env)]
+    argv += ["--", *trampoline, *[_dollar(a) for a in command]]
+    return argv, env
+
+
+def build_stop(kind: str, project_id: str, slug: str) -> list[str]:
+    if kind not in DETERMINISTIC:
+        raise LaunchError(f"stop is only for {sorted(DETERMINISTIC)}")
+    check_segment(project_id, "project id")
+    check_segment(slug, "slug")
+    return [SYSTEMCTL, "stop", unit_name(kind, project_id, slug)]
+
+
+def check_report() -> dict:
+    """백엔드 기동 점검용. 백엔드는 자기 경로가 여기 값과 같을 때만 래퍼를 쓴다."""
+    try:
+        claude = str(find_claude())
+    except LaunchError:
+        claude = None
+    return {
+        "version": 1,
+        "workspaces": str(WORKSPACES),
+        "protos": str(PROTOS),
+        "agent_home": str(AGENT_HOME),
+        "claude": claude,
+        "npm": os.access(NPM, os.X_OK),
+        "imds_block": read_conf().get("imds_block") == "1",
+    }
+
+
+def main(argv: list[str]) -> int:
+    if os.geteuid() != 0:
+        print("aipds-launch: must run as root (via sudo)", file=sys.stderr)
+        return 2
+    try:
+        if len(argv) >= 1 and argv[0] == "run":
+            if "--" not in argv:
+                raise LaunchError("run needs `--` before the command arguments")
+            sep = argv.index("--")
+            head, args = argv[1:sep], argv[sep + 1:]
+            if len(head) not in (2, 3):
+                raise LaunchError("usage: run <kind> <project_id> [<slug>] -- <args…>")
+            kind, project_id = head[0], head[1]
+            slug = head[2] if len(head) == 3 else None
+            run_argv, env = build_run(kind, project_id, slug, args,
+                                      dict(os.environ), read_conf())
+            os.execve(SYSTEMD_RUN, run_argv, env)
+        if len(argv) == 4 and argv[0] == "stop":
+            return subprocess.run(build_stop(argv[1], argv[2], argv[3]),
+                                  check=False).returncode
+        if argv == ["sweep"]:
+            # When the backend restarts, the systemd-run client dies with it, but the unit remains.
+            return subprocess.run([SYSTEMCTL, "stop", f"{UNIT_PREFIX}*.service"],
+                                  check=False).returncode
+        if argv == ["check"]:
+            print(json.dumps(check_report()))
+            return 0
+        raise LaunchError("usage: aipds-launch run|stop|sweep|check …")
+    except LaunchError as exc:
+        print(f"aipds-launch: {exc}", file=sys.stderr)
+        return 2
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

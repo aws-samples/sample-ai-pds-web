@@ -1,0 +1,322 @@
+#!/bin/bash
+# Bring this instance to the latest remote commit of the deploy branch.
+#
+# Why this script exists: the deployment points at a branch, not a commit SHA
+# (lib/deploy-source.ts). So user-data is identical regardless of code changes,
+# and `cdk deploy` does not replace the instance -- that is, **it does not update
+# the code.** This script does that job, and since no instance replacement is
+# involved, it can be used even during a workshop.
+#
+# Why not do it by hand: the procedure has a step that **silently kills the app
+# if forgotten.** If NEXT_PUBLIC_API_BASE_URL=/api is left out of next build, the
+# value is not inlined into the client bundle and the browser calls
+# localhost:8000 -- the screen loads and every API call fails. Narrowing the
+# restart scope to the changed directories is for the same reason: a backend
+# restart cuts in-progress Discovery turns and build sessions, and a frontend
+# rebuild gives connected users chunk 404s. An update that changes only the
+# ruleset (steering-files/) -- the most common case in a workshop -- completes
+# with zero downtime.
+#
+# This file lives in the repo and user-data installs it into /usr/local/bin/ at
+# boot. Two reasons not to embed it in user-data as a heredoc: EC2 user-data has
+# a 16KB limit (we exceeded it once and the deploy failed), and editing
+# user-data makes EC2 require an instance replacement, wiping the local artifacts
+# under protos/ and workspaces/. As a repo file, fixing this script is itself
+# rolled out by `aipds-update`.
+#
+# **Test branch (developer use).** `sudo aipds-update <branch>` brings the
+# instance to that branch's latest remote commit instead of the deploy branch --
+# the point is to check a large change on this instance before production.
+# Running it again without an argument returns to the deploy branch (BRANCH in
+# /etc/aipds-deploy.env). Since it is the same instance, the test runs on real
+# users and real data: what the test branch wrote to S3 and newly installed pip
+# packages remain after returning. This mode is not documented, so the safeguards
+# live in this script's output -- every run prints "current branch -> target",
+# repeats the notice at the end while testing, and on return shows the commits
+# being dropped and the commit from just before testing.
+#
+# No self-update happens when moving to a test branch. Even if the test branch's
+# aipds-update is old or broken, returning is always done by the deploy branch's
+# script.
+set -euo pipefail
+
+# Allowlist for branch names. Since this script runs as root, it accepts a
+# narrower set than git's rules (check-ref-format) -- git also allows characters
+# like `$`, `;`, and quotes in branch names.
+valid_branch() {
+  [[ "$1" =~ ^[A-Za-z0-9][A-Za-z0-9._/-]*$ ]] \
+    && git check-ref-format --branch "$1" >/dev/null 2>&1
+}
+
+# Decide what to do. No side effects (backend/tests/test_update_script.py runs it directly).
+#   args: deploy branch, current branch, target branch, recorded pre-test commit ("" if none), current commit
+#   output: mode=normal|enter|switch|leave, self_update=yes|no, record=<pre-test commit to keep>
+# The pre-test commit is recorded once when first entering a test, kept while moving between
+# test branches, and cleared on return to the deploy branch.
+plan_switch() {
+  local deploy=$1 current=$2 target=$3 recorded=$4 head=$5
+  if [ "$target" = "$deploy" ]; then
+    if [ -n "$recorded" ] || [ "$current" != "$deploy" ]; then
+      echo "mode=leave"
+    else
+      echo "mode=normal"
+    fi
+    echo "self_update=yes"
+    echo "record="
+  elif [ -n "$recorded" ]; then
+    echo "mode=switch"
+    echo "self_update=no"
+    echo "record=$recorded"
+  else
+    echo "mode=enter"
+    echo "self_update=no"
+    echo "record=$head"
+  fi
+}
+
+# The rest runs only when executed directly. Tests source this file and use only the two functions above.
+[[ "${BASH_SOURCE[0]}" == "$0" ]] || return 0
+
+if [ $# -gt 1 ]; then
+  echo "usage: aipds-update [branch]" >&2
+  exit 2
+fi
+
+if [ "$(id -u)" -ne 0 ]; then
+  echo "aipds-update: run as root (sudo aipds-update)" >&2
+  exit 1
+fi
+
+# Paths, user, and branch are set by CDK (lib/user-data.ts writes this file at boot) --
+# hard-coding them here as literals would silently drift when DEPLOY_BRANCH changes.
+ENV_FILE=/etc/aipds-deploy.env
+if [ ! -r "$ENV_FILE" ]; then
+  echo "aipds-update: $ENV_FILE not found — this instance predates the split-out" \
+       "script; re-deploy the stack or write APP/SVC/BRANCH into it by hand" >&2
+  exit 1
+fi
+# shellcheck source=/dev/null
+. "$ENV_FILE"
+: "${APP:?APP missing in $ENV_FILE}"
+: "${SVC:?SVC missing in $ENV_FILE}"
+: "${BRANCH:?BRANCH missing in $ENV_FILE}"
+
+# Commands run as SVC (runuser) inherit the working directory. SVC cannot enter the
+# place sudo was invoked from (/root, a 700 home), so tools that stat a relative path
+# get EACCES instead of ENOENT and stop. pip does exactly that -- an editable install
+# puts a nonexistent relative entry (`__editable__.aipds-0.1.0.finder.__path_hook__`)
+# on sys.path, and pip stats it and fails the whole install with "Permission denied".
+# So we run inside a tree SVC can read.
+cd "$APP"
+
+TARGET=${1:-$BRANCH}
+if ! valid_branch "$TARGET"; then
+  echo "aipds-update: not an allowed branch name: $TARGET" >&2
+  exit 2
+fi
+# Record of the pre-test commit. Kept to show "where we left from" on return.
+STATE_DIR=/var/lib/aipds
+PRETEST_FILE=$STATE_DIR/pre-test-commit
+
+# Why git runs as SVC: the tree is owned by SVC, and fetching as root mixes in new
+# root-owned objects so the **next** update is blocked by permissions -- a failure
+# that only shows up at update time.
+gitsvc() { runuser -u "$SVC" -- git -C "$APP" "$@"; }
+
+# The baseline for comparison is not the pre-checkout HEAD but **the last commit applied
+# all the way through**. An update that failed midway has already finished the checkout,
+# so using HEAD as the baseline would make the next run see "already up to date" and skip
+# the remaining steps (reinstall, restart, rebuild) forever. If there is no record or the
+# commit is unknown, fall back to HEAD -- on the first run, boot has already fully applied
+# that commit. The record is written only when the update ran to the end. Writing it on an
+# early exit would freeze a half-applied HEAD, on an instance that failed before the record
+# existed, as "fully applied".
+APPLIED_FILE=/var/lib/aipds/update-applied
+BEFORE=$(gitsvc rev-parse HEAD)
+if [ -r "$APPLIED_FILE" ]; then
+  applied=$(tr -d '[:space:]' < "$APPLIED_FILE")
+  if [ -n "$applied" ] && gitsvc cat-file -e "${applied}^{commit}" 2>/dev/null; then
+    BEFORE=$applied
+  fi
+fi
+mark_applied() { mkdir -p "$(dirname "$APPLIED_FILE")" && echo "$1" > "$APPLIED_FILE"; }
+CURRENT=$(gitsvc symbolic-ref --quiet --short HEAD || echo "(detached)")
+RECORDED=$(cat "$PRETEST_FILE" 2>/dev/null || true)
+gitsvc fetch --prune origin
+if ! gitsvc rev-parse --verify --quiet "origin/$TARGET^{commit}" >/dev/null; then
+  echo "aipds-update: origin/$TARGET not found — push the branch first" >&2
+  exit 1
+fi
+
+MODE=normal SELF_UPDATE=yes RECORD=
+while IFS='=' read -r key value; do
+  case $key in
+    mode) MODE=$value ;;
+    self_update) SELF_UPDATE=$value ;;
+    record) RECORD=$value ;;
+  esac
+done < <(plan_switch "$BRANCH" "$CURRENT" "$TARGET" "$RECORDED" "$BEFORE")
+
+echo "aipds-update: branch $CURRENT -> $TARGET"
+# -f: tracked files edited by hand on the instance **are reverted.** Without it, a single
+# such file would make the whole update refuse -- getting stuck in that state during a
+# workshop is worse. Untracked files (protos/, workspaces/, session state) are not removed
+# by this command.
+gitsvc checkout -f -B "$TARGET" "origin/$TARGET"
+# The AI-PLC ruleset (steering-files/) is a submodule of the upstream repo, and checkout
+# moves only the gitlink, **not the contents.** Without this line, rule updates are
+# silently not applied.
+#
+# Placing it **above** the early exit (BEFORE = AFTER) is intentional: an instance that
+# booted with a failed submodule init has an unchanged commit and never reaches the branch
+# below -- leaving redeploy as the only fix. Here it is idempotent and does not even touch
+# the network if already correct.
+gitsvc submodule update --init --recursive
+
+# nginx request body limit. It is the attachment upload limit (10MB,
+# backend/aipds/parsers/uploads.py) plus multipart headroom, and must equal the value in
+# user-data (infra/lib/user-data.ts), which writes the conf at boot. That conf is only
+# written at boot, so running instances are aligned here. Only that line is edited -- the
+# same file contains the CloudFront secret header value, so it cannot be rewritten
+# wholesale. Idempotent: if already correct, it does not even reload. If the config check
+# fails, it reverts.
+#
+# It sits **above** the early exit for the same reason as the submodule line: the update
+# that first introduces this step is run by the old script (the new one is only installed
+# via self-update), and the next run has the same commit and never reaches below.
+NGINX_CONF=/etc/nginx/conf.d/aipds.conf
+NGINX_BODY_LIMIT=11m
+if [ -f "$NGINX_CONF" ] \
+    && ! grep -q "client_max_body_size $NGINX_BODY_LIMIT;" "$NGINX_CONF"; then
+  cp -p "$NGINX_CONF" "$NGINX_CONF.prev"
+  sed -i -E "s/client_max_body_size [0-9]+[kKmMgG]?;/client_max_body_size $NGINX_BODY_LIMIT;/" \
+    "$NGINX_CONF"
+  if nginx -t 2>/dev/null; then
+    systemctl reload nginx
+    rm -f "$NGINX_CONF.prev"
+    echo "aipds-update: nginx client_max_body_size -> $NGINX_BODY_LIMIT (reloaded)"
+  else
+    mv -f "$NGINX_CONF.prev" "$NGINX_CONF"
+    echo "aipds-update: nginx rejected client_max_body_size $NGINX_BODY_LIMIT —" \
+         "kept the previous conf" >&2
+  fi
+fi
+
+AFTER=$(gitsvc rev-parse HEAD)
+
+# The record is changed only **after** checkout succeeds -- a failed switch must not be left as "testing".
+if [ -n "$RECORD" ]; then
+  mkdir -p "$STATE_DIR"
+  printf '%s\n' "$RECORD" > "$PRETEST_FILE"
+else
+  rm -f "$PRETEST_FILE"
+fi
+
+test_mode_notice() {
+  if [ "$TARGET" != "$BRANCH" ]; then
+    echo "aipds-update: TEST BRANCH — this instance runs '$TARGET', not '$BRANCH'." \
+         "Run 'sudo aipds-update' to go back."
+  fi
+}
+
+case $MODE in
+  enter)
+    echo "aipds-update: entering test branch '$TARGET' from $CURRENT at $BEFORE" ;;
+  switch)
+    echo "aipds-update: switching test branch $CURRENT -> $TARGET" \
+         "(before testing it was at $RECORDED)" ;;
+  leave)
+    echo "aipds-update: leaving test branch '$CURRENT' — back to '$BRANCH'"
+    if [ -n "$RECORDED" ]; then
+      echo "aipds-update: before testing it was at $RECORDED; '$BRANCH' is now $AFTER"
+    fi ;;
+esac
+
+if [ "$BEFORE" = "$AFTER" ]; then
+  echo "aipds-update: already at $AFTER — nothing to do, services untouched"
+  test_mode_notice
+  exit 0
+fi
+echo "aipds-update: $BEFORE -> $AFTER"
+gitsvc --no-pager log --oneline "$BEFORE..$AFTER"
+# Switching branches brings not only incoming commits but also **dropped** ones (as when
+# returning from a test branch). Without showing them, there is no way to know what disappeared.
+if [ -n "$(gitsvc rev-list "$AFTER..$BEFORE")" ]; then
+  echo "aipds-update: leaving these commits:"
+  gitsvc --no-pager log --oneline "$AFTER..$BEFORE"
+fi
+
+changed() { ! gitsvc diff --quiet "$BEFORE" "$AFTER" -- "$@"; }
+
+# Paths that trigger a restart/rebuild. An update that changes only tests does not cut
+# in-progress turns (backend) or give connected users chunk 404s (frontend). Test files are
+# never imported by the runtime -- backend/tests/, and on the frontend *.test.ts(x),
+# test/ (fixtures, msw), e2e/, and test runner configs.
+# backend/tests/test_update_script.py exercises this list against a real git repository.
+BACKEND_PATHS=(backend/ ':(exclude)backend/tests/')
+FRONTEND_PATHS=(frontend/
+  ':(exclude,glob)frontend/**/*.test.ts' ':(exclude,glob)frontend/**/*.test.tsx'
+  ':(exclude)frontend/test/' ':(exclude)frontend/e2e/'
+  ':(exclude)frontend/vitest.config.ts' ':(exclude)frontend/vitest.setup.ts'
+  ':(exclude)frontend/playwright.config.ts')
+
+# If this script itself changed, install the new one (it takes effect from the next run). Only
+# when going to the deploy branch -- installing the test branch's copy would make that copy
+# handle the return (see the header).
+if [ "$SELF_UPDATE" = yes ] && changed infra/scripts/aipds-update; then
+  install -m 755 "$APP/infra/scripts/aipds-update" /usr/local/bin/aipds-update
+  echo "aipds-update: self-updated — the next run uses the new script"
+fi
+
+# On an instance with the launch wrapper installed (aipds-harden install), replace the
+# root-owned copies with the new ones. sudoers points at those copies, so changing only the
+# repo leaves the old wrapper running. Done before the backend restart -- the new backend may
+# assume the new wrapper.
+# What the sync timer (aipds-harden sync) runs as root is also the copy.
+if [ -d /usr/local/libexec/aipds ] \
+    && { changed infra/scripts/aipds-launch || changed infra/scripts/aipds-claude \
+         || changed infra/scripts/aipds-harden || changed infra/scripts/aipds-preview-configure; }; then
+  install -o root -g root -m 0755 "$APP/infra/scripts/aipds-launch" /usr/local/libexec/aipds/launch
+  install -o root -g root -m 0755 "$APP/infra/scripts/aipds-claude" /usr/local/libexec/aipds/claude
+  install -o root -g root -m 0755 "$APP/infra/scripts/aipds-harden" /usr/local/libexec/aipds/harden
+  install -o root -g root -m 0755 "$APP/infra/scripts/aipds-preview-configure" \
+    /usr/local/libexec/aipds/preview-configure
+  echo "aipds-update: launcher reinstalled"
+fi
+
+if changed "${BACKEND_PATHS[@]}"; then
+  # Reinstall only when dependencies changed. Code is picked up as-is via pip install -e.
+  if changed backend/pyproject.toml; then
+    runuser -u "$SVC" -- "$APP/backend/.venv/bin/pip" install -e "$APP/backend"
+  fi
+  # claude-agent-sdk has only a lower bound (backend/pyproject.toml), so the install
+  # above is satisfied by the already-installed version -- this single -U line is what
+  # fetches the latest. That is why it sits **outside** the pyproject.toml gate: it must
+  # be upgraded even when the dependency lines do not change.
+  #
+  # Placing it right above the restart is also intentional. This wheel bundles the
+  # Claude Code executable, so an upgrade is an engine swap; without a restart, the
+  # running backend is a stale process while only newly spawned children get the new
+  # binary, and the two mix.
+  # A zero-downtime update that changes only the ruleset (steering-files/) never enters
+  # this block, so the engine stays the same.
+  runuser -u "$SVC" -- "$APP/backend/.venv/bin/pip" install -U claude-agent-sdk
+  systemctl restart aipds-backend
+  echo "aipds-update: backend restarted (in-flight turns and build sessions were cut)"
+fi
+
+if changed "${FRONTEND_PATHS[@]}"; then
+  cd "$APP/frontend"
+  if changed frontend/package-lock.json; then
+    runuser -u "$SVC" -- env NEXT_PUBLIC_API_BASE_URL=/api HOME="$APP" npm ci
+  fi
+  # Building without this env makes the screen load while every API call fails (see the comment at the top of the file).
+  runuser -u "$SVC" -- env NEXT_PUBLIC_API_BASE_URL=/api HOME="$APP" npm run build
+  systemctl restart aipds-frontend
+  echo "aipds-update: frontend rebuilt and restarted"
+fi
+
+# Record it as applied only when we got this far (set -e -- if any step fails, this line is never reached).
+mark_applied "$AFTER"
+echo "aipds-update: now at $AFTER on $TARGET"
+test_mode_notice

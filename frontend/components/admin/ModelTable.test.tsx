@@ -1,0 +1,130 @@
+// frontend/components/admin/ModelTable.test.tsx
+import { describe, it, expect, vi } from "vitest";
+import { render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { http, HttpResponse } from "msw";
+import { server } from "@/test/msw/server";
+import { API_BASE_URL } from "@/lib/api/client";
+import { ModelTable } from "./ModelTable";
+import type { AdminModel } from "@/lib/api/models";
+
+const MODELS: AdminModel[] = [
+  { name: "Opus 5", model_id: "global.anthropic.claude-opus-5", display: true },
+  { name: "Opus 4.8", model_id: "global.anthropic.claude-opus-4-8", display: false },
+];
+
+describe("ModelTable", () => {
+  it("shows the name, the model id and the display state", () => {
+    render(<ModelTable models={MODELS} onChanged={vi.fn()} />);
+    expect(screen.getByText("Opus 5")).toBeInTheDocument();
+    // The admin screen shows the id — the admin needs to confirm what was registered
+    // (this differs from the combo box).
+    expect(screen.getByText("global.anthropic.claude-opus-5")).toBeInTheDocument();
+    expect(screen.getByRole("switch", { name: "Opus 5 표시" })).toBeChecked();
+    expect(screen.getByRole("switch", { name: "Opus 4.8 표시" })).not.toBeChecked();
+  });
+
+  it("toggling display patches the model and reloads", async () => {
+    const user = userEvent.setup();
+    const onChanged = vi.fn();
+    let body: any;
+    server.use(http.patch(
+      `${API_BASE_URL}/admin/models/global.anthropic.claude-opus-5`,
+      async ({ request }) => {
+        body = await request.json();
+        return HttpResponse.json({ ...MODELS[0], display: false });
+      }));
+    render(<ModelTable models={MODELS} onChanged={onChanged} />);
+    await user.click(screen.getByRole("switch", { name: "Opus 5 표시" }));
+    expect(body).toEqual({ display: false });
+    expect(onChanged).toHaveBeenCalled();
+  });
+
+  it("changing effort patches only effort, and the CLI default sends null", async () => {
+    const user = userEvent.setup();
+    const onChanged = vi.fn();
+    const bodies: any[] = [];
+    server.use(http.patch(
+      `${API_BASE_URL}/admin/models/global.anthropic.claude-opus-5`,
+      async ({ request }) => {
+        bodies.push(await request.json());
+        return HttpResponse.json({ ...MODELS[0] });
+      }));
+    render(<ModelTable models={[{ ...MODELS[0], effort: "medium" }]} onChanged={onChanged} />);
+    const select = screen.getByRole("combobox", { name: "Opus 5 effort" });
+    expect(select).toHaveValue("medium");
+    await user.selectOptions(select, "high");
+    await user.selectOptions(select, "CLI 기본값");
+    expect(bodies).toEqual([{ effort: "high" }, { effort: null }]);
+    expect(onChanged).toHaveBeenCalledTimes(2);
+  });
+
+  it("shows the server's message when a sixth display is rejected", async () => {
+    const user = userEvent.setup();
+    server.use(http.patch(
+      `${API_BASE_URL}/admin/models/global.anthropic.claude-opus-4-8`,
+      () => HttpResponse.json({ detail: "at most 5 models can be displayed" },
+                              { status: 400 })));
+    render(<ModelTable models={MODELS} onChanged={vi.fn()} />);
+    await user.click(screen.getByRole("switch", { name: "Opus 4.8 표시" }));
+    // The frontend does not duplicate the rule — it shows the server's sentence as-is.
+    expect(await screen.findByRole("alert"))
+      .toHaveTextContent("at most 5 models can be displayed");
+  });
+
+  it("moving a model sends the whole list in the new order and reloads", async () => {
+    const user = userEvent.setup();
+    const onChanged = vi.fn();
+    let body: any;
+    server.use(http.put(`${API_BASE_URL}/admin/models/order`, async ({ request }) => {
+      body = await request.json();
+      return HttpResponse.json({ models: [MODELS[1], MODELS[0]] });
+    }));
+    render(<ModelTable models={MODELS} onChanged={onChanged} />);
+    await user.click(screen.getByRole("button", { name: "Opus 4.8 위로" }));
+    expect(body).toEqual({ model_ids: [MODELS[1].model_id, MODELS[0].model_id] });
+    expect(onChanged).toHaveBeenCalled();
+  });
+
+  it("cannot move the first row up or the last row down", () => {
+    render(<ModelTable models={MODELS} onChanged={vi.fn()} />);
+    expect(screen.getByRole("button", { name: "Opus 5 위로" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Opus 4.8 아래로" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Opus 5 아래로" })).toBeEnabled();
+  });
+
+  it("explains a stale list instead of showing the code", async () => {
+    const user = userEvent.setup();
+    server.use(http.put(`${API_BASE_URL}/admin/models/order`,
+      () => HttpResponse.json({ detail: "model_order_stale" }, { status: 409 })));
+    render(<ModelTable models={MODELS} onChanged={vi.fn()} />);
+    await user.click(screen.getByRole("button", { name: "Opus 5 아래로" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("새로고침");
+  });
+
+  it("deletes after a confirmation", async () => {
+    const user = userEvent.setup();
+    const onChanged = vi.fn();
+    let deleted = false;
+    server.use(http.delete(
+      `${API_BASE_URL}/admin/models/global.anthropic.claude-opus-5`,
+      () => { deleted = true; return new HttpResponse(null, { status: 204 }); }));
+    render(<ModelTable models={MODELS} onChanged={onChanged} />);
+    await user.click(screen.getByRole("button", { name: "Opus 5 삭제" }));
+    await user.click(await screen.findByRole("button", { name: "삭제 확인" }));
+    expect(deleted).toBe(true);
+    expect(onChanged).toHaveBeenCalled();
+  });
+
+  it("does not delete when the confirmation is cancelled", async () => {
+    const user = userEvent.setup();
+    let deleted = false;
+    server.use(http.delete(
+      `${API_BASE_URL}/admin/models/global.anthropic.claude-opus-5`,
+      () => { deleted = true; return new HttpResponse(null, { status: 204 }); }));
+    render(<ModelTable models={MODELS} onChanged={vi.fn()} />);
+    await user.click(screen.getByRole("button", { name: "Opus 5 삭제" }));
+    await user.click(await screen.findByRole("button", { name: "취소" }));
+    expect(deleted).toBe(false);
+  });
+});

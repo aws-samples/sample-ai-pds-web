@@ -1,0 +1,57 @@
+#!/bin/bash
+# Tells the backend the prototype preview origin (backend/aipds/preview_surface.py).
+#
+#   sudo /usr/local/libexec/aipds/preview-configure [--no-restart] <PreviewOrigin> <PreviewSecretArn>
+#
+# Both values are outputs of AipdsPreviewStack (infra/lib/aipds-preview-stack.ts). Neither is a secret
+# — the secret header value itself is read by the backend from Secrets Manager after startup (the instance role is
+# allowed by that secret's resource policy). So no plaintext secret is left in the unit file.
+#
+# Why this script rather than user-data: changing user-data makes a HostingStack deploy replace the EC2
+# instance. This setting is a single systemd drop-in, so it can be put straight onto a running instance, and
+# if the instance is replaced, just run this command again (`aipds-harden sync` runs it instead with the SSM
+# values). Until it runs, the preview stays closed — in a deployment with auth on, the app origin does not serve
+# prototypes.
+#
+# To turn it off: sudo rm /etc/systemd/system/aipds-backend.service.d/preview.conf
+#         && sudo systemctl daemon-reload && sudo systemctl restart aipds-backend
+set -euo pipefail
+if [ "$(id -u)" -ne 0 ]; then
+  echo "aipds-preview-configure: run as root" >&2
+  exit 1
+fi
+RESTART=1
+if [ "${1:-}" = "--no-restart" ]; then
+  RESTART=0
+  shift
+fi
+if [ $# -ne 2 ]; then
+  echo "usage: aipds-preview-configure [--no-restart] <PreviewOrigin> <PreviewSecretArn>" >&2
+  exit 1
+fi
+ORIGIN="${1%/}"
+ARN="$2"
+case "$ORIGIN" in
+  https://*.cloudfront.net) ;;
+  *) echo "aipds-preview-configure: origin must be https://<id>.cloudfront.net" >&2; exit 1 ;;
+esac
+case "$ARN" in
+  arn:aws:secretsmanager:*:*:secret:*) ;;
+  *) echo "aipds-preview-configure: not a Secrets Manager ARN" >&2; exit 1 ;;
+esac
+
+DIR=/etc/systemd/system/aipds-backend.service.d
+mkdir -p "$DIR"
+cat > "$DIR/preview.conf" <<CONF
+[Service]
+Environment=AIPDS_PREVIEW_ORIGIN=$ORIGIN
+Environment=AIPDS_PREVIEW_SECRET_ARN=$ARN
+CONF
+chmod 644 "$DIR/preview.conf"
+systemctl daemon-reload
+if [ "$RESTART" = 1 ]; then
+  systemctl restart aipds-backend
+  echo "aipds-preview-configure: backend restarted with preview origin $ORIGIN"
+else
+  echo "aipds-preview-configure: preview origin $ORIGIN (applies when the backend starts)"
+fi

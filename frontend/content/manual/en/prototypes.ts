@@ -1,0 +1,168 @@
+import type { ManualSection } from "../types";
+
+export const prototypes: ManualSection = {
+  id: "prototypes",
+  title: "Building prototypes",
+  lede: "Turn a spec into an app that actually runs, then share a link so people can try it.",
+  blocks: [
+    {
+      kind: "md",
+      md: `Once Discovery has written a prototype spec, it shows up as a card in the
+Prototypes tab. One card is one prototype, and the status badge tells you how far it has got.
+The card's title is the product name written in the spec, with the spec's file path beneath it; a
+spec that names no product shows its identifier instead.
+
+The colours and typeface come from whatever the administrator uploaded under
+[Brand design](/manual#brand-design). With nothing uploaded, prototypes use the default look.`,
+    },
+    {
+      kind: "mockup",
+      id: "prototype-card",
+      caption: "A prototype card, and the completion card that appears when the build finishes",
+    },
+    {
+      kind: "md",
+      md: `| Status | Meaning | What to do next |
+|---|---|---|
+| Not built | Nothing has been built yet | **Start build** |
+| Building | It is being built right now | **Open session** to watch |
+| Built | It exists but is not running | **Start hosting** · **Modify** |
+| Running | The preview is live | **Open preview** · **Copy link** · **Modify** |
+| Failed | The build did not finish | Check **Logs**, then **Continue** |`,
+    },
+    {
+      kind: "md",
+      md: `Next to the status badge the card also says whether a **validation survey** exists.
+It reads *No survey* until you create one, then *Survey · N responses* — a survey with zero
+responses is a different state from having no survey at all.
+
+That indicator matters most when you build several prototypes to compare. **Each card gets
+its own survey** — creating one on a prototype does not create one on the others, so make one
+for every prototype you want to validate.`,
+    },
+    {
+      kind: "steps",
+      items: [
+        "**Start build** — a build session opens and the AI reads the spec and starts working.",
+        "It asks questions when it needs to. You answer the same way as in the workspace.",
+        "When it is done the session closes itself and a **Build complete** card appears.",
+        "**Start hosting** actually runs the app — the badge moves through *Installing dependencies* → *Building* → *Starting the server*. It can take a few minutes.",
+        "**Open preview** to check it, **Copy link** to send it to someone.",
+        "See something to fix? **Modify** — you do not have to stop hosting first.",
+      ],
+    },
+    { kind: "heading", id: "modify", text: "Changing a prototype you already built" },
+    {
+      kind: "md",
+      md: `**Modify** does **not** throw away what was built. A build session opens with the AI
+waiting, and **you say what to change first** — write it plainly ("move the cart button to the top
+right", "make this screen mobile-first") and the AI gets on with it instead of asking you to pick
+from a list. The earlier builds' conversation stays on screen above, but the AI is handed **only a
+summary** of it, so changing one button's colour does not drag the entire build's context with it.
+
+What each finished build changed against the spec is kept as well, in \`change-history.md\` next to the
+spec, and every later session reads it first. Where it disagrees with the spec the history wins, so a
+feature you had taken out does not come back. When the Discovery conversation decides to proceed past
+validation, it applies that history to the approved spec as \`spec-as-built.md\` — the approved spec
+itself stays as it was — and asks you to approve it before carrying on.
+
+You can press it while the prototype is running. The server stays up and the link you sent to
+participants keeps working, but what that link shows is the **previous version** — the card says
+*Preview shows the previous version* and offers a **Re-host** button there. Re-hosting closes the
+participant link for a few minutes, so during a workshop pick your moment.
+
+**To start over from nothing**, the button is **Reset**, not Modify. That is the only one that
+discards what was built; the design document stays, so you can build again right away.`,
+    },
+    { kind: "heading", id: "session", text: "The build session" },
+    {
+      kind: "md",
+      md: `A build is a conversation. The session view shows progress and changed files, and **■** stops
+it exactly as in the workspace. You can direct it mid-build — "do the sign-in screen first",
+"make this one mobile-first".
+
+The AI splits a large build across several agents. When it does, the progress line above the input
+expands into **one row per agent**, each showing the piece of work it owns, the file it is touching
+and its own elapsed time, with a count such as *3 agents working*. Several rows moving at once is
+normal; a finished agent leaves the rows and stays in the **activity log** under the message.
+
+A session lasts **one build**. When the AI declares it finished, the session closes itself — that
+is a normal ending, not a dropped connection. The conversation does not close with it: reopen the
+panel (after a refresh, the next day, even after a server replacement) and everything from the
+first build on is there, in order. **Reset** clears that conversation too.
+
+A session the AI has not declared finished stays open, and while it does, **Start hosting**,
+**Stop hosting** and [exporting the project](/manual#transfer-project) are refused. The reason appears
+on the card itself. Press **Open session** on that card, then **Done** in the panel to close the
+session, and try again.
+
+**N% context left** above the message box is the same indicator as in the workspace. A build runs
+many tools, so it drops quickly. Opening a finished build with **Modify** starts a fresh
+conversation, so the indicator is blank until the first reply brings it back.`,
+    },
+    { kind: "heading", id: "complete-card", text: "The completion card" },
+    {
+      kind: "md",
+      md: `- **Start hosting** — runs what was built and opens the preview.
+- **Continue improving** — opens a fresh session to change things. Only a summary of the previous build is carried over, which keeps it light.
+- **Close** — collapses the card. **Open session** brings you back later.
+
+The buttons may be briefly unavailable (*Finishing the build*). They become active a few
+seconds later.`,
+    },
+    { kind: "heading", id: "share", text: "Sharing the preview" },
+    {
+      kind: "md",
+      md: `**Copy link** produces a **share link that opens without an account**. Whoever receives it can
+try the prototype without signing in — send it straight to the customers or colleagues whose
+reactions you want.
+
+The link's address is **not the app's address.** A prototype is code the AI wrote, so it opens only
+on a separate preview address — that keeps the code away from the viewer's sign-in and from the app
+itself. A link on the app's address still works: it moves on to the same prototype's preview
+address. If a customer network only lets people reach allowlisted addresses, give them **both the
+app address and the preview address**.
+
+When you are done, **Stop hosting** takes it down. After that the share link stops opening too.`,
+    },
+    {
+      kind: "callout",
+      tone: "note",
+      md: `Typing a preview path into the address bar yourself **returns 404, and that is correct.**
+Access is granted to your browser when you open the share link, so you have to enter through the
+copied link.`,
+    },
+    { kind: "heading", id: "limits", text: "How many can build at once" },
+    {
+      kind: "md",
+      md: `A server allows a limited number of builds at the same time. When they are all taken you see
+*Another team is building a prototype* or *The concurrent-build limit has been reached*. A slot
+frees up when a running build finishes, so pressing the button again shortly works.`,
+    },
+    { kind: "heading", id: "proto-reset", text: "Resetting" },
+    {
+      kind: "md",
+      md: `**Reset** on a card returns that prototype to **Not built**. The spec stays.
+
+Deleted — the build output and any running server · the build conversation · the validation
+survey and its responses.
+Kept — the design document (\`PROTOTYPE-*.md\`), which is why you can build again.
+
+Use it when the direction changed enough that starting over is cleaner. For smaller changes,
+**Modify** is the right button, not Reset — it keeps what was built.`,
+    },
+    {
+      kind: "callout",
+      tone: "warn",
+      md: `**Survey responses are destroyed by a reset and cannot be recovered.** Export the CSV before
+resetting a prototype that has collected responses. The confirmation dialog tells you the current
+response count.`,
+    },
+    { kind: "heading", id: "download", text: "Downloading" },
+    {
+      kind: "md",
+      md: `**Download** gives you the built prototype's source as an archive. Use it when a build team
+wants that code as a starting point, or when you want to run it somewhere else yourself.`,
+    },
+  ],
+};

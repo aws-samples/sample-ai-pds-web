@@ -1,0 +1,490 @@
+// frontend/app/projects/[projectId]/prototypes/page.test.tsx
+import { describe, it, expect, vi } from "vitest";
+import { render, screen, act, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { http, HttpResponse } from "msw";
+import { server } from "@/test/msw/server";
+import { API_BASE_URL } from "@/lib/api/client";
+import * as prototypeStream from "@/lib/usePrototypeStream";
+
+// The LanguageSwitcher that AppHeader draws calls useRouter() — in a unit test with no app router
+// mounted, that hook throws. The switcher's behavior is verified by
+// components/LanguageSwitcher.test.tsx, so here it only needs to mount.
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({ refresh: vi.fn() }),
+}));
+
+import PrototypesPage from "./page";
+
+// BuildPanel's own tests cover its rendering in depth; here it's exercised
+// through usePrototypeStream's mock (same hook-mock pattern as the workspace
+// page test) so this page test stays about the GRID + panel-open wiring, not
+// the chat internals.
+function mockStream(overrides: Partial<prototypeStream.PrototypeStream> = {}) {
+  vi.spyOn(prototypeStream, "usePrototypeStream").mockReturnValue({
+    items: [],
+    streaming: false,
+    agents: [],
+    pendingQuestions: null,
+    buildComplete: null,
+    changedPaths: [],
+    historyLoading: false,
+    context: null,
+    startBuild: vi.fn(),
+    restoreHistory: vi.fn().mockResolvedValue(undefined),
+    send: vi.fn(),
+    submitAnswers: vi.fn().mockResolvedValue(undefined),
+    interrupt: vi.fn().mockResolvedValue(undefined),
+    restartForImprovement: vi.fn().mockResolvedValue(undefined),
+    resume: vi.fn().mockResolvedValue(undefined),
+    ...overrides,
+  });
+}
+
+const PROTOTYPES = [
+  { slug: "todo-app", spec_path: "aiplc-docs/discovery/prototypes/todo-app/PROTOTYPE-todo-app.md", state: "none", port: null, response_count: 0 },
+  { slug: "chat-widget", spec_path: "aiplc-docs/discovery/prototypes/chat-widget/PROTOTYPE-chat-widget.md", state: "running", port: 4021, response_count: 3 },
+];
+
+// GET /prototypes now answers {prototypes, active_builds, max_builds}
+// (Task 7) rather than a bare array; this wraps the fixture so each test
+// site doesn't have to restate the capacity fields.
+function listing(prototypes = PROTOTYPES, activeBuilds = 0, maxBuilds = 2) {
+  return { prototypes, active_builds: activeBuilds, max_builds: maxBuilds };
+}
+
+const params = Promise.resolve({ projectId: "p1" });
+
+describe("Prototypes page", () => {
+  it("renders cards from the prototype list", async () => {
+    server.use(
+      http.get(`${API_BASE_URL}/projects/p1/prototypes`, () => HttpResponse.json(listing())),
+    );
+    mockStream();
+    await act(async () => {
+      render(<PrototypesPage params={params} />);
+    });
+    expect(await screen.findByText("todo-app")).toBeInTheDocument();
+    expect(screen.getByText("chat-widget")).toBeInTheDocument();
+    expect(screen.getByText("실행 중 :4021")).toBeInTheDocument();
+  });
+
+  it("shows an empty state when there are no prototype specs", async () => {
+    server.use(
+      http.get(`${API_BASE_URL}/projects/p1/prototypes`, () => HttpResponse.json(listing([]))),
+    );
+    mockStream();
+    await act(async () => {
+      render(<PrototypesPage params={params} />);
+    });
+    expect(await screen.findByText(/아직 프로토타입 명세가 없습니다/)).toBeInTheDocument();
+  });
+
+  it("onBuild with a fresh 202 session opens BuildPanel with autoStart (fires the first-build turn)", async () => {
+    server.use(
+      http.get(`${API_BASE_URL}/projects/p1/prototypes`, () => HttpResponse.json(listing())),
+      http.post(`${API_BASE_URL}/projects/p1/prototypes/todo-app/session`, () =>
+        HttpResponse.json({ status: "starting" }, { status: 202 }),
+      ),
+    );
+    const startBuild = vi.fn();
+    mockStream({ startBuild });
+    await act(async () => {
+      render(<PrototypesPage params={params} />);
+    });
+    await screen.findByText("todo-app");
+
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "빌드 시작" }));
+
+    expect(await screen.findByRole("heading", { name: "todo-app" })).toBeInTheDocument();
+    expect(startBuild).toHaveBeenCalledTimes(1);
+  });
+
+  it("onBuild against an already-live session (409) opens BuildPanel WITHOUT autoStart", async () => {
+    server.use(
+      http.get(`${API_BASE_URL}/projects/p1/prototypes`, () => HttpResponse.json(listing())),
+      http.post(`${API_BASE_URL}/projects/p1/prototypes/todo-app/session`, () =>
+        HttpResponse.json({ detail: "build session already active" }, { status: 409 }),
+      ),
+    );
+    const startBuild = vi.fn();
+    mockStream({ startBuild });
+    await act(async () => {
+      render(<PrototypesPage params={params} />);
+    });
+    await screen.findByText("todo-app");
+
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "빌드 시작" }));
+
+    expect(await screen.findByRole("heading", { name: "todo-app" })).toBeInTheDocument();
+    expect(startBuild).not.toHaveBeenCalled();
+  });
+
+  it("onShowLogs fetches host status and renders log_tail in a <pre>", async () => {
+    server.use(
+      http.get(`${API_BASE_URL}/projects/p1/prototypes`, () => HttpResponse.json(listing())),
+      http.get(`${API_BASE_URL}/projects/p1/prototypes/chat-widget/host`, () =>
+        HttpResponse.json({ state: "running", port: 4021, log_tail: "listening on 4021" }),
+      ),
+    );
+    mockStream();
+    await act(async () => {
+      render(<PrototypesPage params={params} />);
+    });
+    await screen.findByText("chat-widget");
+
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "로그" }));
+
+    expect(await screen.findByText("listening on 4021")).toBeInTheDocument();
+  });
+
+  it("Start hosting refused by an open build session tells the user what to press, on that card", async () => {
+    // 409 `build_session_active`. If this rejection is not on screen, the button reads as having
+    // come back with no response (ws-f, 2026-10-08).
+    const built = [{ ...PROTOTYPES[0], state: "built", session_open: true }];
+    server.use(
+      http.get(`${API_BASE_URL}/projects/p1/prototypes`, () => HttpResponse.json(listing(built))),
+      http.get(`${API_BASE_URL}/projects/p1/prototypes/todo-app/host`, () =>
+        HttpResponse.json({ detail: "not hosted" }, { status: 404 })),
+      http.post(`${API_BASE_URL}/projects/p1/prototypes/todo-app/host`, () =>
+        HttpResponse.json({ detail: "build_session_active" }, { status: 409 })),
+    );
+    mockStream();
+    await act(async () => {
+      render(<PrototypesPage params={params} />);
+    });
+    await screen.findByText("todo-app");
+
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "호스팅 시작" }));
+
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("“완료”를 눌러");
+    expect(alert).toHaveTextContent("“세션 열기”");
+  });
+
+  it("Stop hosting failure is shown on the card", async () => {
+    server.use(
+      http.get(`${API_BASE_URL}/projects/p1/prototypes`, () => HttpResponse.json(listing())),
+      http.delete(`${API_BASE_URL}/projects/p1/prototypes/chat-widget/host`, () =>
+        HttpResponse.json({ detail: "boom" }, { status: 500 })),
+    );
+    mockStream();
+    await act(async () => {
+      render(<PrototypesPage params={params} />);
+    });
+    await screen.findByText("chat-widget");
+
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "호스팅 중지" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("호스팅을 중지하지 못했습니다");
+  });
+
+  it("warns when the concurrent-build cap is reached", async () => {
+    server.use(
+      http.get(`${API_BASE_URL}/projects/p1/prototypes`, () => HttpResponse.json(listing(PROTOTYPES, 2, 2))),
+    );
+    mockStream();
+    await act(async () => {
+      render(<PrototypesPage params={params} />);
+    });
+    expect(await screen.findByText(/동시 빌드 상한\(2건\)에 도달했습니다/)).toBeInTheDocument();
+  });
+
+  it("does not show the cap warning when builds are below the limit", async () => {
+    server.use(
+      http.get(`${API_BASE_URL}/projects/p1/prototypes`, () => HttpResponse.json(listing(PROTOTYPES, 0, 2))),
+    );
+    mockStream();
+    await act(async () => {
+      render(<PrototypesPage params={params} />);
+    });
+    await screen.findByText("todo-app");
+    expect(screen.queryByText(/동시 빌드 상한/)).not.toBeInTheDocument();
+  });
+
+  it("wires each card's download link to prototypeArchiveUrl", async () => {
+    server.use(
+      http.get(`${API_BASE_URL}/projects/p1/prototypes`, () =>
+        HttpResponse.json(
+          listing([
+            { slug: "todo-app", spec_path: "s.md", state: "built", port: null, response_count: 0 },
+          ]),
+        ),
+      ),
+    );
+    mockStream();
+    await act(async () => {
+      render(<PrototypesPage params={params} />);
+    });
+    const link = await screen.findByRole("link", { name: "다운로드" });
+    expect(link).toHaveAttribute("href", `${API_BASE_URL}/projects/p1/prototypes/todo-app/archive`);
+  });
+});
+
+describe("survey panel reachability", () => {
+  it("stays hidden until the card's 설문 button is clicked", async () => {
+    mockStream();
+    server.use(
+      http.get(`${API_BASE_URL}/projects/p1/prototypes`, () => HttpResponse.json(listing())),
+      http.get(`${API_BASE_URL}/projects/p1/prototypes/todo-app/survey`,
+        () => new HttpResponse(null, { status: 404 })),
+    );
+    render(<PrototypesPage params={params} />);
+
+    // Before any click there is no survey panel at all.
+    expect(await screen.findByText("todo-app")).toBeInTheDocument();
+    expect(screen.queryByText("검증 설문")).not.toBeInTheDocument();
+
+    const surveyButtons = screen.getAllByRole("button", { name: "설문" });
+    await userEvent.click(surveyButtons[0]);
+
+    // The panel is now rendered in the page body — NOT behind the build
+    // drawer, which is a full-screen fixed overlay. Regression guard: the
+    // panel used to share the drawer's openSlug condition, so it only ever
+    // rendered underneath the drawer and was unreachable.
+    expect(await screen.findByText("검증 설문")).toBeInTheDocument();
+  });
+
+  it("does not open the build drawer when 설문 is clicked", async () => {
+    const startBuild = vi.fn();
+    mockStream({ startBuild });
+    server.use(
+      http.get(`${API_BASE_URL}/projects/p1/prototypes`, () => HttpResponse.json(listing())),
+      http.get(`${API_BASE_URL}/projects/p1/prototypes/todo-app/survey`,
+        () => new HttpResponse(null, { status: 404 })),
+    );
+    render(<PrototypesPage params={params} />);
+
+    await userEvent.click((await screen.findAllByRole("button", { name: "설문" }))[0]);
+    await screen.findByText("검증 설문");
+    // No build session was started, and the drawer's own controls are absent.
+    expect(startBuild).not.toHaveBeenCalled();
+    expect(screen.queryByRole("button", { name: /완료/ })).not.toBeInTheDocument();
+  });
+
+  it("toggles the panel closed on a second click", async () => {
+    mockStream();
+    server.use(
+      http.get(`${API_BASE_URL}/projects/p1/prototypes`, () => HttpResponse.json(listing())),
+      http.get(`${API_BASE_URL}/projects/p1/prototypes/todo-app/survey`,
+        () => new HttpResponse(null, { status: 404 })),
+    );
+    render(<PrototypesPage params={params} />);
+
+    const btn = (await screen.findAllByRole("button", { name: "설문" }))[0];
+    await userEvent.click(btn);
+    expect(await screen.findByText("검증 설문")).toBeInTheDocument();
+    await userEvent.click(btn);
+    expect(screen.queryByText("검증 설문")).not.toBeInTheDocument();
+  });
+});
+
+describe("reset confirmation", () => {
+  // handleReset re-fetches /prototypes at click time (a workshop's survey
+  // answers arrive live while this page sits open, so the list's
+  // response_count can be stale by the time the dialog needs to show it) —
+  // every test here needs the GET handler live for BOTH the initial render
+  // and that click-time refetch, so this counts calls rather than using
+  // `.once` like some of the file's other tests do.
+  function trackedListingHandler(prototypes = PROTOTYPES) {
+    const calls = { get: 0 };
+    return {
+      calls,
+      handler: http.get(`${API_BASE_URL}/projects/p1/prototypes`, () => {
+        calls.get += 1;
+        return HttpResponse.json(listing(prototypes));
+      }),
+    };
+  }
+
+  it("shows the fresh response count and irreversibility wording in the dialog", async () => {
+    const { handler } = trackedListingHandler();
+    server.use(handler);
+    mockStream();
+    render(<PrototypesPage params={params} />);
+    await screen.findByText("chat-widget");
+
+    await userEvent.click(await screen.findByRole("button", { name: "chat-widget 초기화" }));
+
+    const dialog = await screen.findByRole("dialog", { name: "프로토타입 초기화 확인" });
+    expect(dialog).toHaveTextContent("응답 3건");
+    expect(dialog).toHaveTextContent("되돌릴 수 없습니다");
+  });
+
+  it("warns that responses may be unrecoverable when the click-time refetch fails", async () => {
+    // The amber `answers === null` branch. It is the ONLY thing that warns the
+    // user when the count could not be established, and it had no test:
+    // changing `answers = null` to `answers = 0` kept all 570 tests green while
+    // the warning silently disappeared — a card with real responses then showed
+    // a bare "검증 설문" bullet, asserting there was nothing to lose.
+    //
+    // The mock has to fail ONLY the refetch, not the initial load: a handler
+    // that always 500s never renders a card to click, and one that always
+    // succeeds never reaches the branch. So the first GET answers normally and
+    // every later one fails.
+    let gets = 0;
+    server.use(
+      http.get(`${API_BASE_URL}/projects/p1/prototypes`, () => {
+        gets += 1;
+        if (gets === 1) return HttpResponse.json(listing());
+        return HttpResponse.json({ detail: "s3 down" }, { status: 500 });
+      }),
+    );
+    mockStream();
+    render(<PrototypesPage params={params} />);
+    await screen.findByText("chat-widget");
+
+    await userEvent.click(await screen.findByRole("button", { name: "chat-widget 초기화" }));
+
+    const dialog = await screen.findByRole("dialog", { name: "프로토타입 초기화 확인" });
+    expect(dialog).toHaveTextContent("현재 응답 수를 확인하지 못했습니다");
+    expect(dialog).toHaveTextContent("되돌릴 수 없이 삭제됩니다");
+    // And NOT the confident wording: the stale list said 3, but a count that
+    // could not be verified must not be presented as if it had been.
+    expect(dialog).not.toHaveTextContent("응답 3건은 되돌릴 수 없습니다");
+  });
+
+  it("cancel closes the dialog without calling DELETE", async () => {
+    const { handler } = trackedListingHandler();
+    let deleteCalls = 0;
+    server.use(
+      handler,
+      http.delete(`${API_BASE_URL}/projects/p1/prototypes/chat-widget`, () => {
+        deleteCalls++;
+        return new HttpResponse(null, { status: 204 });
+      }),
+    );
+    mockStream();
+    render(<PrototypesPage params={params} />);
+    await screen.findByText("chat-widget");
+
+    await userEvent.click(await screen.findByRole("button", { name: "chat-widget 초기화" }));
+    await screen.findByRole("dialog", { name: "프로토타입 초기화 확인" });
+    await userEvent.click(screen.getByRole("button", { name: "취소" }));
+
+    expect(screen.queryByRole("dialog", { name: "프로토타입 초기화 확인" })).not.toBeInTheDocument();
+    expect(deleteCalls).toBe(0);
+  });
+
+  it("confirm sends DELETE on 204 and the list re-fetches", async () => {
+    const { handler, calls } = trackedListingHandler();
+    let deleteCalls = 0;
+    server.use(
+      handler,
+      http.delete(`${API_BASE_URL}/projects/p1/prototypes/chat-widget`, () => {
+        deleteCalls++;
+        return new HttpResponse(null, { status: 204 });
+      }),
+    );
+    mockStream();
+    render(<PrototypesPage params={params} />);
+    await screen.findByText("chat-widget");
+
+    await userEvent.click(await screen.findByRole("button", { name: "chat-widget 초기화" }));
+    await screen.findByRole("dialog", { name: "프로토타입 초기화 확인" });
+    // Captured AFTER the dialog has appeared, i.e. AFTER handleReset's own
+    // click-time refetch has already landed — so this baseline isolates
+    // confirmReset's OWN list.reload() from the unrelated GET that opening
+    // the dialog triggers. Capturing it any earlier makes the final
+    // assertion pass even if confirmReset's list.reload() is deleted.
+    const getsBeforeConfirm = calls.get;
+
+    await userEvent.click(screen.getByRole("button", { name: "초기화" }));
+
+    await waitFor(() => expect(deleteCalls).toBe(1));
+    await waitFor(() => expect(calls.get).toBeGreaterThan(getsBeforeConfirm));
+    expect(screen.queryByRole("dialog", { name: "프로토타입 초기화 확인" })).not.toBeInTheDocument();
+  });
+
+  it("confirm on a 502 shows the retry error but still re-fetches the list", async () => {
+    const { handler, calls } = trackedListingHandler();
+    server.use(
+      handler,
+      http.delete(`${API_BASE_URL}/projects/p1/prototypes/chat-widget`, () =>
+        HttpResponse.json({ detail: "reset partial" }, { status: 502 }),
+      ),
+    );
+    mockStream();
+    render(<PrototypesPage params={params} />);
+    await screen.findByText("chat-widget");
+
+    await userEvent.click(await screen.findByRole("button", { name: "chat-widget 초기화" }));
+    await screen.findByRole("dialog", { name: "프로토타입 초기화 확인" });
+    // Same reasoning as the 204 case above: captured after the dialog's own
+    // refetch has already happened, so this isolates confirmReset's
+    // `finally`-block reload from the unrelated open-dialog GET.
+    const getsBeforeConfirm = calls.get;
+
+    await userEvent.click(screen.getByRole("button", { name: "초기화" }));
+
+    expect(await screen.findByText(/초기화가 완료되지 않았습니다/)).toBeInTheDocument();
+    // The dialog stays open on failure so retrying is one click away — but
+    // list.reload() must still have run in `finally`, since a 502 means the
+    // purge was only partial and the card needs to reflect whatever WAS
+    // deleted.
+    expect(screen.getByRole("dialog", { name: "프로토타입 초기화 확인" })).toBeInTheDocument();
+    await waitFor(() => expect(calls.get).toBeGreaterThan(getsBeforeConfirm));
+  });
+});
+
+
+// ---- Modification does not auto-fire ----
+//
+// When fixing something already built, an auto opening first burns a round trip of the agent
+// asking back, and while that question was up the input was locked, so the user could not even
+// type their own request (the rationale in backend prompts.handoff_prompt). The first build is
+// the opposite — the user has nothing to say yet, and the agent must read the spec first.
+
+describe("Prototypes page — 수정 진입", () => {
+  const BUILT = [{ slug: "todo-app", name: null,
+                   spec_path: "aiplc-docs/discovery/prototypes/todo-app/PROTOTYPE-todo-app.md",
+                   state: "built", port: null, session_open: false,
+                   preview_stale: false, access_url: null,
+                   response_count: 0, has_survey: false }];
+
+  function seed(prototypes: unknown[]) {
+    server.use(
+      http.get(`${API_BASE_URL}/projects/p1/prototypes`,
+               () => HttpResponse.json(listing(prototypes as never))),
+      http.post(`${API_BASE_URL}/projects/p1/prototypes/todo-app/session`, () =>
+        HttpResponse.json({ status: "starting" }, { status: 202 })),
+    );
+  }
+
+  it("빌드 완료된 프로토타입은 개시 턴을 자동 발화하지 않는다", async () => {
+    // The user speaks first, and that first message becomes the opening turn (the backend's
+    // session.opened).
+    const user = userEvent.setup();
+    seed(BUILT);
+    const startBuild = vi.fn();
+    mockStream({ startBuild });
+    await act(async () => {
+      render(<PrototypesPage params={params} />);
+    });
+
+    await user.click(await screen.findByRole("button", { name: "수정하기" }));
+
+    await waitFor(() => expect(screen.getByText("무엇을 고칠지 알려주세요."))
+      .toBeInTheDocument());
+    expect(startBuild).not.toHaveBeenCalled();
+  });
+
+  it("첫 빌드는 그대로 자동 발화한다", async () => {
+    const user = userEvent.setup();
+    seed([{ ...BUILT[0], state: "none" }]);
+    const startBuild = vi.fn();
+    mockStream({ startBuild });
+    await act(async () => {
+      render(<PrototypesPage params={params} />);
+    });
+
+    await user.click(await screen.findByRole("button", { name: "빌드 시작" }));
+
+    await waitFor(() => expect(startBuild).toHaveBeenCalled());
+  });
+});
