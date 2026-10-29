@@ -14,7 +14,7 @@ export const createProject: ManualSection = {
       kind: "steps",
       items: [
         "**Project ID** — letters, digits, hyphen (`-`) and underscore (`_`) only. No spaces, and an ID that already exists is rejected.",
-        "**Project name** — optional. Leave it blank and the list shows the ID instead.",
+        "**Project name** — required. It is how the list and exported bundles tell projects apart.",
         "**Default model** — the AI model this project runs on.",
         "**Document language** — the language of the documents, prototypes and chat it will produce.",
         "Press **Create project** and you land directly on that project's dashboard.",

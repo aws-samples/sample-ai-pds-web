@@ -21,7 +21,7 @@ function ProjectCreate() {
       <div className="space-y-2">
         <div className="grid grid-cols-2 gap-2">
           <Field label={t("project.id")} value={t("project.idPlaceholder")} />
-          <Field label={t("project.nameOptional")} value={t("project.namePlaceholder")} />
+          <Field label={t("project.name")} value={t("project.namePlaceholder")} />
           <Field label={t("project.defaultModel")} value="Opus 4.8" />
           {/* Language names are written in the language itself — LANGUAGE_LABEL is the single
               source for that notation (same values as the header badge and project list). */}

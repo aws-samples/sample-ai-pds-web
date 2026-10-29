@@ -111,6 +111,10 @@ def _access_view(pid: str, me: Principal) -> dict:
 
 @router.post("/projects")
 async def create_project(body: CreateProject, me: Principal = Depends(require_user)):
+    # A project always has a display name. The form requires one, and an API caller that
+    # omits it gets the id instead -- a null name made exported bundles and the project list
+    # unidentifiable.
+    body.name = (body.name or "").strip() or body.project_id
     if app_module.registry.is_registered(body.project_id):
         raise HTTPException(status_code=409, detail="project exists")
     # Validate before creating the workspace -- creating and rolling back a local

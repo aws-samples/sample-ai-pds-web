@@ -27,7 +27,7 @@ describe("CreateProjectForm", () => {
     // Wait until the list arrives — the first item is selected by default.
     await screen.findByRole("option", { name: "Opus 5" });
     await user.type(screen.getByLabelText("프로젝트 ID"), "pilot2");
-    await user.type(screen.getByLabelText("프로젝트 이름 (선택)"), "신규 세션");
+    await user.type(screen.getByLabelText("프로젝트 이름"), "신규 세션");
     await user.selectOptions(screen.getByLabelText("AI 모델"), "global.anthropic.claude-sonnet-5");
     await user.click(screen.getByRole("button", { name: "프로젝트 생성" }));
     // language is always sent even if the select is untouched — the default is ko.
@@ -80,6 +80,7 @@ describe("CreateProjectForm", () => {
     render(<CreateProjectForm onCreated={vi.fn()} />);
     await screen.findByRole("option", { name: "Opus 5" });
     await user.type(screen.getByLabelText("프로젝트 ID"), "p");
+    await user.type(screen.getByLabelText("프로젝트 이름"), "세션");
     await user.click(screen.getByRole("button", { name: "프로젝트 생성" }));
     expect(body.model_id).toBe("m-first");
   });
@@ -100,8 +101,9 @@ describe("CreateProjectForm", () => {
     // The select is disabled, but creation is not blocked — letting a failed catalog lookup
     // block project creation entirely would be excessive (the server falls back to the env default).
     expect(await screen.findByLabelText("AI 모델")).toBeDisabled();
+    await user.type(screen.getByLabelText("프로젝트 이름"), "세션");
     await user.click(screen.getByRole("button", { name: "프로젝트 생성" }));
-    expect(body).toEqual({ project_id: "p", language: "ko" });
+    expect(body).toEqual({ project_id: "p", name: "세션", language: "ko" });
   });
 
   it("disables the select while the list is empty", async () => {
@@ -135,8 +137,23 @@ describe("CreateProjectForm", () => {
     expect(screen.queryByText(/영문·숫자·하이픈/)).toBeNull();
     await user.type(input, "my-pilot_2");
     expect(input).toHaveValue("my-pilot_2");
+    await user.type(screen.getByLabelText("프로젝트 이름"), "세션");
     await user.click(screen.getByRole("button", { name: "프로젝트 생성" }));
     await waitFor(() => expect(body).toMatchObject({ project_id: "my-pilot_2" }));
+  });
+
+  it("requires a project name — nameless projects were indistinguishable in exports", async () => {
+    const user = userEvent.setup();
+    let posted = false;
+    server.use(http.post(`${API_BASE_URL}/projects`, () => {
+      posted = true;
+      return HttpResponse.json({});
+    }));
+    render(<CreateProjectForm onCreated={vi.fn()} />);
+    await user.type(screen.getByLabelText("프로젝트 ID"), "p");
+    await user.click(screen.getByRole("button", { name: "프로젝트 생성" }));
+    expect(screen.getByLabelText("프로젝트 이름")).toBeRequired();
+    expect(posted).toBe(false);
   });
 
   it("shows a Korean conflict message on 409", async () => {
@@ -148,6 +165,7 @@ describe("CreateProjectForm", () => {
     );
     render(<CreateProjectForm onCreated={vi.fn()} />);
     await user.type(screen.getByLabelText("프로젝트 ID"), "dup");
+    await user.type(screen.getByLabelText("프로젝트 이름"), "세션");
     await user.click(screen.getByRole("button", { name: "프로젝트 생성" }));
     expect(await screen.findByText("이미 존재하는 프로젝트 ID입니다.")).toBeInTheDocument();
   });
@@ -166,6 +184,7 @@ describe("CreateProjectForm", () => {
     render(<CreateProjectForm onCreated={vi.fn()} />);
     await user.type(screen.getByLabelText("프로젝트 ID"), "p1");
     await user.selectOptions(screen.getByLabelText("문서 언어"), "en");
+    await user.type(screen.getByLabelText("프로젝트 이름"), "세션");
     await user.click(screen.getByRole("button", { name: "프로젝트 생성" }));
     await waitFor(() => expect(body).toMatchObject({ project_id: "p1", language: "en" }));
   });
@@ -185,6 +204,7 @@ describe("CreateProjectForm", () => {
     );
     render(<CreateProjectForm onCreated={vi.fn()} />);
     await user.type(screen.getByLabelText("프로젝트 ID"), "p2");
+    await user.type(screen.getByLabelText("프로젝트 이름"), "세션");
     await user.click(screen.getByRole("button", { name: "프로젝트 생성" }));
     await waitFor(() => expect(body).toMatchObject({ language: "ko" }));
   });

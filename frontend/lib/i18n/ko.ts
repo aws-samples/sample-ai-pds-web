@@ -326,7 +326,7 @@ export const ko = {
   "project.id": "프로젝트 ID",
   "project.idPlaceholder": "예: pilot2",
   "project.idCharsHint": "영문·숫자·하이픈(-)·밑줄(_)만 쓸 수 있습니다. 공백은 안 됩니다.",
-  "project.nameOptional": "프로젝트 이름 (선택)",
+  "project.name": "프로젝트 이름",
   "project.namePlaceholder": "예: 기획전 AI 어시스턴트",
   "project.defaultModel": "기본 모델",
   "model.withEffort": "{name} · effort {effort}",

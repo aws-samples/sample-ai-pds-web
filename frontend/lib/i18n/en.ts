@@ -287,7 +287,7 @@ export const en: Record<keyof typeof ko, string> = {
   "project.id": "Project ID",
   "project.idPlaceholder": "e.g. pilot2",
   "project.idCharsHint": "Letters, digits, hyphen (-) and underscore (_) only. No spaces.",
-  "project.nameOptional": "Project name (optional)",
+  "project.name": "Project name",
   "project.namePlaceholder": "e.g. Campaign AI assistant",
   "project.defaultModel": "Default model",
   "model.withEffort": "{name} · effort {effort}",

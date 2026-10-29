@@ -54,7 +54,9 @@ export function CreateProjectForm({ onCreated }: { onCreated: (p: ProjectSummary
     setError(null);
     setSubmitting(true);
     try {
-      const created = await createProject(projectId.trim(), name.trim() || undefined,
+      // The name is required — exports and the project list had no way to tell nameless
+      // projects apart (the server also falls back to the id for API callers).
+      const created = await createProject(projectId.trim(), name.trim(),
                                           modelId || undefined, language);
       onCreated(created);
       setProjectId("");
@@ -102,10 +104,11 @@ export function CreateProjectForm({ onCreated }: { onCreated: (p: ProjectSummary
       </div>
       <div className="flex-1">
         <label htmlFor="pname" className="block text-xs text-slate-500 mb-1">
-          {t("project.nameOptional")}
+          {t("project.name")}
         </label>
         <input
           id="pname"
+          required
           value={name}
           onChange={(e) => setName(e.target.value)}
           placeholder={t("project.namePlaceholder")}
