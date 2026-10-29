@@ -159,7 +159,7 @@ export const ko = {
   "admin.modelsLoadFailed": "모델 목록을 불러오지 못했습니다.",
   "admin.noModels": "등록된 모델이 없습니다.",
   "admin.designTitle": "브랜드 디자인",
-  "admin.designSubtitle": "DESIGN.md를 올리면 이후 만들어지는 모든 프로토타입이 이 브랜드로 나옵니다. 이미 테마를 반영해 만든 프로토타입은 다시 호스팅할 때 새 값으로 갈립니다. 그보다 먼저 만든 프로토타입은 개선 세션을 한 번 열어야 브랜드가 반영됩니다.",
+  "admin.designSubtitle": "DESIGN.md를 올리면 이후 만들어지는 프로토타입이 이 브랜드로 나옵니다. 단, 디자인 컨텍스트 질문에서 브랜드가 아닌 외관(기본·기존 제품·최소)을 고른 프로토타입에는 적용되지 않습니다. 이미 테마를 반영해 만든 프로토타입은 다시 호스팅할 때 새 값으로 갈립니다. 그보다 먼저 만든 프로토타입은 개선 세션을 한 번 열어야 브랜드가 반영됩니다.",
   "admin.designLoadFailed": "브랜드 프로필을 불러오지 못했습니다.",
   "admin.designDeleteFailed": "브랜드 프로필 제거에 실패했습니다.",
   "admin.designNone": "브랜드 프로필이 없습니다 — 프로토타입은 shadcn/ui 기본으로 만들어집니다.",

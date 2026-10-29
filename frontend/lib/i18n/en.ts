@@ -146,7 +146,7 @@ export const en: Record<keyof typeof ko, string> = {
   "admin.modelsLoadFailed": "Could not load the model list.",
   "admin.noModels": "No models are registered.",
   "admin.designTitle": "Brand design",
-  "admin.designSubtitle": "Upload a DESIGN.md and every prototype built afterwards uses this brand. Prototypes that already carry the theme re-brand the next time they are hosted. Ones built before that need one improvement session to pick it up.",
+  "admin.designSubtitle": "Upload a DESIGN.md and prototypes built afterwards use this brand — except those whose design-context answer chose a non-brand look (default, existing product, minimal). Prototypes that already carry the theme re-brand the next time they are hosted. Ones built before that need one improvement session to pick it up.",
   "admin.designLoadFailed": "Could not load the brand profile.",
   "admin.designDeleteFailed": "Could not remove the brand profile.",
   "admin.designNone": "No brand profile — prototypes are built with the shadcn/ui defaults.",

@@ -27,6 +27,7 @@ from aipds.proto.store import (PrototypeStore, has_build_output,  # noqa: F401 â
                                mark_completed, output_digest)
 from aipds.proto import prompts
 from aipds.proto.build_guard import user_url_hosts
+from aipds.proto.design_choice import effective_profile
 from aipds.proto.design_sync import sync_design
 from aipds.proto.hosting import restore_local
 from aipds.pathsafe import unlink_beneath, write_beneath
@@ -497,6 +498,8 @@ class PrototypeSession:
         try:
             profile = (await self._design_profiles.load()
                        if self._design_profiles is not None else None)
+            # The user's Step 2 answer decides whether the brand applies at all.
+            profile = await effective_profile(profile, self._s3, self.slug)
             sync_design(build_dir, profile, self._language)
         except Exception:
             _log.exception("design sync at session start failed: %s/%s",

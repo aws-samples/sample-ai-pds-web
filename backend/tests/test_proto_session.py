@@ -253,6 +253,31 @@ async def test_start_plants_the_brand_profile(tmp_path):
     assert "aipds:design:start" in (build_dir / "CLAUDE.md").read_text()
 
 
+async def test_start_skips_the_brand_when_design_context_chose_another_look(tmp_path):
+    """The Step 2 answer wins over the admin profile (proto/design_choice.py) — answering
+    "A) Clean and modern" must not produce a branded prototype."""
+    from aipds.design_profile import DesignProfileStore
+    from aipds.proto import layout
+    from aipds.proto.design_sync import THEME_FILENAME
+
+    s3 = FakeS3Store()
+    s3.blobs[SPEC_KEY] = "# spec"
+    s3.blobs[layout.design_context_key(SLUG)] = (
+        "## Question 1\nLook?\n\nA) Clean and modern\n"
+        "B) Match my organization's brand\n\n[Answer]: A\n")
+    profiles = DesignProfileStore(FakeS3Store())
+    await profiles.save(filename="acme.md", uploaded_by="admin@x",
+                        markdown="```tokens\nprimary: #5b2ea6\n```\n")
+
+    session = _session(s3, tmp_path, FakeBuilder(), design_profiles=profiles)
+    await session.start()
+
+    build_dir = session.build_dir()
+    assert not (build_dir / THEME_FILENAME).exists()
+    claude_md = build_dir / "CLAUDE.md"
+    assert not claude_md.is_file() or "aipds:design:start" not in claude_md.read_text()
+
+
 async def test_start_without_a_profile_plants_nothing(tmp_path):
     from aipds.proto.design_sync import DESIGN_FILENAME, THEME_FILENAME
 
