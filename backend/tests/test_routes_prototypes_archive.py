@@ -134,3 +134,28 @@ def test_archive_content_disposition_survives_non_ascii_slug(env):
 
     assert resp.status_code == 200
     assert "filename*=UTF-8''" in resp.headers["content-disposition"]
+
+
+def test_path_a1_archive_is_named_after_the_project(env):
+    """Path A.1's slug is always `prototype`, so naming by slug alone gave every project
+    `prototype-prototype.zip`."""
+    build = env["root"] / PID / "prototype"
+    build.mkdir(parents=True)
+    (build / "app.js").write_text("x", encoding="utf-8")
+
+    resp = client.get(f"/projects/{PID}/prototypes/prototype/archive")
+
+    assert resp.status_code == 200
+    cd = resp.headers["content-disposition"]
+    assert f'filename="{PID}-prototype.zip"' in cd
+    assert "prototype-prototype" not in cd
+
+
+def test_path_b_archive_carries_the_project_and_the_slug(env):
+    build = env["root"] / PID / SLUG
+    build.mkdir(parents=True)
+    (build / "app.js").write_text("x", encoding="utf-8")
+
+    resp = client.get(f"/projects/{PID}/prototypes/{SLUG}/archive")
+
+    assert f'filename="{PID}-{SLUG}-prototype.zip"' in resp.headers["content-disposition"]

@@ -755,12 +755,26 @@ async def reset_prototype(pid: str, slug: str):
 # credential. Two copies is one chance for the copy that matters to drift.
 
 
-def _archive_filename_header(slug: str) -> str:
+def _archive_stem(pid: str, slug: str) -> str:
+    """`{pid}-prototype` for Path A.1, `{pid}-{slug}-prototype` for Path B.
+
+    The project id leads because the slug alone does not say whose prototype it is, and
+    Path A.1's fixed slug is itself `prototype` -- naming by slug alone produced
+    `prototype-prototype.zip` for every Path A.1 project, so downloads from different
+    projects could not be told apart.
+    """
+    if slug == proto_layout.SINGLE_ID:
+        return f"{pid}-prototype"
+    return f"{pid}-{slug}-prototype"
+
+
+def _archive_filename_header(pid: str, slug: str) -> str:
     """RFC 6266/5987. A Korean slug raw-interpolated into a latin-1 header
     raises UnicodeEncodeError (500) -- same fix as artifacts.py."""
-    safe = re.sub(r"[^A-Za-z0-9._-]+", "-", slug).strip("-") or "prototype"
-    utf8 = quote(f"{slug}-prototype.zip", safe="")
-    return (f'attachment; filename="{safe}-prototype.zip"; '
+    stem = _archive_stem(pid, slug)
+    safe = re.sub(r"[^A-Za-z0-9._-]+", "-", stem).strip("-") or "prototype"
+    utf8 = quote(f"{stem}.zip", safe="")
+    return (f'attachment; filename="{safe}.zip"; '
             f"filename*=UTF-8''{utf8}")
 
 
@@ -796,7 +810,7 @@ async def download_prototype_archive(pid: str, slug: str):
     return Response(
         content=await asyncio.to_thread(_zip_entries, entries),
         media_type="application/zip",
-        headers={"Content-Disposition": _archive_filename_header(slug)},
+        headers={"Content-Disposition": _archive_filename_header(pid, slug)},
     )
 
 
