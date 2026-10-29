@@ -49,7 +49,13 @@ worth checking that the Envision-stage documents are still there before you gene
 
 Some specs carry no validation hypothesis (the Path B spec format, the one you get when you start
 from use cases, has no such section). In that case the **top-priority** item in the pain-point
-analysis becomes the hypothesis to validate.`,
+analysis becomes the hypothesis to validate.
+
+When the prototype's \`change-history.md\` holds [values the builder decided](/manual#modify),
+those are read too. Where a respondent could judge a value from their own work, up to two questions
+ask **whether it fits that work** (for example, "The screen's default deadline is 7 days — how does
+that compare with your work?"). The questions say the value is a placeholder, and implementation
+details such as colours or button placement are not asked about.`,
     },
     { kind: "heading", id: "questions-philosophy", text: "What the questions ask, and what they leave out" },
     {

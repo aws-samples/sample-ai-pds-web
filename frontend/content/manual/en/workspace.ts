@@ -75,6 +75,14 @@ from this" — the AI works out which path that is.`,
 | Skip | "Let's skip this stage" |
 | Check the reasoning | "Tell me where this conclusion came from" |
 
+Going back and changing the scope can also start from buttons in the left column: **Reopen** on a
+finished phase, **Redo** on the current one, and **Request a scope change** below the list. Pressing
+one changes nothing by itself — it **only fills the chat input with a request**. Fill in the empty
+*Reason* line (*What changes* for a scope change) and send it; the AI follows the AI-PLC change
+procedure, tells you which phases have to be redone and which documents are affected, and goes ahead
+only after you confirm. The buttons are disabled while the AI is working and hidden for read-only
+members.
+
 While the AI works, the progress line **just above the message box** tells you what it is doing
 right now — *Thinking*, *Reading source material*, *Writing the document* — with the elapsed time,
 and on the line below, what it is working on (the file it reads or writes, the command it runs). It
@@ -141,6 +149,11 @@ reach the AI as pictures. A PDF is both — the AI reads the converted text, and
 original when it needs a chart or a scanned page.
 
 Legacy formats (\`.doc\` · \`.ppt\` · \`.xls\` · \`.hwp\`) are not accepted. Save them in the newer format first.
+
+Attach a file you already uploaded — same name and same content — and it is not stored again: **the
+earlier copy is used.** A notice above the input says so and only one chip stays, so the AI does not
+read the same document twice. Same name with changed content is stored as a new version; the earlier
+file is not overwritten.
 
 Interview notes, requirement lists and market research go here, and the AI writes from them.`,
     },

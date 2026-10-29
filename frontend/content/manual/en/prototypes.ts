@@ -66,6 +66,13 @@ feature you had taken out does not come back. When the Discovery conversation de
 validation, it applies that history to the approved spec as \`spec-as-built.md\` — the approved spec
 itself stays as it was — and asks you to approve it before carrying on.
 
+The **values the builder decided** where the spec was silent are kept apart too — input fields,
+default deadlines, option lists, eligibility rules. Every finished build has to list them, one per
+line (or *none*), and they go into that entry of \`change-history.md\` as a *Builder decisions (not
+in the spec)* block. Validation participants see these values on screen as if they were designed,
+but nobody chose them on purpose, so \`spec-as-built.md\` carries them as **open questions** rather
+than requirements, and the [survey](/manual#survey) checks them as well.
+
 You can press it while the prototype is running. The server stays up and the link you sent to
 participants keeps working, but what that link shows is the **previous version** — the card says
 *Preview shows the previous version* and offers a **Re-host** button there. Re-hosting closes the
@@ -162,7 +169,10 @@ response count.`,
     {
       kind: "md",
       md: `**Download** gives you the built prototype's source as an archive. Use it when a build team
-wants that code as a starting point, or when you want to run it somewhere else yourself.`,
+wants that code as a starting point, or when you want to run it somewhere else yourself. The file
+name starts with the project ID (\`{project ID}-prototype.zip\`, or
+\`{project ID}-{use case}-prototype.zip\` for a Path B prototype built per use case), so downloads
+from different projects do not collide.`,
     },
   ],
 };
