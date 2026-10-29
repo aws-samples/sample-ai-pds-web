@@ -25,7 +25,8 @@ def test_upload_md_saved_under_a_uuid_directory(monkeypatch):
     assert r.status_code == 200
     body = r.json()
     m = _KEY_RE.match(body["path"])
-    assert m and m.group(1) == "의견.md.md"
+    # A markdown upload keeps its own name — no `.md.md`.
+    assert m and m.group(1) == "의견.md"
     assert body["truncated"] is False
     # Verify storage: via the same runner's read_file (there is no files API, so go directly through the workspace registry).
     # The _ensure_event_loop autouse fixture in conftest guarantees a loop.
@@ -36,19 +37,50 @@ def test_upload_md_saved_under_a_uuid_directory(monkeypatch):
 def test_same_name_uploads_do_not_overwrite(monkeypatch):
     """The regression: the old list-then-write path let two uploads of one
     name land on the same key, and the later write silently deleted the
-    earlier file."""
+    earlier file. A new version under the same name gets its own key."""
     _local_project(monkeypatch, "u2")
     paths = []
-    for _ in range(2):
+    for body in (b"x", b"y"):
         r = client.post("/projects/u2/uploads",
-                        files={"file": ("a.md", io.BytesIO(b"x"), "text/markdown")})
+                        files={"file": ("a.md", io.BytesIO(body), "text/markdown")})
+        assert r.json()["duplicate"] is False
         paths.append(r.json()["path"])
     assert paths[0] != paths[1]
 
     ws = app_module.registry.get("u2")
     loop = asyncio.get_event_loop()
-    for p in paths:
-        assert loop.run_until_complete(ws.runner.read_file(p)) == "x"
+    assert [loop.run_until_complete(ws.runner.read_file(p)) for p in paths] == ["x", "y"]
+
+
+def test_repeating_the_same_upload_reuses_the_first_copy(monkeypatch):
+    """Same name and same content is the same document — the agent must not be
+    pointed at two copies of it."""
+    _local_project(monkeypatch, "u2d")
+    bodies = []
+    for _ in range(2):
+        r = client.post("/projects/u2d/uploads",
+                        files={"file": ("메모.md", io.BytesIO("# 요약".encode()), "text/markdown")})
+        assert r.status_code == 200
+        bodies.append(r.json())
+    assert bodies[0]["duplicate"] is False
+    assert bodies[1]["duplicate"] is True
+    assert bodies[1]["path"] == bodies[0]["path"]
+
+    ws = app_module.registry.get("u2d")
+    loop = asyncio.get_event_loop()
+    keys = loop.run_until_complete(ws.runner.list_files("uploads/**/*"))
+    assert keys == [bodies[0]["path"]]
+
+
+def test_same_content_under_another_name_is_a_separate_upload(monkeypatch):
+    _local_project(monkeypatch, "u2e")
+    paths = []
+    for name in ("a.md", "b.md"):
+        r = client.post("/projects/u2e/uploads",
+                        files={"file": (name, io.BytesIO(b"same"), "text/markdown")})
+        assert r.json()["duplicate"] is False
+        paths.append(r.json()["path"])
+    assert paths[0] != paths[1]
 
 def test_upload_rejects_big_and_unsupported(monkeypatch):
     _local_project(monkeypatch, "u3")
@@ -138,3 +170,33 @@ def test_the_limit_is_10mb_and_the_message_says_so(monkeypatch):
     r = client.post("/projects/u10/uploads",
                     files={"file": ("big.txt", io.BytesIO(b"0" * (MAX_UPLOAD_BYTES + 1)), "text/plain")})
     assert r.status_code == 413 and r.json()["detail"] == "file exceeds 10MB limit"
+
+
+def test_a_repeated_pdf_points_at_the_first_copy_and_its_original(monkeypatch):
+    from test_uploads_parser import _pdf_bytes
+
+    _local_project(monkeypatch, "u7d")
+    pdf = _pdf_bytes("Codeword PELICAN")
+    bodies = [client.post("/projects/u7d/uploads",
+                          files={"file": ("요구사항.pdf", io.BytesIO(pdf), "application/pdf")}).json()
+              for _ in range(2)]
+    assert bodies[1]["duplicate"] is True
+    assert bodies[1]["path"] == bodies[0]["path"]
+    assert bodies[1]["original"] == bodies[0]["original"]
+
+
+def test_an_nfd_upload_is_readable_through_its_nfc_path(monkeypatch):
+    """The path the route returns is what the attachment mention carries, so it must be the
+    composed form the agent will type back."""
+    import unicodedata
+    _local_project(monkeypatch, "u-nfd")
+    nfd = unicodedata.normalize("NFD", "회의록.md")
+    r = client.post("/projects/u-nfd/uploads",
+                    files={"file": (nfd, io.BytesIO("# 본문".encode()), "text/markdown")})
+    assert r.status_code == 200
+    path = r.json()["path"]
+    assert unicodedata.is_normalized("NFC", path)
+    assert path.endswith("/회의록.md")
+    ws = app_module.registry.get("u-nfd")
+    assert asyncio.get_event_loop().run_until_complete(
+        ws.runner.read_file(unicodedata.normalize("NFC", path))) == "# 본문"

@@ -267,6 +267,16 @@ def test_absent_context_adds_nothing():
     assert build_prompt(MD, context=None) == build_prompt(MD)
 
 
+@pytest.mark.parametrize("language,label", [("ko", "빌더가 정한 값"), ("en", "values the builder chose")])
+def test_builder_decisions_reach_the_prompt_as_their_own_section(language, label):
+    ctx = DiscoveryContext(builder_decisions="승인 기한 기본값 7일")
+    p = build_prompt(MD, language, context=ctx)
+    assert label in p
+    assert "승인 기한 기본값 7일" in p
+    # Without them the section does not appear at all.
+    assert label not in build_prompt(MD, language, context=FULL)
+
+
 def test_one_absent_document_does_not_drag_in_the_other_label():
     """When only one is present, the other one's section does not appear."""
     only_pain = build_prompt(MD, context=DiscoveryContext(pain_points=PAIN_POINTS))

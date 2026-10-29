@@ -61,6 +61,7 @@ describe("프로젝트 생성 → 대시보드 이동", () => {
     render(<Home />);
     const user = userEvent.setup();
     await user.type(screen.getByLabelText("프로젝트 ID"), "new-proj");
+    await user.type(screen.getByLabelText("프로젝트 이름"), "새 프로젝트");
     await user.click(screen.getByRole("button", { name: "프로젝트 생성" }));
     await waitFor(() => {
       expect(pushMock).toHaveBeenCalledWith("/projects/new-proj/dashboard");

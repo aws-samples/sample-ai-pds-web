@@ -27,6 +27,8 @@ import re
 from dataclasses import dataclass
 
 from aipds.agent.question_file_answers import looks_like_question_file
+from aipds.proto.layout import change_history_key
+from aipds.proto.prompts import BUILDER_DECISIONS_HEADING
 
 _log = logging.getLogger(__name__)
 
@@ -57,6 +59,10 @@ class DiscoveryContext:
 
     pain_points: str | None = None
     business_context: str | None = None
+    #: Values the builder chose where the spec was silent, gathered from the prototype's
+    #: change history (proto/prompts.BUILDER_DECISIONS_HEADING). The survey asks whether they
+    #: fit, because respondents otherwise react to them as if they were the design.
+    builder_decisions: str | None = None
 
 
 def _clip(text: str, key: str) -> str:
@@ -213,9 +219,47 @@ async def _business_context(s3) -> str | None:
     return _clip(joined, ENVISION_PREFIX + "business-context*.md")
 
 
-async def gather_context(s3) -> DiscoveryContext:
-    """Gathers this project's Envision evidence. Missing pieces stay None."""
+def builder_decisions(history: str) -> str | None:
+    """Every builder-decisions block in a change history, oldest first, joined. None if none.
+
+    A block runs from its heading to the next bold block label (`**요약**`) or entry heading.
+    Entries written before the field existed simply have no block.
+    """
+    headings = set(BUILDER_DECISIONS_HEADING.values())
+    lines: list[str] = []
+    inside = False
+    for line in history.splitlines():
+        stripped = line.strip()
+        if stripped in headings:
+            inside = True
+            continue
+        if inside and (stripped.startswith("**") or stripped.startswith("## ")):
+            inside = False
+        if inside and stripped:
+            lines.append(stripped)
+    return "\n".join(lines) or None
+
+
+async def _builder_decisions(s3, slug: str | None) -> str | None:
+    if slug is None:
+        return None
+    key = change_history_key(slug)
+    try:
+        history = await s3.get(key)
+    except FileNotFoundError:
+        return None
+    except Exception:  # noqa: BLE001 — downgraded for the same reason as above
+        _log.exception("could not read %s for the survey prompt", key)
+        return None
+    found = builder_decisions(history)
+    return _clip(found, key) if found else None
+
+
+async def gather_context(s3, slug: str | None = None) -> DiscoveryContext:
+    """Gathers this project's Envision evidence, plus the prototype's builder decisions when
+    `slug` is given. Missing pieces stay None."""
     return DiscoveryContext(
         pain_points=await _get(s3, PAIN_POINTS_KEY),
         business_context=await _business_context(s3),
+        builder_decisions=await _builder_decisions(s3, slug),
     )

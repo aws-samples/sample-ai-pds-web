@@ -63,15 +63,36 @@ def change_history_header(language: str) -> str:
             "명세는 승인 시점에 고정되고, 이 이력과 어긋나면 이력이 이긴다.\n")
 
 
+#: Heading of the builder-decisions block inside a change history entry. Discovery's spec
+#: reconciliation (discovery-config/CLAUDE.md) and the survey prompt (survey/inputs.py) look
+#: for exactly these strings, so they live here once.
+BUILDER_DECISIONS_HEADING = {"ko": "**빌더 결정 (명세에 없던 값)**",
+                             "en": "**Builder decisions (not in the spec)**"}
+
+#: What a builder writes when it decided nothing. Such an entry gets no decisions block.
+_NO_DECISIONS = frozenset({"", "none", "없음", "n/a", "-"})
+
+
+def has_decisions(decisions: str) -> bool:
+    return decisions.strip().strip(".").lower() not in _NO_DECISIONS
+
+
 def change_history_entry(language: str, *, at: str, gen: int | None,
-                         summary: str, changes: str) -> str:
-    """One change history entry. One session (= one build_complete) is one entry."""
+                         summary: str, changes: str, decisions: str = "") -> str:
+    """One change history entry. One session (= one build_complete) is one entry.
+
+    The decisions block appears only when the builder named something — an entry from a
+    session that decided nothing (or from before the field existed) keeps the old shape.
+    """
     where = f" · gen {gen}" if gen is not None else ""
-    if _lang(language) == "en":
+    lang = _lang(language)
+    block = (f"{BUILDER_DECISIONS_HEADING[lang]}\n{decisions.strip()}\n\n"
+             if has_decisions(decisions) else "")
+    if lang == "en":
         return (f"\n## {at}{where}\n\n**Changes**\n{changes}\n\n"
-                f"**Summary**\n{summary}\n")
+                f"{block}**Summary**\n{summary}\n")
     return (f"\n## {at}{where}\n\n**변경**\n{changes}\n\n"
-            f"**요약**\n{summary}\n")
+            f"{block}**요약**\n{summary}\n")
 
 
 def _instructions_note(language: str, instructions_key: str | None) -> str:
@@ -476,7 +497,13 @@ def build_complete_description(language: str) -> str:
                 "completion is rejected). `changes` is required: what this session changed in "
                 "features, flows or the data model relative to the spec and the "
                 "earlier change history (for a first build: where you deviated "
-                "from the spec). Write 'none' if nothing changed.")
+                "from the spec). Write 'none' if nothing changed. `decisions` is "
+                "required: every value or rule this session had to decide because "
+                "the spec and build instructions did not say — defaults, thresholds, "
+                "lists, categories, input fields, eligibility rules — one per line "
+                "with the value you chose. These are shown to validation users and "
+                "reconciled into the spec as open questions, not as requirements. "
+                "Write 'none' if you decided nothing the spec left open.")
     return ("프로토타입 빌드가 완료되었음을 선언한다. **prototype/ 아래에 실제 "
             "산출물을 만든 뒤** 호출해야 한다 — 비어 있으면 선언이 거부된다. "
             "이 선언 뒤 빌드 세션이 종료되므로, 아직 작업이 남았으면 호출하지 마라. "
@@ -484,7 +511,12 @@ def build_complete_description(language: str) -> str:
             "것이 없으면 선언이 거부된다). "
             "`changes`는 필수다: 이번 세션이 명세와 이전 수정 이력 대비 바꾼 "
             "기능·흐름·데이터 모델(첫 빌드라면 명세와 다르게 만든 것)을 적는다. "
-            "바뀐 것이 없으면 '없음'이라고 적는다.")
+            "바뀐 것이 없으면 '없음'이라고 적는다. "
+            "`decisions`도 필수다: 명세와 빌드 지시서가 정하지 않아 이번 세션이 "
+            "직접 정한 값·규칙(기본값, 기준값, 목록, 분류, 입력 항목, 대상 산정 "
+            "규칙 등)을 한 줄에 하나씩, 정한 값과 함께 적는다. 이 값들은 검증 "
+            "참여자에게 보이고 명세에는 요구사항이 아니라 열린 질문으로 반영된다. "
+            "명세가 비워 둔 것을 정하지 않았다면 '없음'이라고 적는다.")
 
 
 def build_complete_rejection(language: str) -> str:
@@ -525,6 +557,20 @@ def build_complete_changes_missing(language: str) -> str:
     return ("거부됨 — `changes`가 비어 있다. 이번 세션이 명세와 수정 이력 대비 바꾼 "
             "기능·흐름·데이터 모델(첫 빌드라면 명세와 다르게 만든 것)을 적어라. "
             "바뀐 것이 없으면 '없음'이라고 적은 뒤 다시 선언해라.")
+
+
+def build_complete_decisions_missing(language: str) -> str:
+    """Refusal message when completion is declared without `decisions`."""
+    if _lang(language) == "en":
+        return ("Rejected — `decisions` is empty. List every value or rule you "
+                "decided because the spec and build instructions left it open "
+                "(defaults, thresholds, lists, categories, input fields, eligibility "
+                "rules), one per line with the value chosen; write 'none' if there "
+                "were none. Then declare completion again.")
+    return ("거부됨 — `decisions`가 비어 있다. 명세와 빌드 지시서가 정하지 않아 "
+            "직접 정한 값·규칙(기본값, 기준값, 목록, 분류, 입력 항목, 대상 산정 규칙 "
+            "등)을 한 줄에 하나씩 정한 값과 함께 적어라. 없으면 '없음'이라고 적은 뒤 "
+            "다시 선언해라.")
 
 
 def build_complete_recorded(language: str) -> str:

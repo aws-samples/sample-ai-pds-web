@@ -27,6 +27,7 @@ from aipds.proto.store import (PrototypeStore, has_build_output,  # noqa: F401 â
                                mark_completed, output_digest)
 from aipds.proto import prompts
 from aipds.proto.build_guard import user_url_hosts
+from aipds.proto.design_choice import effective_profile
 from aipds.proto.design_sync import sync_design
 from aipds.proto.hosting import restore_local
 from aipds.pathsafe import unlink_beneath, write_beneath
@@ -113,9 +114,11 @@ def _completion_from(payload: str | None) -> dict | None:
         return None
     remaining = data.get("remaining")
     changes = data.get("changes")
+    decisions = data.get("decisions")
     return {"summary": summary,
             "remaining": remaining if isinstance(remaining, str) else "",
-            "changes": changes if isinstance(changes, str) else ""}
+            "changes": changes if isinstance(changes, str) else "",
+            "decisions": decisions if isinstance(decisions, str) else ""}
 
 
 def _is_uuid(value: object) -> bool:
@@ -395,7 +398,8 @@ class PrototypeSession:
             at=datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
             gen=gen,
             summary=completion["summary"],
-            changes=completion.get("changes") or "")
+            changes=completion.get("changes") or "",
+            decisions=completion.get("decisions") or "")
         await self._s3.put(layout.change_history_key(self.slug), existing + entry)
 
     async def _write_handoff(self, completion: dict) -> None:
@@ -497,6 +501,8 @@ class PrototypeSession:
         try:
             profile = (await self._design_profiles.load()
                        if self._design_profiles is not None else None)
+            # The user's Step 2 answer decides whether the brand applies at all.
+            profile = await effective_profile(profile, self._s3, self.slug)
             sync_design(build_dir, profile, self._language)
         except Exception:
             _log.exception("design sync at session start failed: %s/%s",

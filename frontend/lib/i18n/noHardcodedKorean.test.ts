@@ -83,6 +83,7 @@ const ALLOWED: Array<[string, string]> = [
   // UI 언어가 아니라 프로젝트 언어를 따른다 — 각 파일 헤더에 근거가 있다.
   ["lib/approvalMarker.ts", 'ko: "승인"'],
   ["lib/startMessage.ts", "ko:"],
+  ["lib/stageRequests.ts", "ko:"],
   ["app/projects/[projectId]/workspace/page.tsx", "첨부 파일"],
 ];
 

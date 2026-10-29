@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import logging
 
+from aipds.proto.design_choice import effective_profile
 from aipds.proto.design_sync import sync_design, theme_copies
 from aipds.proto.host import HostInfo
 from aipds.proto.store import PrototypeStore
@@ -69,6 +70,8 @@ async def host_prototype(pid: str, slug: str) -> tuple[HostInfo, str | None]:
     # path for an already completed prototype to be rebranded without an improvement session.
     try:
         profile = await app_module.design_profile_store().load()
+        # Same gate as the build session: a non-brand design-context answer means no brand.
+        profile = await effective_profile(profile, app_module.s3_store_factory(pid), slug)
         sync_design(build_dir, profile, app_module.project_language(pid))
         # sync_design only "refreshes" -- a prototype built **before** the profile upload has no
         # theme copy under prototype/, so nothing is swapped, and it stays unbranded even after

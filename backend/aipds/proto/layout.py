@@ -145,6 +145,18 @@ def build_instructions_key(prototype_id: str) -> str:
     return f"{artifact_dir(prototype_id)}/{BUILD_INSTRUCTIONS}"
 
 
+#: Name of the Step 2 design-context question file (`prototype-validation.md` Step 2). Its Question 1
+#: answer decides whether the admin brand profile applies to this prototype (proto/design_choice.py).
+#: Path B's rules record the same choice inside `build-instructions.md` instead, so the file is
+#: absent there.
+DESIGN_CONTEXT = "design-context.md"
+
+
+def design_context_key(prototype_id: str) -> str:
+    """id → design-context path. Same directory as the spec."""
+    return f"{artifact_dir(prototype_id)}/{DESIGN_CONTEXT}"
+
+
 #: Change history file name. A web-owned artifact — not in the upstream rules. It accumulates the
 #: "what changed relative to the spec" that build sessions leave with `build_complete` (proto/session).
 CHANGE_HISTORY = "change-history.md"

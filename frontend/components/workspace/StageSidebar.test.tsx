@@ -1,5 +1,6 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { StageSidebar, latestCapabilities } from "./StageSidebar";
 import { LocaleProvider } from "@/lib/i18n/provider";
 import { projectState } from "@/test/fixtures/projectState";
@@ -76,5 +77,34 @@ describe("StageSidebar", () => {
     expect(screen.getByText(/2 \/ 4 phases/)).toBeInTheDocument();
     expect(screen.getAllByText("Not on this path")).toHaveLength(2);
     expect(screen.queryByText(/스테이지/)).toBeNull();
+  });
+
+  // Stage-change requests only draft a message (lib/stageRequests.ts) — the upstream
+  // workflow-changes procedure does the rest once the user sends it.
+  it("offers reopen on completed stages, redo on the current one, and a scope change", async () => {
+    const user = userEvent.setup();
+    const onRequest = vi.fn();
+    render(<StageSidebar state={projectState} events={[]} onRequest={onRequest} />);
+
+    expect(screen.getAllByRole("button", { name: "다시 열기" })).toHaveLength(2);
+    await user.click(screen.getAllByRole("button", { name: "다시 열기" })[0]);
+    expect(onRequest).toHaveBeenLastCalledWith("reopen", "Envision");
+
+    await user.click(screen.getByRole("button", { name: "다시 하기" }));
+    expect(onRequest).toHaveBeenLastCalledWith("restart", "Product Strategy");
+
+    await user.click(screen.getByRole("button", { name: "범위 변경 요청" }));
+    expect(onRequest).toHaveBeenLastCalledWith("scope", "");
+  });
+
+  it("shows no request buttons without a handler (read-only members)", () => {
+    render(<StageSidebar state={projectState} events={[]} />);
+    expect(screen.queryByRole("button", { name: "다시 열기" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "범위 변경 요청" })).toBeNull();
+  });
+
+  it("disables the request buttons while a turn is running", () => {
+    render(<StageSidebar state={projectState} events={[]} onRequest={vi.fn()} busy />);
+    for (const b of screen.getAllByRole("button")) expect(b).toBeDisabled();
   });
 });

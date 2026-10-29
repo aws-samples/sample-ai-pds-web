@@ -18,6 +18,7 @@ from __future__ import annotations
 import html
 import io
 import re
+import unicodedata
 import uuid
 import zipfile
 from dataclasses import dataclass
@@ -440,7 +441,7 @@ def _image_kind(data: bytes) -> str | None:
 class PreparedUpload:
     """Files to place under `uploads/{uuid8}/`. At least one of the converted copy and the original is present.
 
-    - Documents: converted copy only (`요구사항.docx.md`)
+    - Documents: converted copy only (`요구사항.docx.md`; a `.md` upload keeps its own name)
     - PDF: converted copy and original (`요구사항.pdf.md`, `요구사항.pdf`). If the text layer is empty
       (a scan), original only — pointing at an empty converted copy makes the agent read it as "no content".
     - Images: original only (`화면.png`)
@@ -453,7 +454,12 @@ class PreparedUpload:
 
 
 def _safe_name(filename: str) -> str:
-    name = PurePosixPath(filename or "").name          # drop any path parts
+    # NFC first. Browsers on macOS send Korean file names decomposed (NFD), and the key kept
+    # them that way -- but the agent writes paths in composed form (NFC), so its Read of the
+    # path in the attachment mention failed with "File does not exist" and it fell back to a
+    # shell glob (the same name had a different number of code points on disk and in the Read
+    # call). One normal form for keys makes the path in the mention readable as is.
+    name = PurePosixPath(unicodedata.normalize("NFC", filename or "")).name  # drop any path parts
     return re.sub(r"[^\w가-힣.-]+", "-", name).strip("-.") or "upload"
 
 
@@ -478,7 +484,10 @@ def prepare(filename: str, data: bytes) -> PreparedUpload:
             name = name[:len(name) - len(ext)] + _KIND_EXT[kind]
         return PreparedUpload(None, None, False, f"{folder}/{name}", data)
     text, truncated = convert(filename, data)
-    text_key = f"{folder}/{name}.md"
+    # A markdown upload is already what the key would say, so it keeps its own name. Appending
+    # `.md` again produced `의견.md.md`.
+    text_key = (f"{folder}/{name}" if name.lower().endswith(".md")
+                else f"{folder}/{name}.md")
     if ext != ".pdf":
         return PreparedUpload(text_key, text, truncated, None, None)
     if not text.strip():

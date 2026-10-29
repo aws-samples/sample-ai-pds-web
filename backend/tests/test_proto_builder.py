@@ -372,7 +372,7 @@ async def test_the_tool_queues_a_build_complete_event(tmp_path):
     b = _builder(tmp_path, FakeSdkClient(script=[]))
     handler = {t.name: t.handler for t in _proto_tools_for(b)}["build_complete"]
 
-    await handler({"summary": "만들었다", "changes": "없음"})
+    await handler({"summary": "만들었다", "changes": "없음", "decisions": "없음"})
 
     assert [e.kind for e in b._queue] == ["build_complete"]
 
@@ -398,7 +398,7 @@ async def test_a_queued_completion_is_relayed_before_the_terminal_done(tmp_path)
     # Put it in the queue as if the tool were called before the turn started — in reality it is
     # called right before the ResultMessage.
     handler = {t.name: t.handler for t in _proto_tools_for(b)}["build_complete"]
-    await handler({"summary": "만들었다", "changes": "없음"})
+    await handler({"summary": "만들었다", "changes": "없음", "decisions": "없음"})
 
     events = await collect(b)
 

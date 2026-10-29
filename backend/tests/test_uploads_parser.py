@@ -395,3 +395,24 @@ def test_every_hop_in_front_of_the_backend_admits_the_upload_cap():
     assert boot.group(1) == live.group(1)
     assert int(boot.group(1)) * 1024 * 1024 >= need
     assert int(nxt.group(1)) * 1024 * 1024 >= need
+
+
+def test_a_decomposed_korean_name_is_stored_composed():
+    """macOS browsers send NFD names; the agent reads paths in NFC. A key kept in NFD made
+    Read fail with "File does not exist"."""
+    import unicodedata
+    nfd = unicodedata.normalize("NFD", "회의록_정리.md")
+    assert nfd != "회의록_정리.md"
+
+    key = prepare(nfd, "# x".encode()).text_key
+
+    name = key.rsplit("/", 1)[-1]
+    assert name == "회의록_정리.md"
+    assert unicodedata.is_normalized("NFC", key)
+
+
+def test_a_decomposed_image_name_is_stored_composed():
+    import unicodedata
+    png = b"\x89PNG\r\n\x1a\n" + b"\x00" * 16
+    key = prepare(unicodedata.normalize("NFD", "화면.png"), png).original_key
+    assert key.rsplit("/", 1)[-1] == "화면.png"

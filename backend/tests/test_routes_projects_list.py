@@ -4,13 +4,15 @@ from aipds.app import app
 client = TestClient(app)
 
 
-def test_create_project_without_name_returns_null_name():
+def test_create_project_without_name_falls_back_to_the_id():
+    """A null name left exported bundles unidentifiable, so an omitted or blank name
+    becomes the project id."""
     r = client.post("/projects", json={"project_id": "plist-noname"})
     assert r.status_code == 200
     # language is included in the response even when unspecified — stating the language that will actually
     # run ("ko") means the frontend does not need to know the fallback rule as well.
     # The creator is the owner (in local development the requester is local-dev, with the admin role).
-    assert r.json() == {"project_id": "plist-noname", "name": None, "model_id": None,
+    assert r.json() == {"project_id": "plist-noname", "name": "plist-noname", "model_id": None,
                         "effort": None, "language": "ko",
                         "owner": "local-dev", "access": "admin", "members": []}
 
@@ -30,7 +32,13 @@ def test_list_projects_includes_created_projects_with_names():
     assert r.status_code == 200
     by_id = {p["project_id"]: p["name"] for p in r.json()["projects"]}
     assert by_id["plist-a"] == "Project A"
-    assert by_id["plist-b"] is None
+    assert by_id["plist-b"] == "plist-b"
+
+
+def test_create_project_with_a_blank_name_falls_back_to_the_id():
+    r = client.post("/projects", json={"project_id": "plist-blank", "name": "   "})
+    assert r.status_code == 200
+    assert r.json()["name"] == "plist-blank"
 
 
 def test_list_projects_is_empty_capable():

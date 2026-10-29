@@ -83,7 +83,11 @@ projects created from now on.`,
 prototype built afterwards carries your brand** — use it where the demo only convinces people in the
 company's own colours and typeface.
 
-There is **one** profile for the whole deployment (you cannot set a different one per project).`,
+There is **one** profile for the whole deployment (you cannot set a different one per project).
+
+Each prototype's **design-context answer still comes first.** Only prototypes whose answer was
+"Match my organization's brand" get the brand; a default, existing-product or minimal look keeps it out.
+When the answer cannot be read (free-text Other, or a path without that question file) the brand applies as before.`,
     },
     {
       kind: "md",
