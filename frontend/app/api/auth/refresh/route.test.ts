@@ -1,3 +1,8 @@
+// @vitest-environment node
+// A server route handler, so it runs in node, not jsdom. Under jsdom, vitest 5 swaps in a
+// compat `Request` whose static Symbol.hasInstance accepts any Request — NextRequest inherits
+// it, so the route's `instanceof NextRequest` guard took a plain Request for a NextRequest
+// and read `.cookies` off it (undefined). Node's own Request is what the route sees in Next.
 // Fix for the defect where the session expires during a prototype build.
 //
 // **Why this route is needed.** Token refresh fires only when the /api proxy
