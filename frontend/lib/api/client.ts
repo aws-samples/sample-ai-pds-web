@@ -269,7 +269,11 @@ export async function downloadArtifactsArchive(pid: string): Promise<Blob> {
 export async function uploadFile(
   pid: string,
   file: File,
-): Promise<{ path: string; original: string | null; chars: number; truncated: boolean }> {
+): Promise<{
+  path: string; original: string | null; chars: number; truncated: boolean;
+  // True when the same name and content were uploaded before — `path` is that earlier copy.
+  duplicate?: boolean;
+}> {
   const form = new FormData();
   form.append("file", file);
   const res = await fetch(`${API_BASE_URL}/projects/${encodeURIComponent(pid)}/uploads`, {

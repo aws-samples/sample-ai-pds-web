@@ -503,6 +503,7 @@ export const en: Record<keyof typeof ko, string> = {
   "upload.attached": "Attached — goes with your next message",
   "upload.close": "Close",
   "upload.dropOverlay": "Drop to attach",
+  "upload.duplicateReused": "{name} matches a file you already uploaded, so the earlier copy is used.",
   "upload.problemLegacy": "Legacy format, not accepted. Save it as .docx, .pptx, .xlsx or .hwpx and attach that.",
   "upload.problemType": "Not a supported type. Click 📎 to see the supported types.",
   "upload.problemSize": "Larger than {mb}MB.",

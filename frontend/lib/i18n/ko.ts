@@ -545,6 +545,7 @@ export const ko = {
   "upload.attached": "첨부됨 — 다음 메시지와 함께 전달됩니다",
   "upload.close": "닫기",
   "upload.dropOverlay": "여기에 놓으면 첨부됩니다",
+  "upload.duplicateReused": "{name}은(는) 이미 올린 파일과 같아 기존 파일을 사용합니다.",
   "upload.problemLegacy": "예전 형식이라 받을 수 없습니다. 새 형식(.docx·.pptx·.xlsx·.hwpx)으로 다시 저장해 붙이세요.",
   "upload.problemType": "지원하지 않는 형식입니다. 📎을 눌러 받는 형식을 확인하세요.",
   "upload.problemSize": "{mb}MB를 넘습니다.",

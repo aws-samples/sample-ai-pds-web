@@ -440,7 +440,7 @@ def _image_kind(data: bytes) -> str | None:
 class PreparedUpload:
     """Files to place under `uploads/{uuid8}/`. At least one of the converted copy and the original is present.
 
-    - Documents: converted copy only (`요구사항.docx.md`)
+    - Documents: converted copy only (`요구사항.docx.md`; a `.md` upload keeps its own name)
     - PDF: converted copy and original (`요구사항.pdf.md`, `요구사항.pdf`). If the text layer is empty
       (a scan), original only — pointing at an empty converted copy makes the agent read it as "no content".
     - Images: original only (`화면.png`)
@@ -478,7 +478,10 @@ def prepare(filename: str, data: bytes) -> PreparedUpload:
             name = name[:len(name) - len(ext)] + _KIND_EXT[kind]
         return PreparedUpload(None, None, False, f"{folder}/{name}", data)
     text, truncated = convert(filename, data)
-    text_key = f"{folder}/{name}.md"
+    # A markdown upload is already what the key would say, so it keeps its own name. Appending
+    # `.md` again produced `의견.md.md`.
+    text_key = (f"{folder}/{name}" if name.lower().endswith(".md")
+                else f"{folder}/{name}.md")
     if ext != ".pdf":
         return PreparedUpload(text_key, text, truncated, None, None)
     if not text.strip():

@@ -81,6 +81,8 @@ export default function WorkspacePage({ params }: { params: Promise<{ projectId:
   // text (a PDF) — the mention points the agent at both.
   const [attachments, setAttachments] = useState<{ path: string; original: string | null }[]>([]);
   const [uploadError, setUploadError] = useState<string | null>(null);
+  // Informational, not an error: a repeated upload reused the earlier copy.
+  const [uploadNotice, setUploadNotice] = useState<string | null>(null);
   const [attachOpen, setAttachOpen] = useState(false);
   // While a file is being dragged into the chat area. dragenter/leave come in pairs every time
   // a child element is crossed, so the depth is counted — with a single boolean the overlay
@@ -129,12 +131,16 @@ export default function WorkspacePage({ params }: { params: Promise<{ projectId:
     if (problem) return problem;
     try {
       const r = await uploadFile(projectId, file);
-      setAttachments((prev) => [...prev, { path: r.path, original: r.original }]);
+      if (r.duplicate) setUploadNotice(t("upload.duplicateReused").replace("{name}", file.name));
+      // A repeat points at the earlier copy, so one chip per path is enough.
+      setAttachments((prev) => prev.some((a) => a.path === r.path)
+        ? prev
+        : [...prev, { path: r.path, original: r.original }]);
       return null;
     } catch (err) {
       return problemFromError(err);
     }
-  }, [projectId]);
+  }, [projectId, t]);
 
   // A drop does not go through the modal — it is a shortcut for people who know the formats. Only
   // the failed files remain above the input, with their reasons.
@@ -165,6 +171,7 @@ export default function WorkspacePage({ params }: { params: Promise<{ projectId:
     );
     send(mentions.length ? `${mentions.join("\n")}\n\n${text}` : text);
     setAttachments([]);
+    setUploadNotice(null);
   }
 
   // Every other place `send`/`submitAnswers` is invoked (starter buttons,
@@ -329,6 +336,11 @@ export default function WorkspacePage({ params }: { params: Promise<{ projectId:
           {uploadError && (
             <p role="alert" className="px-4 md:px-8 pb-1 text-xs text-red-600 whitespace-pre-line">
               {uploadError}
+            </p>
+          )}
+          {uploadNotice && (
+            <p role="status" className="px-4 md:px-8 pb-1 text-xs text-slate-500">
+              {uploadNotice}
             </p>
           )}
           <AttachmentChips
