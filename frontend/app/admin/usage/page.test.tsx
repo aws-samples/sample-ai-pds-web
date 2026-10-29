@@ -14,7 +14,9 @@ vi.mock("@/lib/api/usage", async (orig) => ({
   ...(await orig<typeof import("@/lib/api/usage")>()),
   getUsageReport: vi.fn(),
 }));
-import { getUsageReport, type UsageBucket, type UsageReport } from "@/lib/api/usage";
+import {
+  getUsageReport, type ProjectUsage, type UsageBucket, type UsageReport,
+} from "@/lib/api/usage";
 
 function bucket(over: Partial<UsageBucket> = {}): UsageBucket {
   return {
@@ -24,48 +26,55 @@ function bucket(over: Partial<UsageBucket> = {}): UsageBucket {
   };
 }
 
-function report(): UsageReport {
-  const busy = bucket({
-    requests: 12, cost_usd: 3.5, cache_hit_rate: 0.8,
-    tokens: { input: 1000, output: 500, cache_write_5m: 1000, cache_write_1h: 0, cache_read: 8000 },
-  });
+const BUSY = bucket({
+  requests: 12, cost_usd: 3.5, cache_hit_rate: 0.8,
+  tokens: { input: 1000, output: 500, cache_write_5m: 1000, cache_write_1h: 0, cache_read: 8000 },
+});
+
+function project(id: string, name: string, b: UsageBucket, over = {}): ProjectUsage {
+  return {
+    project_id: id, name, owner: "a@x", created_at: null, model_id: null,
+    usage: { ...b, by_source: b.requests ? { discovery: b } : {}, unpriced_models: [],
+             updated_at: null, ...over },
+  };
+}
+
+function report(over: Partial<UsageReport> = {}): UsageReport {
   return {
     estimate: true,
     pricing: { source: "price_list", as_of: "2026-11-01T00:00:00+00:00", region: "ap-northeast-2" },
-    total: { ...busy, unpriced_models: [] },
+    // Already sorted by cost — the backend does it across every page.
     projects: [
-      { project_id: "p-idle", name: "Idle", owner: "a@x", created_at: null, model_id: null,
-        usage: { ...bucket(), by_source: {}, by_model: {}, unpriced_models: [], updated_at: null } },
-      { project_id: "p-busy", name: "Busy", owner: "b@x", created_at: null, model_id: null,
-        usage: { ...busy, by_source: { discovery: busy },
-                 by_model: { "claude-opus-5-5#regional": busy },
-                 unpriced_models: ["claude-mystery"], updated_at: null } },
+      project("p-busy", "Busy", BUSY, { unpriced_models: ["claude-mystery"] }),
+      project("p-idle", "Idle", bucket()),
     ],
+    total: 2, page: 1, size: 10,
+    ...over,
   };
 }
 
 beforeEach(() => vi.clearAllMocks());
 
 describe("admin usage page", () => {
-  it("lists the most expensive project first, with the total", async () => {
+  it("lists projects in the order the backend sorted them, with no total row", async () => {
     vi.mocked(getUsageReport).mockResolvedValue(report());
     render(<AdminUsagePage />);
     await waitFor(() => expect(screen.getByText("Busy")).toBeInTheDocument());
     const rows = screen.getAllByRole("row");
-    // header, Busy, Idle, total
+    expect(rows).toHaveLength(3);  // header, Busy, Idle
     expect(rows[1]).toHaveTextContent("Busy");
-    expect(rows[2]).toHaveTextContent("Idle");
     expect(rows[1]).toHaveTextContent("80%");
-    expect(rows[rows.length - 1]).toHaveTextContent("합계");
+    expect(rows[2]).toHaveTextContent("Idle");
+    expect(screen.queryByText("합계")).toBeNull();
   });
 
-  it("opens a project's breakdown by feature and model", async () => {
+  it("opens a project's breakdown by feature only", async () => {
     vi.mocked(getUsageReport).mockResolvedValue(report());
     render(<AdminUsagePage />);
     await userEvent.click(await screen.findByText("Busy"));
     expect(screen.getByText("Discovery 대화")).toBeInTheDocument();
-    expect(screen.getByText(/claude-opus-5-5 \(리전 엔드포인트\)/)).toBeInTheDocument();
     expect(screen.getByText(/claude-mystery/)).toBeInTheDocument();
+    expect(screen.queryByText("모델별")).toBeNull();
   });
 
   it("says when a project has no usage yet", async () => {
@@ -73,6 +82,21 @@ describe("admin usage page", () => {
     render(<AdminUsagePage />);
     await userEvent.click(await screen.findByText("Idle"));
     expect(screen.getByText("아직 집계된 사용량이 없습니다.")).toBeInTheDocument();
+  });
+
+  it("pages through the projects", async () => {
+    vi.mocked(getUsageReport)
+      .mockResolvedValueOnce(report({ total: 12 }))
+      .mockResolvedValueOnce(report({
+        total: 12, page: 2, projects: [project("p-late", "Late", bucket())],
+      }));
+    render(<AdminUsagePage />);
+    expect(await screen.findByText("1 / 2")).toBeInTheDocument();
+    expect(screen.getByText("총 12건")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: /다음/ }));
+    expect(await screen.findByText("Late")).toBeInTheDocument();
+    expect(getUsageReport).toHaveBeenLastCalledWith(2, 10);
+    expect(screen.getByText("2 / 2")).toBeInTheDocument();
   });
 
   it("says where the prices came from", async () => {
@@ -84,10 +108,18 @@ describe("admin usage page", () => {
 
   it("points at the missing permission while prices are still the built-in ones", async () => {
     vi.mocked(getUsageReport).mockResolvedValue(
-      { ...report(), pricing: { source: "builtin", as_of: "2026-10-29" } });
+      report({ pricing: { source: "builtin", as_of: "2026-10-29" } }));
     render(<AdminUsagePage />);
     expect(await screen.findByText(/내장 기본값\(2026-10-29 기준\)/)).toBeInTheDocument();
     expect(screen.getByText(/pricing:GetProducts/)).toBeInTheDocument();
+  });
+
+  it("keeps the refresh button from being squeezed by the subtitle", async () => {
+    vi.mocked(getUsageReport).mockResolvedValue(report());
+    render(<AdminUsagePage />);
+    const button = await screen.findByRole("button", { name: "새로 고침" });
+    expect(button.className).toMatch(/shrink-0/);
+    expect(button.className).toMatch(/whitespace-nowrap/);
   });
 
   it("tells a pm that the page needs an admin", async () => {

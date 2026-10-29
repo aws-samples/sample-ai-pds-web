@@ -275,10 +275,14 @@ def _cache_hit_rate(tokens: dict) -> float | None:
 
 
 def summarize(data: dict | None, prices: pricing.PriceTable = pricing.PRICES) -> dict:
-    """The stored record → the admin screen's view: totals, per source, per model, with cost."""
+    """The stored record → the admin screen's view: totals and per source, with cost.
+
+    No per-model view: a project runs on the model it was created with (it cannot be changed
+    afterwards), so a model breakdown would only repeat the total. Counts stay keyed by model
+    in the record all the same — pricing needs the model.
+    """
     total = _bucket_view()
     by_source: dict[str, dict] = {}
-    by_model: dict[str, dict] = {}
     unpriced: set[str] = set()
     for source, models in ((data or {}).get("sources") or {}).items():
         if not isinstance(models, dict):
@@ -292,32 +296,16 @@ def summarize(data: dict | None, prices: pricing.PriceTable = pricing.PRICES) ->
                 cost = pricing.cost_usd(model_key, tier, counts, prices)
                 if cost is None:
                     unpriced.add(model_key)
-                for view in (total, by_source.setdefault(source, _bucket_view()),
-                             by_model.setdefault(model_key, _bucket_view())):
+                for view in (total, by_source.setdefault(source, _bucket_view())):
                     _accumulate(view, tier, counts, cost)
-    for view in (total, *by_source.values(), *by_model.values()):
+    for view in (total, *by_source.values()):
         view["cost_usd"] = round(view["cost_usd"], 6)
         view["cache_hit_rate"] = _cache_hit_rate(view["tokens"])
     return {
         **total,
         "by_source": by_source,
-        "by_model": by_model,
         # Models with no price in the table: their tokens are counted but not in cost_usd.
         "unpriced_models": sorted(unpriced),
         "updated_at": (data or {}).get("updated_at"),
     }
 
-
-def combine(summaries: list[dict]) -> dict:
-    """Totals across several `summarize` results (the admin screen's grand total)."""
-    total = _bucket_view()
-    for s in summaries:
-        total["requests"] += s["requests"]
-        total["long_context_requests"] += s["long_context_requests"]
-        total["cost_usd"] += s["cost_usd"]
-        for f in pricing.TOKEN_FIELDS:
-            total["tokens"][f] += s["tokens"][f]
-    total["cost_usd"] = round(total["cost_usd"], 6)
-    total["cache_hit_rate"] = _cache_hit_rate(total["tokens"])
-    total["unpriced_models"] = sorted({m for s in summaries for m in s["unpriced_models"]})
-    return total
