@@ -184,3 +184,19 @@ def test_a_repeated_pdf_points_at_the_first_copy_and_its_original(monkeypatch):
     assert bodies[1]["path"] == bodies[0]["path"]
     assert bodies[1]["original"] == bodies[0]["original"]
 
+
+def test_an_nfd_upload_is_readable_through_its_nfc_path(monkeypatch):
+    """The path the route returns is what the attachment mention carries, so it must be the
+    composed form the agent will type back."""
+    import unicodedata
+    _local_project(monkeypatch, "u-nfd")
+    nfd = unicodedata.normalize("NFD", "회의록.md")
+    r = client.post("/projects/u-nfd/uploads",
+                    files={"file": (nfd, io.BytesIO("# 본문".encode()), "text/markdown")})
+    assert r.status_code == 200
+    path = r.json()["path"]
+    assert unicodedata.is_normalized("NFC", path)
+    assert path.endswith("/회의록.md")
+    ws = app_module.registry.get("u-nfd")
+    assert asyncio.get_event_loop().run_until_complete(
+        ws.runner.read_file(unicodedata.normalize("NFC", path))) == "# 본문"

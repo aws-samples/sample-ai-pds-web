@@ -18,6 +18,7 @@ from __future__ import annotations
 import html
 import io
 import re
+import unicodedata
 import uuid
 import zipfile
 from dataclasses import dataclass
@@ -453,7 +454,12 @@ class PreparedUpload:
 
 
 def _safe_name(filename: str) -> str:
-    name = PurePosixPath(filename or "").name          # drop any path parts
+    # NFC first. Browsers on macOS send Korean file names decomposed (NFD), and the key kept
+    # them that way -- but the agent writes paths in composed form (NFC), so its Read of the
+    # path in the attachment mention failed with "File does not exist" and it fell back to a
+    # shell glob (the same name had a different number of code points on disk and in the Read
+    # call). One normal form for keys makes the path in the mention readable as is.
+    name = PurePosixPath(unicodedata.normalize("NFC", filename or "")).name  # drop any path parts
     return re.sub(r"[^\w가-힣.-]+", "-", name).strip("-.") or "upload"
 
 
