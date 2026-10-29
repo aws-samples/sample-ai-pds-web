@@ -21,6 +21,8 @@ import { useProjectMeta } from "@/lib/useProjectModel";
 import { useWorkspaceStream } from "@/lib/useWorkspaceStream";
 import { liveActivity } from "@/lib/liveActivity";
 import { useT } from "@/lib/i18n/provider";
+import { DEFAULT_LOCALE } from "@/lib/i18n";
+import { stageRequestText, type StageRequestKind } from "@/lib/stageRequests";
 import {
   checkUpload, problemFromError, uploadProblemText, type UploadProblem,
 } from "@/lib/uploads";
@@ -109,6 +111,9 @@ export default function WorkspacePage({ params }: { params: Promise<{ projectId:
   // known. Once read, strip ?draft= from the URL so a refresh doesn't
   // re-prefill the input.
   const [draft, setDraft] = useState<string | undefined>(undefined);
+  // Bumped with every programmatic draft so ChatInput remounts even when the same text is
+  // drafted twice (its initialText is read only on mount).
+  const [draftSeq, setDraftSeq] = useState(0);
   useEffect(() => {
     const d = new URLSearchParams(window.location.search).get("draft");
     if (d) {
@@ -117,6 +122,13 @@ export default function WorkspacePage({ params }: { params: Promise<{ projectId:
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Stage-change buttons only draft the request — the user adds a reason and sends it, and the
+  // agent then runs the upstream workflow-changes procedure (lib/stageRequests.ts).
+  const draftStageRequest = useCallback((kind: StageRequestKind, stage: string) => {
+    setDraft(stageRequestText(kind, stage, language ?? DEFAULT_LOCALE));
+    setDraftSeq((n) => n + 1);
+  }, [language]);
 
   function submitAnswersFromSheet(answers: Record<string, string>) {
     setStickSignal((n) => n + 1);
@@ -220,7 +232,8 @@ export default function WorkspacePage({ params }: { params: Promise<{ projectId:
           hidden: hidden allows programmatic scrolling (focus, scrollIntoView), while clip does
           not create a scroll box at all. */}
       <div className="relative flex-1 grid min-h-0 grid-cols-1 pr-9 overflow-clip lg:grid-cols-[1fr_5fr_5fr]">
-        <StageSidebar state={state.data} events={stages} />
+        <StageSidebar state={state.data} events={stages}
+                      onRequest={readOnly ? undefined : draftStageRequest} busy={streaming} />
 
         <main
           className="relative flex flex-col min-w-0 min-h-0 bg-slate-50"
@@ -359,7 +372,7 @@ export default function WorkspacePage({ params }: { params: Promise<{ projectId:
             </p>
           ) : (
           <ChatInput
-            key={draft ?? "no-draft"}
+            key={draft ? `${draftSeq}:${draft}` : "no-draft"}
             onSend={sendWithAttachments}
             onAttach={() => {
               setUploadError(null);

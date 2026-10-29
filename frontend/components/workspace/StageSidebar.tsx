@@ -2,6 +2,7 @@
 // frontend/components/workspace/StageSidebar.tsx
 import { memo } from "react";
 import type { CapabilityState, ProjectState, StagePayload } from "@/lib/api/types";
+import type { StageRequestKind } from "@/lib/stageRequests";
 import { progressPercent, stageCounts } from "@/lib/stageProgress";
 import { useT } from "@/lib/i18n/provider";
 
@@ -22,9 +23,32 @@ export function latestCapabilities(
   return state?.capabilities ?? [];
 }
 
+// Drafts a stage-change request into the chat input (lib/stageRequests.ts). Absent for
+// read-only members — the request would become a turn they cannot send.
+type OnRequest = (kind: StageRequestKind, stage: string) => void;
+
+// A small text button that only drafts a message; nothing is sent until the user does.
+function RequestButton({ label, title, onClick, disabled }: {
+  label: string; title: string; onClick: () => void; disabled: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      title={title}
+      className="ml-auto shrink-0 text-[11px] text-slate-400 hover:text-violet-600 underline disabled:opacity-40 disabled:no-underline"
+    >
+      {label}
+    </button>
+  );
+}
+
 // Completed/in_progress/pending/not-on-this-path row chrome — kept private to
 // this module since the workspace sidebar is the only consumer.
-function CapabilityRow({ cap, index }: { cap: CapabilityState; index: number }) {
+function CapabilityRow({ cap, index, onRequest, busy }: {
+  cap: CapabilityState; index: number; onRequest?: OnRequest; busy: boolean;
+}) {
   const t = useT();
   if (cap.status === "completed") {
     return (
@@ -36,6 +60,14 @@ function CapabilityRow({ cap, index }: { cap: CapabilityState; index: number }) 
           ✓
         </span>
         {cap.name}
+        {onRequest && (
+          <RequestButton
+            label={t("canvas.stageReopen")}
+            title={t("canvas.stageRequestHint")}
+            disabled={busy}
+            onClick={() => onRequest("reopen", cap.name)}
+          />
+        )}
       </div>
     );
   }
@@ -50,6 +82,14 @@ function CapabilityRow({ cap, index }: { cap: CapabilityState; index: number }) 
             ●
           </span>
           <span className="font-bold text-violet-800">{cap.name}</span>
+          {onRequest && (
+            <RequestButton
+              label={t("canvas.stageRestart")}
+              title={t("canvas.stageRequestHint")}
+              disabled={busy}
+              onClick={() => onRequest("restart", cap.name)}
+            />
+          )}
         </div>
         {cap.note && <p className="mt-1.5 ml-7 text-[11px] text-violet-600">{cap.note}</p>}
       </div>
@@ -89,9 +129,15 @@ function CapabilityRow({ cap, index }: { cap: CapabilityState; index: number }) 
 export const StageSidebar = memo(function StageSidebar({
   state,
   events,
+  onRequest,
+  busy = false,
 }: {
   state: ProjectState | null;
   events: StagePayload[];
+  // Drafts a stage-change request into the chat input. Omitted → no buttons (read-only).
+  onRequest?: OnRequest;
+  // A turn is running — drafting into a disabled input would be lost.
+  busy?: boolean;
 }) {
   const t = useT();
   const capabilities = latestCapabilities(state, events);
@@ -113,7 +159,7 @@ export const StageSidebar = memo(function StageSidebar({
       </div>
       <nav className="flex-1 overflow-y-auto p-3 text-sm space-y-0.5">
         {capabilities.map((cap, i) => (
-          <CapabilityRow key={cap.key} cap={cap} index={i} />
+          <CapabilityRow key={cap.key} cap={cap} index={i} onRequest={onRequest} busy={busy} />
         ))}
       </nav>
       <div className="p-3 border-t border-slate-100 text-[11px] text-slate-400 leading-relaxed">
@@ -121,6 +167,17 @@ export const StageSidebar = memo(function StageSidebar({
         <br />
         {t("canvas.sidebarHintPrefix")} <b>{t("canvas.sidebarHintBold")}</b>
         {t("canvas.sidebarHintSuffix")}
+        {onRequest && (
+          <button
+            type="button"
+            onClick={() => onRequest("scope", "")}
+            disabled={busy}
+            title={t("canvas.stageRequestHint")}
+            className="mt-2 block w-full rounded-lg border border-slate-200 px-2 py-1.5 text-slate-500 hover:border-violet-300 hover:text-violet-700 disabled:opacity-40"
+          >
+            {t("canvas.scopeChange")}
+          </button>
+        )}
       </div>
     </aside>
   );

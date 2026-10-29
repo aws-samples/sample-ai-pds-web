@@ -75,6 +75,10 @@ export const ko = {
   "canvas.sidebarHintPrefix": "채팅으로",
   "canvas.sidebarHintBold": "되돌아가기·건너뛰기",
   "canvas.sidebarHintSuffix": "를 언제든 요청하세요.",
+  "canvas.stageReopen": "다시 열기",
+  "canvas.stageRestart": "다시 하기",
+  "canvas.scopeChange": "범위 변경 요청",
+  "canvas.stageRequestHint": "요청 문장을 입력창에 채웁니다. 이유를 적고 보내면 영향을 먼저 확인받은 뒤 진행합니다.",
   "canvas.tabDocument": "문서",
   "canvas.tabPreview": "프리뷰",
   // 아코디언 안에 있는 것은 모델의 추론 텍스트가 아니라 턴의 진행 기록이다 —
