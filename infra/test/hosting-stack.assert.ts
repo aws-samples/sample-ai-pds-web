@@ -27,7 +27,11 @@ const ENV = { account: '123456789012', region: 'ap-northeast-2' };
 // imports/* is the staging area for project import. If it is missing, the presigned PUT the
 // backend signed becomes a 403 in the browser, and since S3 issues that rejection to the
 // browser, the backend log has no trace of it — a quieter failure than a missing surveys/*.
-const BUCKET_PREFIXES = ['projects/*', 'sessions/*', 'surveys/*', 'models/*', 'design/*', 'imports/*'];
+// pricing/* is the Bedrock price snapshot aipds-update refreshes (pricing/bedrock.json) — a
+// deployment-wide value, so it is outside the project prefix too.
+const BUCKET_PREFIXES = [
+  'projects/*', 'sessions/*', 'surveys/*', 'models/*', 'design/*', 'imports/*', 'pricing/*',
+];
 
 /** Verify that object permissions (Get/Put/Delete) and list permissions (ListBucket)
  *  cover BUCKET_PREFIXES without gaps. An assertion that only checks the action exists
@@ -99,10 +103,18 @@ function testDrillUnchanged() {
   // backend uses is missing, only that feature becomes a 500 and the screen shows no
   // cause, so we check prefix by prefix here.
   assertBucketPrefixesCovered(t);
+  // The price snapshot refresh reads the AWS Price List (backend/aipds/pricing_sync.py).
+  t.hasResourceProperties('AWS::IAM::Policy', {
+    PolicyDocument: {
+      Statement: Match.arrayWith([
+        Match.objectLike({ Action: 'pricing:GetProducts', Resource: '*' }),
+      ]),
+    },
+  });
   // Exactly one bucket exposed.
   assert.ok(drill.artifactsBucket, 'artifactsBucket must be exposed');
   t.resourceCountIs('AWS::S3::Bucket', 1);
-  console.log('OK  drill stack: bedrock + s3 object/list on every backend prefix + bucket exposed');
+  console.log('OK  drill stack: bedrock + price list + s3 object/list on every backend prefix + bucket exposed');
 }
 
 /** Conditions for import uploads to work from the browser: bucket CORS and staging lifetime.

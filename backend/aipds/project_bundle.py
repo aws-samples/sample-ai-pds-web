@@ -63,6 +63,10 @@ PROJECT_MANIFEST_KEY = "project.json"
 #: Not carrying it at all is more honest than putting it in the bundle and ignoring it on import.
 PENDING_PREFIX = "pending/"
 
+#: Token usage (aipds/token_usage.py). It records what was spent on **this** deployment, so it
+#: is not carried either way — importing it would show the sender's spend as the receiver's.
+USAGE_PREFIX = "usage/"
+
 #: Root of the Discovery transcript (project-relative). See the session-segment conversion below.
 TRANSCRIPT_ROOT = "discovery/transcript/"
 
@@ -166,7 +170,7 @@ def s3_key_to_bundle_path(key: str, *, transcript_prefix: str) -> str | None:
     """
     if key == PROJECT_MANIFEST_KEY:
         return None
-    if key.startswith(PENDING_PREFIX):
+    if key.startswith(PENDING_PREFIX) or key.startswith(USAGE_PREFIX):
         return None
     if _PROTO_CONVERSATION_RE.match(key):
         return None
@@ -199,7 +203,8 @@ def bundle_path_to_s3_key(path: str, *, transcript_prefix: str) -> str | None:
     # receiving instance, and if it carries `access-token`, the preview opens with a token the
     # sender knows. If it carries build transcripts or `pending/`, the build agent and Discovery
     # resume the sender's conversation and questions as their own. The route writes the manifest last.
-    if key == PROJECT_MANIFEST_KEY or key.startswith(PENDING_PREFIX):
+    if (key == PROJECT_MANIFEST_KEY or key.startswith(PENDING_PREFIX)
+            or key.startswith(USAGE_PREFIX)):
         return None
     if _PROTO_CONVERSATION_RE.match(key) or _PROTO_INSTANCE_RE.match(key):
         return None
