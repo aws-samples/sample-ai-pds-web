@@ -72,6 +72,8 @@ _OPEN = _vision("""| ID | 질문 | 답할 사람 | 시점 | 답이 나올 때까
 
 
 def _step_of(prompt: str) -> str:
+    if "Rewrite only those lines" in prompt:
+        return "rewrite"
     if "Write the options" in prompt:
         return "options"
     if f"## Write {package.VISION}" in prompt:
@@ -90,6 +92,8 @@ def _writer(calls: list | None = None, *, fail_at: str | None = None, error=None
             raise error or RuntimeError("AccessDenied: arn:aws:iam::123:role/x")
         if step == "options":
             return options
+        if step == "rewrite":
+            return '{"lines": []}'
         fence = f"```json\n{json.dumps(reply, ensure_ascii=False)}\n```\n" if reply is not None else ""
         return fence + "머리말은 버려진다.\n" + doc
     return call
@@ -229,6 +233,17 @@ def test_lint_leaves_ordinary_product_language_and_citations_alone():
         "근거: go-to-market/gtm-questions.md Q14 · discovery-document.md",
     ])
     assert [f for f in package.lint(doc) if f.kind != "structure"] == []
+
+
+def test_lint_skips_the_cited_heading_of_an_original():
+    """A citation copies the original's heading as rule 6 asks. A number in that heading is a locator, not a leak — flagging
+    it asked for a regeneration that could never clear it."""
+    doc = "\n".join([
+        "- 서명 기한은 지점마다 다르다 [prototype/spec-as-built.md · 발송 규칙 (B3)].",
+        "| O-02 | 서명 기한은? | PM | 빌드 전 | — | prototype/spec-as-built.md · 발송 규칙 (B3) |",
+        "- 재발송 기능(B3)을 먼저 만든다 [prototype/spec-as-built.md · 추가 기능].",
+    ])
+    assert _kinds(package.lint(doc), "internal") == [(3, "B3")]
 
 
 def test_a_missing_vision_section_is_flagged():
@@ -1054,3 +1069,105 @@ def test_a_kept_product_name_is_not_taken_for_an_internal_number():
     doc = _vision(_OPEN.split("### Open Questions\n", 1)[1]).replace(
         "모든 안전 서류가 전자로 남는다.", "M365 기록을 대신하고 H3 가설을 검증한다.")
     assert [term for _, term in _kinds(package.lint(doc), "internal")] == ["H3"]
+
+
+# ---- rewriting flagged lines ----
+
+#: A body whose source spec refers to its requirements by number — the number leaks into the body.
+_LEAKY = _OPEN.replace(
+    "| 발송 | 대상 지정 후 발송 | 첫 사용 장면 [discovery-document.md · Launch Plan] |",
+    "| 발송 | 대상 지정 후 발송(R2) | 첫 사용 장면 [discovery-document.md · Launch Plan] |").replace(
+    "모든 안전 서류가 전자로 남는다. [discovery-document.md · Positioning]",
+    "모든 안전 서류를 쉽게 전자로 남긴다. [discovery-document.md · Positioning]")
+_SPEC = "# 명세\n\n- R2: 지점 담당자가 대상자 명단을 올려 서명 요청을 보낸다.\n"
+
+
+def _line_of(doc: str, text: str) -> int:
+    return next(n for n, line in enumerate(doc.splitlines(), start=1) if text in line)
+
+
+def test_the_rewrite_prompt_carries_what_an_internal_number_means():
+    flagged = package._rewritable(_LEAKY, package._labels("ko"))
+    assert sorted(f.term for found in flagged.values() for f in found) == ["R2", "쉽게"]
+    prompt = package.build_rewrite_prompt(language="ko", doc=_LEAKY, flagged=flagged,
+                                          sources={D + "prototype/spec-as-built.md": _SPEC})
+    assert "prototype/spec-as-built.md: - R2: 지점 담당자가 대상자 명단을 올려 서명 요청을 보낸다." in prompt
+    assert f"line {_line_of(_LEAKY, '(R2)')}:" in prompt
+
+
+def test_open_question_rows_are_not_sent_for_rewriting():
+    """Code renders the table from the record, and a question's wording is the key its answer is kept under."""
+    doc = _vision("""| ID | 질문 | 답할 사람 | 시점 | 답이 나올 때까지 | 근거 |
+|---|---|---|---|---|---|
+| O-01 | R2의 보존 기간은? | PM | 빌드 전 | — | use-case-intake/use-cases.md |
+""")
+    assert package._rewritable(doc, package._labels("ko")) == {}
+
+
+def test_a_rewritten_line_is_taken_only_if_it_keeps_its_shape_and_citations():
+    flagged = package._rewritable(_LEAKY, package._labels("ko"))
+    row, vision = _line_of(_LEAKY, "(R2)"), _line_of(_LEAKY, "쉽게")
+    reply = json.dumps({"lines": [
+        # Fixed and shaped as before: taken.
+        {"line": row, "text": "| 발송 | 대상자 명단을 올려 서명 요청 발송 | 첫 사용 장면 [discovery-document.md · Launch Plan] |"},
+        # Dropped its citation: refused.
+        {"line": vision, "text": "모든 안전 서류를 지점 담당자가 전자로 남긴다."},
+        # Not flagged: refused.
+        {"line": 1, "text": "# 다른 제목"},
+    ]}, ensure_ascii=False)
+    doc, accepted = package.apply_rewrites(_LEAKY, reply, flagged)
+    assert accepted == 1
+    lines = doc.splitlines()
+    assert lines[row - 1].endswith("대상자 명단을 올려 서명 요청 발송 | 첫 사용 장면 [discovery-document.md · Launch Plan] |")
+    assert lines[vision - 1] == _LEAKY.splitlines()[vision - 1]
+    assert lines[0] == _LEAKY.splitlines()[0]
+
+
+def test_a_row_that_loses_a_cell_or_keeps_the_word_is_refused():
+    flagged = package._rewritable(_LEAKY, package._labels("ko"))
+    row = _line_of(_LEAKY, "(R2)")
+    for text in ("| 발송 | 첫 사용 장면 [discovery-document.md · Launch Plan] |",
+                 "| 발송 | 대상 지정 후 발송 R2 | 첫 사용 장면 [discovery-document.md · Launch Plan] |"):
+        reply = json.dumps({"lines": [{"line": row, "text": text}]}, ensure_ascii=False)
+        assert package.apply_rewrites(_LEAKY, reply, flagged) == (_LEAKY, 0)
+
+
+def test_generation_rewrites_flagged_lines_before_checking():
+    s3 = FakeS3Store()
+    files = {p: f"# {p}\n" for p in B}
+    files[D + "prototypes/customer-inquiry-triage/PROTOTYPE-customer-inquiry-triage.md"] = _SPEC
+    prompts: list[str] = []
+
+    async def call(prompt, progress=None):
+        step = _step_of(prompt)
+        prompts.append(step)
+        if step == "rewrite":
+            row = _line_of(_LEAKY, "(R2)")
+            return json.dumps({"lines": [{"line": row, "text": _LEAKY.splitlines()[row - 1].replace("(R2)", " — 명단 업로드")}]},
+                              ensure_ascii=False)
+        if step == "options":
+            return '{"questions": []}'
+        return _LEAKY
+
+    manifest = _run(_generate(s3, files, call))
+    assert prompts[:2] == ["vision", "rewrite"]
+    vision = _run(s3.get(package.PACKAGE_PREFIX + package.VISION))
+    assert "(R2)" not in vision and "명단 업로드" in vision
+    # The line the rewrite did not fix is still surfaced.
+    assert [f.term for f in manifest.findings if f.kind in ("internal", "vague")] == ["쉽게"]
+
+
+def test_a_failed_rewrite_keeps_the_document_as_written():
+    s3 = FakeS3Store()
+    files = {p: f"# {p}\n" for p in B}
+
+    async def call(prompt, progress=None):
+        step = _step_of(prompt)
+        if step == "rewrite":
+            raise RuntimeError("throttled")
+        return '{"questions": []}' if step == "options" else _LEAKY
+
+    manifest = _run(_generate(s3, files, call))
+    assert manifest.status == "ready"
+    assert "(R2)" in _run(s3.get(package.PACKAGE_PREFIX + package.VISION))
+    assert sorted(f.term for f in manifest.findings if f.kind in ("internal", "vague")) == ["R2", "쉽게"]
