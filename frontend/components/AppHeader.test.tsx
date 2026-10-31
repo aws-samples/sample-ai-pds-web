@@ -72,6 +72,25 @@ describe("AppHeader model badge", () => {
     render(<AppHeader activeTab="projects" />);
     expect(screen.queryByTestId("model-badge")).toBeNull();
   });
+
+  // The label may be truncated with an ellipsis when the header is short on room.
+  it("keeps the full model label in the tooltip", () => {
+    render(<AppHeader activeTab="workspace" projectId="p1" modelLabel="Opus 5 · effort high" />);
+    expect(screen.getByTestId("model-badge").getAttribute("title")).toContain("Opus 5 · effort high");
+  });
+});
+
+describe("AppHeader Bedrock badge", () => {
+  // Only "Bedrock" is drawn so the English header fits on one line; the full sentence must
+  // still reach screen readers.
+  it("keeps the full status text for screen readers in English", () => {
+    render(
+      <LocaleProvider locale="en">
+        <AppHeader activeTab="dashboard" projectId="ws-m" />
+      </LocaleProvider>,
+    );
+    expect(screen.getByText("Bedrock connected")).toHaveClass("sr-only");
+  });
 });
 
 describe("AppHeader 로케일", () => {

@@ -45,7 +45,7 @@ export function AppHeader({
 
   const tab = (key: HeaderTab, label: string, href: string) => {
     const active = key === activeTab;
-    const base = "px-3 py-2 rounded-lg text-sm";
+    const base = "px-2.5 py-2 rounded-lg text-sm whitespace-nowrap";
     // Per-project tab with no project selected: disabled, not a link.
     if (!projectId) {
       return (
@@ -71,9 +71,12 @@ export function AppHeader({
   const base = `/projects/${projectId}`;
   return (
     <header className="bg-white border-b border-slate-200 sticky top-0 z-20">
-      <div className="max-w-7xl mx-auto px-6 h-16 flex items-center justify-between">
-        <div className="flex items-center gap-8">
-          <Link href="/" className="flex items-center gap-2 font-bold text-lg text-violet-700">
+      {/* Every item is nowrap: the English labels are longer than the Korean ones, and letting
+          flex shrink them wraps text onto two lines and breaks the 64px row. When space is
+          short, the low-priority badges below collapse or truncate instead. */}
+      <div className="max-w-7xl mx-auto px-6 h-16 flex items-center justify-between gap-4">
+        <div className="flex items-center gap-6 shrink-0">
+          <Link href="/" className="flex items-center gap-2 font-bold text-lg text-violet-700 whitespace-nowrap">
             <span className="w-8 h-8 rounded-lg bg-violet-600 text-white flex items-center justify-center text-sm font-bold">
               WEB
             </span>
@@ -87,12 +90,12 @@ export function AppHeader({
             {tab("handoff", t("nav.handoff"), `${base}/handoff`)}
           </nav>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2 min-w-0">
           {readOnly && (
             <span
               data-testid="read-only-badge"
               title={t("header.readOnlyTitle")}
-              className="inline-flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-full bg-amber-50 text-amber-700 border border-amber-200"
+              className="inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap text-xs px-2.5 py-1 rounded-full bg-amber-50 text-amber-700 border border-amber-200"
             >
               {t("header.readOnlyBadge")}
             </span>
@@ -101,7 +104,7 @@ export function AppHeader({
             <span
               data-testid="language-badge"
               title={t("header.languageBadgeTitle")}
-              className="hidden sm:inline-flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-full bg-slate-50 text-slate-600 border border-slate-200"
+              className="hidden lg:inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap text-xs px-2.5 py-1 rounded-full bg-slate-50 text-slate-600 border border-slate-200"
             >
               {LANGUAGE_LABEL[projectLanguage]}
             </span>
@@ -109,28 +112,38 @@ export function AppHeader({
           {modelLabel && (
             <span
               data-testid="model-badge"
-              title={t("header.modelBadgeTitle")}
-              className="hidden sm:inline-flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-full bg-violet-50 text-violet-700 border border-violet-200"
+              // The label is the one item allowed to shrink (truncated with an ellipsis), so the
+              // full name goes in the tooltip too.
+              title={`${t("header.modelBadgeTitle")}: ${modelLabel}`}
+              className="hidden lg:inline-flex min-w-0 items-center text-xs px-2.5 py-1 rounded-full bg-violet-50 text-violet-700 border border-violet-200"
             >
-              {modelLabel}
+              <span className="truncate">{modelLabel}</span>
             </span>
           )}
-          <span className="hidden sm:inline-flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200">
-            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" /> {t("header.bedrockConnected")}
+          {/* The green dot already says "connected", so only the product name is shown — the full
+              sentence ("Bedrock connected") did not fit next to the English tabs. It stays in the
+              tooltip and for screen readers. Below xl it is dropped first — it is a static marker. */}
+          <span
+            title={t("header.bedrockConnected")}
+            className="hidden xl:inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap text-xs px-2.5 py-1 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200"
+          >
+            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" aria-hidden="true" />
+            <span className="sr-only">{t("header.bedrockConnected")}</span>
+            <span aria-hidden="true">Bedrock</span>
           </span>
           {/* On the manual screen itself, show it only as the current location — leaving a
               clickable link to the same place makes it confusing where you are. */}
           {activeTab === "manual" ? (
             <span
               aria-current="page"
-              className="px-2.5 py-1 text-sm font-medium text-violet-700"
+              className="shrink-0 whitespace-nowrap px-2.5 py-1 text-sm font-medium text-violet-700"
             >
               {t("nav.manual")}
             </span>
           ) : (
             <Link
               href="/manual"
-              className="px-2.5 py-1 text-sm text-slate-500 rounded-lg hover:bg-slate-100"
+              className="shrink-0 whitespace-nowrap px-2.5 py-1 text-sm text-slate-500 rounded-lg hover:bg-slate-100"
             >
               {t("nav.manual")}
             </Link>
