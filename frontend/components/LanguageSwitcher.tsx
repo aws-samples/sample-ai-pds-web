@@ -42,7 +42,7 @@ export function LanguageSwitcher({ alwaysVisible = false }: { alwaysVisible?: bo
 
   return (
     <div
-      className={`${alwaysVisible ? "inline-flex" : "hidden sm:inline-flex"} items-center rounded-full border border-slate-200 p-0.5`}
+      className={`${alwaysVisible ? "inline-flex" : "hidden sm:inline-flex"} shrink-0 items-center rounded-full border border-slate-200 p-0.5`}
       role="group"
       aria-label="Language / 언어"
     >
@@ -54,7 +54,7 @@ export function LanguageSwitcher({ alwaysVisible = false }: { alwaysVisible?: bo
             type="button"
             onClick={() => choose(locale)}
             aria-pressed={active}
-            className={`px-2.5 py-1 text-xs rounded-full ${
+            className={`px-2.5 py-1 text-xs whitespace-nowrap rounded-full ${
               active
                 ? "bg-violet-600 text-white font-medium"
                 : "text-slate-500 hover:bg-slate-100"

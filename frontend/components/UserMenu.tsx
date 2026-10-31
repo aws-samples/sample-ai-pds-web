@@ -79,7 +79,7 @@ export function UserMenu() {
   const initial = me.email.charAt(0).toUpperCase();
 
   return (
-    <div className="relative" ref={containerRef}>
+    <div className="relative shrink-0" ref={containerRef}>
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
