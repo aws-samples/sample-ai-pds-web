@@ -311,7 +311,8 @@ testComputeAndRole();
 function testCloudFront() {
   const t = makeHosting();
   // CloudFront reaches the instance through a VPC origin (private connectivity). HTTP on 80 — no CA
-  // issues a certificate for the instance's private DNS name (README "CloudFront → instance is private").
+  // issues a certificate for the instance's private DNS name
+  // (infra/README.md "CloudFront → instance is private").
   const vpcOrigins = t.findResources('AWS::CloudFront::VpcOrigin');
   assert.strictEqual(Object.keys(vpcOrigins).length, 1, 'one VPC origin');
   const [vpcOriginId, vpcOrigin] = Object.entries(vpcOrigins)[0] as [string, any];

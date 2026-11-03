@@ -71,35 +71,10 @@ proto-config/      CLAUDE_CONFIG_DIR for the build agent — must differ from th
 | To find | Look in |
 |---|---|
 | How to use each screen, administration, **operating a deployment and troubleshooting** | The app's **`/manual`** (opens without a login). Source: [`frontend/content/manual/`](frontend/content/manual) |
+| Running locally, environment variables, tests, screen access | [`DEVELOPMENT.md`](DEVELOPMENT.md) |
 | Why the stacks are shaped the way they are | [`infra/README.md`](infra/README.md) |
 | Why the two config dirs are separate | [`discovery-config/README.md`](discovery-config/README.md) |
 | Why anything else is the way it is | The commit that touched it (`git log`) and the code comments |
-
----
-
-## Screens and who can open them
-
-The frontend middleware is only a UX gate — **the security boundary is the backend's `require_admin` /
-`require_user` / `require_project_access`.** The public-path list is asserted from both sides
-(`frontend/lib/auth/gate.ts` and `backend/tests/test_auth_route_coverage.py`).
-
-A project has one owner and any number of viewing members. The owner and administrators read and
-change it; members only read; to anyone else it is a 404, the same as a project that does not exist
-(`backend/aipds/project_access.py`). That is the *project* access below.
-
-| Screen | What it does | Access |
-|---|---|---|
-| `/` | The projects you own or view (all of them for an admin), creation, export and import | logged in |
-| `/projects/{id}/workspace` | The Discovery conversation — live turns, question sheets, attachments, the generated-document drawer | project |
-| `/projects/{id}/dashboard` | Stage progress, artifacts, activity | project |
-| `/projects/{id}/review` | Document review and the approval gate | project |
-| `/projects/{id}/questions` | One question file, expanded to answer | project |
-| `/projects/{id}/prototypes` | Build sessions, hosting, and the validation survey | project |
-| `/projects/{id}/handoff` | The AI-DLC handoff — readiness, supplementary questions, confirming AI suggestions, and the package (vision document, decision ledger, start prompt) as a zip | project |
-| `/survey/{token}` | The anonymous validation survey | **public** (token) |
-| `/api/proto/{pid}/{slug}` | The built prototype, served **only on the preview domain** (`AipdsPreviewStack`). The share link plants the access cookie; without it, 404 is the correct answer | **public** (token cookie) |
-| `/admin/users` · `/admin/models` · `/admin/design` | Users and roles, the model catalog, the brand design profile | admin |
-| `/manual` | The manual. It sits in front of the login so you can read what the tool does before you have an account | **public** |
 
 ---
 
@@ -131,14 +106,11 @@ next turn. Changes to the workflow itself belong upstream.
 A single `cdk deploy --all` brings up an app you can sign in to: the EC2 instance clones this repo, builds
 and starts the backend and frontend, and CloudFront goes in front of it.
 
-**Prerequisites**
-
-- Node.js 20+ and administrator-level AWS credentials (it creates IAM roles, Cognito and a VPC).
-- An account that can call Claude on Bedrock. Bedrock creates the Marketplace subscription on a model's
-  first call and the deployed roles already hold the permissions for it; what you must do yourself is
-  submit the **Anthropic first-time-use form** once for the account (or the organization's management
-  account) and have a Marketplace payment method. Without them, the deployment succeeds and the first
-  conversation fails with `AccessDeniedException`.
+**Prerequisites:** Node.js 20+, administrator-level AWS credentials (it creates IAM roles, Cognito and a
+VPC), and an account that can call Claude on Bedrock. For the last one, submit the **Anthropic
+first-time-use form** once for the account (or the organization's management account) and have a
+Marketplace payment method. Without them, the deployment succeeds and the first conversation fails with
+`AccessDeniedException`.
 
 ```bash
 cd infra
@@ -148,29 +120,15 @@ npx cdk deploy --all --require-approval never \
   --parameters AipdsAuthStack:SeedPassword='<temporary-password>'
 ```
 
-| Stack | What it creates |
-|---|---|
-| `AipdsDrillStack` | S3 artifact bucket + backend execution role |
-| `AipdsAuthStack` | Cognito User Pool + hosted sign-in + `admin`/`pm` groups + two seed accounts |
-| `AipdsHostingStack` | VPC (private subnet + one NAT) + EC2 (AL2023, m7i.2xlarge) + CloudFront through a VPC origin |
-| `AipdsPreviewStack` | A separate CloudFront distribution that serves only prototypes |
-| `AipdsAgentCredsStack` | The Bedrock-only role the sandboxed agents and prototypes run with |
-| `AipdsUploadCorsStack` | Lets the instance keep its app origin in the bucket's CORS (project import uploads straight to S3) |
-
-- **It takes 15–20 minutes**, and CloudFront may answer 502 for a few minutes after `cdk deploy`
-  returns while the instance finishes its first build. A few minutes later the instance turns on the
-  sandbox, the IMDS block and the preview origin by itself (`aipds-harden sync`) and restarts the
-  backend once. The same sync gives the frontend its own address, so sign-in works within about two
-  minutes of the deploy finishing. Nothing needs to be run by hand.
-- **What gets deployed is pushed `main`.** The instance clones `origin/main` at boot; nothing unpushed is
-  deployed, and for the same reason `cdk deploy` never updates code — that is `sudo aipds-update`.
-- **Outputs**: `AipdsHostingStack.DistributionDomain` is the app, `AipdsPreviewStack.PreviewOrigin` is
-  where share links point, `AipdsHostingStack.InstanceId` is the SSM target. `VpcOriginId` and
-  `OriginPrivateDns` are what deploying the instance-side stacks alone takes (`/manual`).
-- **Sign in** as `admin@aipds.local` or `pm@aipds.local` with the `SeedPassword` value. It is a temporary
-  password (valid 30 days) that each user replaces at first login. It must satisfy the pool policy —
-  8+ characters with an uppercase letter, a lowercase letter, a digit and a symbol — or CloudFormation
-  rejects it before the deployment starts.
+- **It takes 15–20 minutes**, and CloudFront may answer 502 for a few minutes after `cdk deploy` returns
+  while the instance finishes its first build. Nothing needs to be run by hand.
+- **What gets deployed is pushed `main`.** The instance clones `origin/main` at boot, and `cdk deploy`
+  never updates code — that is `sudo aipds-update`.
+- **Open** the `AipdsHostingStack.DistributionDomain` output and **sign in** as `admin@aipds.local` or
+  `pm@aipds.local` with the `SeedPassword` value. It is a temporary password (valid 30 days) that each
+  user replaces at first login. It must satisfy the pool policy — 8+ characters with an uppercase
+  letter, a lowercase letter, a digit and a symbol — or CloudFormation rejects it before the deployment
+  starts.
 - **MFA is off.** Sign-in is a password alone, which is enough for a workshop sample but not for real
   customer material: a leaked admin password hands over user and role management too. Before using it
   beyond a workshop, require MFA in `infra/lib/aipds-auth-stack.ts` (`mfa: cognito.Mfa.REQUIRED` with
@@ -181,101 +139,11 @@ npx cdk deploy --all --require-approval never \
     the Plus feature plan (`aipds-auth-stack.ts`).
   - `cdk destroy` deletes the user pool and the artifacts bucket with everything in it, and the bucket
     has no versioning or access logs (`aipds-auth-stack.ts`, `aipds-drill-stack.ts`).
-- **Another region**: `CDK_DEPLOY_REGION=ap-northeast-1 npx cdk deploy --all …`. No code changes. A few
-  regions offer VPC origins in all but one AZ (`use1-az3` in us-east-1, `usw1-az2` in us-west-1,
-  `apne1-az3` in ap-northeast-1, `cac1-az3` in ca-central-1). AZ names map to different AZs in each
-  account, so check with `aws ec2 describe-availability-zones` and, if the region's first two names
-  include that AZ, name two others: `AIPDS_AVAILABILITY_ZONES=ap-northeast-1a,ap-northeast-1c`.
-- **Another upload origin** (a custom domain, say): `AIPDS_UPLOAD_ORIGINS` (comma-separated) at deploy
-  time. The app's own origin is added by the instance.
 
-Updating the code, the sandbox commands, protecting a running instance from replacement, getting a
-fresh instance, teardown, and troubleshooting are in **`/manual` → Install, operate, troubleshoot**.
-
-### CloudFront → instance is private
-
-The instance sits in a private subnet with no public address. Both distributions — the app
-(`aipds-hosting-stack.ts`) and the previews (`aipds-preview-stack.ts`) — reach it through one CloudFront
-VPC origin: CloudFront places a service-managed network interface in the VPC and sends origin requests
-through it, so they never cross the public internet. The instance's own outbound traffic (git, package
-installs, Bedrock, the agent fetching URLs) leaves through one NAT gateway, which is billed by the hour
-and per GB processed.
-
-**What travels on that leg:** session cookies (Cognito tokens), prototype access cookies, and the
-`X-Origin-Verify` / `X-Preview-Verify` secret headers.
-
-**Why it is HTTP on port 80.** CloudFront accepts an origin certificate only from a publicly trusted
-certificate authority, for the origin's name, and a VPC origin to EC2 is addressed by the instance's
-private DNS name (`ip-….compute.internal`), which no authority issues a certificate for. Keeping it that
-way lets the sample deploy into any account with no domain of its own.
-
-**What limits it:**
-
-- Nothing on the internet can reach the instance: it has no public IP, and its security group accepts
-  port 80 only from the CloudFront origin-facing prefix list. There is no SSH; access is through SSM.
-- nginx rejects any request without the secret header.
-- The secret header values come from Secrets Manager at deploy time; no template holds them in
-  plaintext.
-
-**To add TLS on that leg,** use a domain you own: put an internal Application Load Balancer with an ACM
-certificate for that name in front of the instance, and make the load balancer the VPC origin with
-`OriginProtocolPolicy.HTTPS_ONLY`.
-
----
-
-## Running locally
-
-Frontend (:3000) → backend (:8000) → the agent calls Bedrock. You still need the bucket and role, so
-deploy `AipdsDrillStack` first. Python **3.11** and Node.js 20+.
-
-```bash
-git submodule update --init --recursive
-cd backend && python3.11 -m venv .venv && .venv/bin/pip install -e ".[dev]"
-cd ../frontend && npm install
-cp ../backend/.env.example ../backend/.env           # fill in from the DrillStack outputs
-
-cd backend && .venv/bin/python -m uvicorn aipds.app:app --host 127.0.0.1 --port 8000 --reload
-cd frontend && npm run dev                           # http://localhost:3000
-```
-
-Locally, agents run directly as your user — the sandbox is an instance feature. With authentication off, the backend treats every request as an admin, so keep it on `127.0.0.1`.
-
-| Variable | Set it to |
-|---|---|
-| `AIPDS_S3_BUCKET` / `AIPDS_S3_REGION` | `AipdsDrillStack.ArtifactsBucketName` and its region. Unset, the app silently runs local-only |
-| `AIPDS_DISCOVERY_CONFIG_DIR` / `AIPDS_PROTO_CONFIG_DIR` | Absolute paths to the repo's `discovery-config/` and `proto-config/`. Unset, the agent reads **your own `~/.claude`** and your personal skills leak into the results |
-| `ANTHROPIC_MODEL` | Fallback Bedrock inference profile id, used when a project has none |
-| `AIPDS_COGNITO_USER_POOL_ID` / `AIPDS_COGNITO_CLIENT_ID` | Leave **both** empty and set `AIPDS_AUTH_DISABLED=1` to skip authentication (the local default in `.env.example`). Both empty without that switch, or only one set, and the backend refuses to start |
-| `AIPDS_PUBLIC_PATH_PREFIX` | `""` when the browser calls the backend directly on :8000 |
-
-Every other variable, with the value a deployment uses and why, is commented in the systemd units in
-[`infra/lib/user-data.ts`](infra/lib/user-data.ts); defaults live in the code that reads them
-(`backend/aipds/app.py`, `backend/aipds/cli_settings.py`).
-
-**If the browser is remote** (behind a proxy hostname rather than `localhost`), calls to
-`localhost:8000` hit the browser's own machine. Put `NEXT_PUBLIC_API_BASE_URL=/api` in
-`frontend/.env.local` so the Next route handler proxies to the backend (`AIPDS_BACKEND_URL`, default
-`http://localhost:8000`), and add the hostname to `allowedDevOrigins` in `next.config.mjs`.
-
----
-
-## Tests
-
-```bash
-cd backend && .venv/bin/python -m pytest -q     # backend unit (no AWS needed)
-cd frontend && npm test                         # frontend unit (Vitest + MSW)
-cd infra && npm test                            # synth + template assertions (no deployment)
-cd frontend && npm run test:e2e                 # e2e (needs a real backend and Bedrock)
-```
-
-| Run this | When you touched |
-|---|---|
-| `npm test -- noHardcodedKorean` | UI strings — catches Korean literals that bypass the dictionary |
-| `npm test -- parity` | The manual — catches ko/en drifting apart in structure or anchors |
-| `pytest -q -k sdk_available` | The `claude-agent-sdk` version — checks the option fields and the bundled binary |
-| `pytest -q -k no_legacy_brand` | Anything with the product name in it |
-| `pytest -q -k no_hardcoded_secrets` | A string under a name with token, secret or password in it — catches what the security scan's Bandit flags (B105/B106/B107) |
-| `pytest -q -k synthetic_email_domains` | Example email addresses — only reserved domains (`example.com`, `.test`, …) |
+Another region, the stack outputs, updating the code, the sandbox, teardown and troubleshooting are in
+**`/manual` → Install, operate, troubleshoot**. What each stack creates, why the CloudFront → instance leg
+is private HTTP, and the regions that need `AIPDS_AVAILABILITY_ZONES` are in
+[`infra/README.md`](infra/README.md).
 
 ---
 
@@ -284,29 +152,17 @@ cd frontend && npm run test:e2e                 # e2e (needs a real backend and 
 AI-PDS Web drafts product documents, prototypes and survey syntheses with Claude models on Amazon
 Bedrock. Everything it produces is a draft for a person to judge, and the tool is built around that.
 
-**People decide.** The AI does not settle a stage on its own: a stage closes when a person answers its
-question sheet or approves the Discovery document at the approval gate, and approving or asking for a
-revision is always the person's call. Options marked *★ AI pick* are a suggestion, not a default the
-form submits for you. The handoff package keeps the same line: the model drafts the vision document,
-but code builds its open-questions table from candidates it collects — a row the model adds must quote
-its source, and code checks the quote is there — and marks the AI suggestions no one has confirmed on
-the handoff tab.
-
-**What the AI did is visible.** Everything a user types and every answer submitted is written to
-`audit.md` verbatim with the real time, by the app rather than by the AI; the AI appends its own
-reasoning after it. Each turn's tool calls and changed files stay in a collapsed activity log under
-the answer, and the Document Review screen shows the AI's own verification summary next to the
-document. When answers are submitted, the app keeps the documents as they stood at that moment, so
-the drawer and Document Review mark what the answers changed — blocks added, edited and removed,
-changed table rows, and a list of the sections that hold them. The prototype specs are documents
-too.
-
-**Evidence and assumptions are kept apart.** The agent contract requires documents to state material
-unknowns and never to present an assumption as customer evidence. Survey syntheses report each
-respondent persona separately, so a good overall average cannot hide a poor score from the users the
-spec targets, and respondents outside the target users are not counted as validating a hypothesis.
-A survey is still a small, self-selected sample — read its synthesis as a signal, and check it
-against the CSV of individual responses.
+- **People decide.** A stage closes only when a person answers its question sheet or approves the
+  Discovery document at the approval gate. Options marked *★ AI pick* are suggestions, not defaults. In
+  the handoff package, a row the model adds to the open-questions table must quote its source and code
+  checks the quote is there, and AI suggestions stay marked until someone confirms them.
+- **What the AI did is visible.** The app — not the AI — writes everything a user types and every answer
+  submitted to `audit.md` verbatim with the real time. Each turn's tool calls and changed files, the AI's
+  own verification summary, and what each set of answers changed in the documents are shown on screen.
+- **Evidence and assumptions are kept apart.** Documents must state material unknowns and never present
+  an assumption as customer evidence. Survey syntheses report each respondent persona separately and do
+  not count respondents outside the target users as validating a hypothesis. A survey is still a small,
+  self-selected sample, so check the synthesis against the CSV of individual responses.
 
 **Limits to plan for.**
 

@@ -834,7 +834,7 @@ app = FastAPI(title="AI-PDS", lifespan=_lifespan,
 # needs the browser to send its httpOnly session cookie so it can translate
 # that into Authorization: Bearer -- see app/api/[...path]/route.ts). Without
 # this the browser silently drops every cross-origin response in the
-# README's documented default setup (:3000 -> :8000). This is safe only
+# DEVELOPMENT.md's documented default setup (:3000 -> :8000). This is safe only
 # because allow_origins below is an explicit allowlist, never "*" --
 # Starlette's CORSMiddleware refuses to combine allow_credentials with a
 # wildcard origin's shortcut path anyway (it falls back to echoing the

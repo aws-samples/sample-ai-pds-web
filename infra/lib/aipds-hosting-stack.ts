@@ -25,8 +25,8 @@ export interface HostingStackProps extends cdk.StackProps {
   // region is looked up automatically with fromLookup.
   cfPrefixListId?: string;
   // AZs for the VPC. Unset: the region's first two. VPC origins are not offered in a few AZs
-  // (README "Another region"), and AZ names map to different AZs in each account, so the
-  // deployer picks them (AIPDS_AVAILABILITY_ZONES in bin/app.ts).
+  // (infra/README.md "Region lookup and cdk.context.json"), and AZ names map to different AZs
+  // in each account, so the deployer picks them (AIPDS_AVAILABILITY_ZONES in bin/app.ts).
   availabilityZones?: string[];
   // Auth. Takes the pool/client AuthStack created, (1) plants them in EC2 as env and
   // (2) registers the CloudFront domain as a callback URL.
@@ -214,8 +214,8 @@ export class AipdsHostingStack extends cdk.Stack {
     // CloudFront accepts an origin certificate only from a publicly trusted CA for the origin's
     // name, and the origin name of a VPC origin to EC2 is the instance's private DNS name
     // (ip-….compute.internal), which no CA issues for. TLS on top of this leg takes a domain of
-    // your own — README "CloudFront → instance is private" covers what travels on the leg (session
-    // cookies, the secret header below) and how to add it.
+    // your own — infra/README.md "CloudFront → instance is private" covers what travels on the
+    // leg (session cookies, the secret header below) and how to add it.
     const vpcOrigin = new cloudfront.VpcOrigin(this, 'VpcOrigin', {
       endpoint: cloudfront.VpcOriginEndpoint.ec2Instance(instance),
       protocolPolicy: cloudfront.OriginProtocolPolicy.HTTP_ONLY,
