@@ -126,10 +126,36 @@ Secrets Manager에 사본을 두면 Cognito가 만든 값이 CloudFormation을 �
 
 **삭제** — User Pool은 `RemovalPolicy.DESTROY`다. `cdk destroy --all`이 모든 계정을 지운다.
 
+## CloudFront → 인스턴스 구간은 사설 경로다
+
+인스턴스는 퍼블릭 주소가 없는 프라이빗 서브넷에 있다. 두 배포 — 앱(`aipds-hosting-stack.ts`)과
+프리뷰(`aipds-preview-stack.ts`) — 는 CloudFront VPC 오리진 하나로 인스턴스에 닿는다. CloudFront가
+VPC 안에 서비스 관리형 네트워크 인터페이스를 두고 그것을 통해 오리진 요청을 보내므로, 이 요청은 공용
+인터넷을 지나지 않는다. 인스턴스 자신의 아웃바운드(git, 패키지 설치, Bedrock, 에이전트의 URL 조회)는
+NAT 게이트웨이 하나로 나가고, NAT는 시간과 처리한 GB 단위로 과금된다.
+
+**이 구간에 실리는 것:** 세션 쿠키(Cognito 토큰), 프로토타입 접근 쿠키, `X-Origin-Verify` /
+`X-Preview-Verify` 비밀 헤더.
+
+**포트 80의 HTTP인 이유.** CloudFront는 오리진 이름에 맞고 공인 인증 기관이 발급한 인증서만 받는데,
+EC2로 가는 VPC 오리진의 이름은 인스턴스의 프라이빗 DNS 이름(`ip-….compute.internal`)이고 어느 인증
+기관도 이 이름으로 인증서를 발급하지 않는다. 이대로 두어야 자체 도메인 없이 어느 계정에나 배포된다.
+
+**막아 두는 것:**
+
+- 인터넷에서는 인스턴스에 닿을 수 없다: 퍼블릭 IP가 없고, 보안 그룹은 CloudFront 오리진
+  대역(프리픽스 리스트)에서 오는 포트 80만 받는다. SSH는 없고 접속은 SSM으로 한다.
+- nginx는 비밀 헤더가 없는 요청을 거부한다.
+- 비밀 헤더 값은 배포 때 Secrets Manager에서 해석된다. 어느 템플릿에도 평문으로 남지 않는다.
+
+**이 구간에 TLS를 더하려면** 소유한 도메인을 쓴다: 그 이름의 ACM 인증서를 단 내부 Application Load
+Balancer를 인스턴스 앞에 두고, 그 로드 밸런서를 `OriginProtocolPolicy.HTTPS_ONLY`의 VPC 오리진으로
+삼는다.
+
 ## 오리진 보호
 
 인스턴스는 퍼블릭 IP 없이 프라이빗 서브넷에 있고, CloudFront는 두 배포가 함께 쓰는 VPC 오리진으로만
-인스턴스에 닿는다(README "CloudFront → 인스턴스 구간은 사설 경로다"). 보안 그룹은 80 포트를 CloudFront
+인스턴스에 닿는다(위 절). 보안 그룹은 80 포트를 CloudFront
 origin-facing 관리형 프리픽스 리스트에서만 받고, nginx가 두 배포가 붙이는 비밀 헤더 `X-Origin-Verify`를
 검사한다 — 네트워크 뒤의 두 번째 겹이다. 프리뷰 배포만 더 붙이는 `X-Preview-Verify`로 백엔드가 두 화면을
 가른다. SSH 포트는 없고 접속은 `aws ssm start-session`이다. 아웃바운드는 NAT 게이트웨이 하나로 나간다.
@@ -138,8 +164,15 @@ origin-facing 관리형 프리픽스 리스트에서만 받고, nginx가 두 배
 
 `CDK_DEPLOY_REGION`이 서울을 덮어쓴다. `PrefixList.fromLookup`이 그 리전의 프리픽스 리스트 ID를 찾으므로
 코드 수정은 없지만, 호스팅 스택의 첫 synth에는 계정 자격증명이 필요하다. 결과는 `cdk.context.json`에
-캐시되고, 키에 계정 ID가 들어 있어 gitignore되어 있다. 리전의 앞 두 AZ에 VPC 오리진이 없는 AZ가 들어
-있으면 `AIPDS_AVAILABILITY_ZONES`로 VPC의 AZ를 고른다(README "다른 리전").
+캐시되고, 키에 계정 ID가 들어 있어 gitignore되어 있다.
+
+몇몇 리전은 AZ 하나에서 VPC 오리진을 제공하지 않는다(us-east-1의 `use1-az3`, us-west-1의 `usw1-az2`,
+ap-northeast-1의 `apne1-az3`, ca-central-1의 `cac1-az3`). AZ 이름이 가리키는 AZ는 계정마다 다르므로
+`aws ec2 describe-availability-zones`로 확인하고, 리전의 앞 두 이름에 그 AZ가 들어 있으면 다른 둘을
+지정한다: `AIPDS_AVAILABILITY_ZONES=ap-northeast-1a,ap-northeast-1c`.
+
+추가 업로드 오리진(커스텀 도메인 등)은 배포 시 `AIPDS_UPLOAD_ORIGINS`(쉼표 구분)로 준다. 앱 자신의
+오리진은 인스턴스가 더한다.
 
 ## 테스트가 지키는 것
 

@@ -134,10 +134,39 @@ incoming event once. That is acceptable only because the value must be replaced 
 
 **Deletion** — the User Pool is `RemovalPolicy.DESTROY`; `cdk destroy --all` removes every account.
 
+## CloudFront → instance is private
+
+The instance sits in a private subnet with no public address. Both distributions — the app
+(`aipds-hosting-stack.ts`) and the previews (`aipds-preview-stack.ts`) — reach it through one CloudFront
+VPC origin: CloudFront places a service-managed network interface in the VPC and sends origin requests
+through it, so they never cross the public internet. The instance's own outbound traffic (git, package
+installs, Bedrock, the agent fetching URLs) leaves through one NAT gateway, which is billed by the hour
+and per GB processed.
+
+**What travels on that leg:** session cookies (Cognito tokens), prototype access cookies, and the
+`X-Origin-Verify` / `X-Preview-Verify` secret headers.
+
+**Why it is HTTP on port 80.** CloudFront accepts an origin certificate only from a publicly trusted
+certificate authority, for the origin's name, and a VPC origin to EC2 is addressed by the instance's
+private DNS name (`ip-….compute.internal`), which no authority issues a certificate for. Keeping it that
+way lets the sample deploy into any account with no domain of its own.
+
+**What limits it:**
+
+- Nothing on the internet can reach the instance: it has no public IP, and its security group accepts
+  port 80 only from the CloudFront origin-facing prefix list. There is no SSH; access is through SSM.
+- nginx rejects any request without the secret header.
+- The secret header values come from Secrets Manager at deploy time; no template holds them in
+  plaintext.
+
+**To add TLS on that leg,** use a domain you own: put an internal Application Load Balancer with an ACM
+certificate for that name in front of the instance, and make the load balancer the VPC origin with
+`OriginProtocolPolicy.HTTPS_ONLY`.
+
 ## Origin protection
 
 The instance is in a private subnet with no public IP; CloudFront reaches it only through the VPC
-origin, which both distributions share (README "CloudFront → instance is private"). The security group
+origin, which both distributions share (above). The security group
 accepts port 80 only from the CloudFront origin-facing managed prefix list, and nginx checks the secret
 `X-Origin-Verify` header both distributions attach — a second layer behind the network, and the preview
 distribution's extra `X-Preview-Verify` is how the backend tells the two surfaces apart. No SSH port is
@@ -147,9 +176,15 @@ open; access is `aws ssm start-session`. Outbound goes through one NAT gateway.
 
 `CDK_DEPLOY_REGION` overrides Seoul. `PrefixList.fromLookup` resolves the region's prefix list ID, so no
 code changes, but the hosting stack's first synth needs account credentials. The result is cached in
-`cdk.context.json`, which is gitignored: its key contains the account ID. `AIPDS_AVAILABILITY_ZONES`
-picks the VPC's AZs where the region's first two would include one without VPC origins (README
-"Another region").
+`cdk.context.json`, which is gitignored: its key contains the account ID.
+
+A few regions offer VPC origins in all but one AZ (`use1-az3` in us-east-1, `usw1-az2` in us-west-1,
+`apne1-az3` in ap-northeast-1, `cac1-az3` in ca-central-1). AZ names map to different AZs in each
+account, so check with `aws ec2 describe-availability-zones` and, if the region's first two names
+include that AZ, name two others: `AIPDS_AVAILABILITY_ZONES=ap-northeast-1a,ap-northeast-1c`.
+
+Another upload origin (a custom domain, say) goes in `AIPDS_UPLOAD_ORIGINS` (comma-separated) at deploy
+time. The app's own origin is added by the instance.
 
 ## What the tests guard
 

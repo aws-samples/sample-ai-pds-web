@@ -64,7 +64,8 @@ export class AipdsPreviewStack extends cdk.Stack {
       this, 'OriginVerifyHeader', props.originVerifySecretArn);
 
     // The origin leg is the app distribution's VPC origin — private connectivity, HTTP on port 80 for the
-    // reason in the VPC origin comment of aipds-hosting-stack.ts (README "CloudFront → instance is private").
+    // reason in the VPC origin comment of aipds-hosting-stack.ts
+    // (infra/README.md "CloudFront → instance is private").
     // The prototype access cookie and both secret headers travel on this leg.
     const vpcOrigin = cloudfront.VpcOrigin.fromVpcOriginId(this, 'AppVpcOrigin', props.vpcOriginId);
     const origin = origins.VpcOrigin.withVpcOrigin(vpcOrigin, {
