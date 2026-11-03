@@ -609,7 +609,7 @@ export const ko = {
   "survey.savedNext": "반영을 요청하면 에이전트가 이 집계를 근거로 validation-results.md를 작성합니다. 입력창에 초안이 채워지니, 설문 밖에서 들은 의견이 있으면 덧붙여 보내세요.",
   "survey.reflect": "설문 결과 반영 요청",
   "survey.reflectDraft": "설문 결과를 반영해 주세요: {path}",
-  "app.description": "AI-PLC Discovery 웹 서비스",
+  "app.description": "AI-Driven Product Discovery and Strategy (AI-PDS) — 웹 구현",
 
   // 사용 매뉴얼(/manual)의 **껍데기**. 본문은 여기가 아니라
   // content/manual/{ko,en}/ 에 있다 — 이 딕셔너리는 화면 문구용이고, 문단마다
