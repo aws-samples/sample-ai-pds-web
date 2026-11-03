@@ -565,7 +565,7 @@ export const en: Record<keyof typeof ko, string> = {
   "survey.savedNext": "Ask to reflect them and the agent writes validation-results.md from this aggregate. The chat input is prefilled with a draft — add any feedback you heard outside the survey before sending.",
   "survey.reflect": "Ask to reflect results",
   "survey.reflectDraft": "Please reflect the survey results: {path}",
-  "app.description": "AI-PLC Discovery web service",
+  "app.description": "AI-Driven Product Discovery and Strategy (AI-PDS) — web implementation",
 
   // The chrome of the user manual (/manual). Its body lives in
   // content/manual/{ko,en}/, not here — see ko.ts for why.

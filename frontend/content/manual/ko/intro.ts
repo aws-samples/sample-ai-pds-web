@@ -66,10 +66,15 @@ export const intro: ManualSection = {
     },
     {
       kind: "details",
-      summary: "AI-PLC 전체에서 AI-PDS Web이 담당하는 범위",
-      md: `AI-PLC는 Discovery → Inception → Construction → Operations로 이어집니다.
+      summary: "AI-PDS 구현들 사이에서 AI-PDS Web의 위치",
+      md: `AI-PDS(AI-Driven Product Discovery and Strategy)는 여러 구현을 가진 프레임워크입니다 —
+이 웹 앱, 데스크톱 어시스턴트(Amazon Quick Desktop, Claude Desktop), Agentic IDE(Kiro, Claude Code).
+모두 같은 AI-PLC Discovery 워크플로를 따르고 \`PROTOTYPE-*.md\`를 같은 형식으로 쓰므로, 한 곳에서
+만든 명세를 다른 곳에서 빌드할 수 있습니다.
+
 AI-PDS Web은 그중 **Discovery만** 다룹니다. 산출된 Discovery 문서와 \`PROTOTYPE-*.md\`를
-개발팀에 넘기면, 그 뒤 단계는 개발자용 워크스페이스에서 진행됩니다.
+개발팀에 넘기면, 빌드는 개발자용 워크스페이스에서 AI-DLC(Inception → Construction →
+Operations)로 이어집니다.
 
 프로토타입 빌드 기능이 있는 것은 Discovery 안에서 아이디어를 검증하기 위한 것이고,
 그 결과물은 프로덕션 코드가 아닙니다.`,

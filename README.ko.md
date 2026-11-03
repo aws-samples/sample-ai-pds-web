@@ -1,8 +1,7 @@
-# AI-PDS
+# AI-Driven Product Discovery and Strategy (AI-PDS)
+## AI-driven product life cycle (AI-PLC)의 웹 애플리케이션 구현
 
 **한국어** | [English](README.md)
-
-AI-PLC Discovery 워크숍용 대화형 캔버스.
 
 > **IMPORTANT**
 > 생성형 AI는 틀릴 수 있습니다. 선택한 AI 모델과 에이전틱 코딩 도구가 만들어낸 결과물과
@@ -14,6 +13,41 @@ AI-PLC Discovery 워크숍용 대화형 캔버스.
 >
 > This is sample code, for non-production usage. You should work with your security and legal teams
 > to meet your organizational security, regulatory and compliance requirements before deployment.
+
+AI-PDS(AI-Driven Product Discovery and Strategy)는 비개발 비즈니스 리더 — PM, 제품 담당 VP,
+인접 사업을 탐색하는 CTO — 가 엔지니어링 리소스를 투입하기 전에 AI 유스케이스를 발굴하고,
+우선순위를 정하고, 프로토타입으로 만들어 보도록 돕는 역량 중심(capabilities-first) 프레임워크다.
+고객 발굴부터 시장 출시까지 모든 단계를 AI가 이끌고, 각 게이트의 결정 권한은 사람에게 남는다.
+
+이 리포는 그 **웹** 구현이다. AI-PLC Discovery 워크플로를 브라우저에서 대화로 진행하며, 참여자
+PC에 설치할 것이 없다. 다른 구현은 [지원하는 구현](#지원하는-구현)을 보라.
+
+### 무엇을 하는가
+
+| 역량 | 하는 일 | 결과물 |
+|---|---|---|
+| Envision | 페인포인트 분석 + PR/FAQ(Working Backwards) | PR/FAQ 문서 |
+| Use Case Intake | N개 유스케이스를 문서화·분류 | 유스케이스 저장소 |
+| Prioritize | 이중 점수화(Agentic vs Application) | 순위가 매겨진 백로그 |
+| Prototype | 명세를 만들고, 프로토타입과 검증 설문까지 빌드·호스팅 | `PROTOTYPE-*.md` 파일, 실행되는 프로토타입, 설문 결과 |
+| Product Strategy | 포지셔닝, 비즈니스 모델, KPI | 전략 문서 |
+| Go-to-Market | 세분화, 영업 모션, 출시 | GTM 계획 |
+
+**진입점은 세 가지:** 페인포인트, 유스케이스, 기존 프로토타입 명세 중 어디서든 시작한다.
+**모든 단계가 종료 지점:** 필요한 것을 얻었으면 거기서 멈춘다.
+
+### 지원하는 구현
+
+| 구현 | 리포지토리 |
+|---|---|
+| **웹 애플리케이션** (이 리포) | [aws-samples/sample-ai-pds-web](https://github.com/aws-samples/sample-ai-pds-web) |
+| **데스크톱 어시스턴트** — Amazon Quick Desktop, Claude Desktop | [aws-samples/sample-ai-pds-desktop](https://github.com/aws-samples/sample-ai-pds-desktop) |
+| **Agentic IDE** — Kiro, Claude Code | [aws-samples/sample-ai-plc](https://github.com/aws-samples/sample-ai-plc) |
+
+`PROTOTYPE-*.md` 파일은 모든 구현에서 같은 형식이다. 여기서 만든 명세를 Kiro, Claude Code, 데스크톱
+어시스턴트로 넘겨 빌드할 수 있고, 그쪽에서 만든 명세로 여기서 프로젝트를 시작할 수도 있다(진입점 3).
+
+### 웹 구현의 동작 방식
 
 Claude Agent SDK 에이전트가 Discovery 방법론을 구동하고, 프론트엔드가 그 턴을 SSE로 실시간
 렌더한다. Discovery가 만든 프로토타입 명세는 같은 화면에서 실물 앱으로 빌드·호스팅되고, 로그인
@@ -67,11 +101,10 @@ proto-config/      빌드 에이전트 전용 CLAUDE_CONFIG_DIR — 위와 반�
 
 ## AI-PLC 룰셋
 
-[AI-PLC](https://github.com/aws-samples/sample-ai-plc)는 프로덕트 매니저 같은 비개발 역할이 고객
-인사이트에서 검증된 프로토타입까지 가도록 돕는 AI 주도 워크플로다 — 페인포인트 분석, 유스케이스
-우선순위화, PR/FAQ(Working Backwards), 제품 전략, GTM, 프로토타입 명세. AI-PDS는 채팅 기록만으로는
-안 되는 것을 더한다: 브라우저 UI, 실시간 턴, 문서 리뷰, 같은 화면에서 프로토타입과 설문까지
-빌드·호스팅하는 것.
+Discovery 워크플로는 [aws-samples/sample-ai-plc](https://github.com/aws-samples/sample-ai-plc)의
+AI-PLC 룰셋이다 — AI-PDS의 Agentic IDE 구현이며, 다른 구현들도 같은 워크플로를 돌린다. 이 웹
+구현은 채팅 기록만으로는 안 되는 것을 더한다: 브라우저 UI, 실시간 턴, 문서 리뷰, 같은 화면에서
+프로토타입과 설문까지 빌드·호스팅하는 것.
 
 룰셋은 **여기에 복사해 두지 않는다.** `steering-files/` 서브모듈로 상류의 특정 커밋에 고정해
 무수정으로 쓴다 — 사본은 갈라지고, 정본은 상류다. 서브모듈까지 clone한다:

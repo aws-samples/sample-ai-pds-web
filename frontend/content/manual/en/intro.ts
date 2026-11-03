@@ -68,10 +68,15 @@ say "I want to go back to the previous stage" or "let's skip this" in chat and i
     },
     {
       kind: "details",
-      summary: "Where AI-PDS Web sits within AI-PLC",
-      md: `AI-PLC runs Discovery → Inception → Construction → Operations.
+      summary: "Where AI-PDS Web sits among the AI-PDS implementations",
+      md: `AI-PDS (AI-Driven Product Discovery and Strategy) is a framework with several
+implementations — this web app, desktop assistants (Amazon Quick Desktop, Claude Desktop) and
+agentic IDEs (Kiro, Claude Code). They all run the same AI-PLC Discovery workflow and write
+\`PROTOTYPE-*.md\` in the same format, so a spec made in one can be built in another.
+
 AI-PDS Web covers **Discovery only**. Once you hand the Discovery documents and the
-\`PROTOTYPE-*.md\` files to a build team, the later phases happen in a developer workspace.
+\`PROTOTYPE-*.md\` files to a build team, the build continues in AI-DLC (Inception →
+Construction → Operations) in a developer workspace.
 
 The prototype build exists to validate an idea inside Discovery. What it produces is not
 production code.`,
