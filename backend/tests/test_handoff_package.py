@@ -515,6 +515,48 @@ def test_hitting_the_output_cap_is_reported_as_too_long():
     assert failed.error == "too_long" and failed.steps[0].error == "too_long"
 
 
+_DOC = D + "discovery-document.md"
+
+
+def test_a_long_discovery_document_reaches_the_vision_whole():
+    """Observed (a workshop run): a per-file cap of 40,000 characters cut a 45,144-character Discovery document, and what it
+    cut was the tail — the rules append the Go-to-Market part last, so the launch plan and the success monitoring were lost."""
+    s3 = FakeS3Store()
+    tail = "## 오픈 계획\n- 목표 오픈일: 12월 말\n"
+    files = {p: f"# {p}\n" for p in B} | {
+        _DOC: "# Discovery\n" + "가" * 60_000 + "\n" + tail}
+    calls: list = []
+    done = _run(_generate(s3, files, _writer(calls)))
+    assert done.status == "ready" and done.truncated == []
+    vision = dict(calls)["vision"]
+    assert tail in vision and "[… truncated]" not in vision
+    assert tail in dict(calls)["options"]
+
+
+def test_material_over_the_cap_fails_the_build_instead_of_cutting_or_leaving_out_files(monkeypatch):
+    monkeypatch.setattr(package, "_MAX_MATERIAL_CHARS", 1_000)
+    s3 = FakeS3Store()
+    files = {p: f"# {p}\n" for p in B} | {D + "prioritization/ranking.md": "# Ranking\n" + "가" * 2_000}
+    calls: list = []
+    failed = _run(_generate(s3, files, _writer(calls)))
+    assert failed.status == "failed" and failed.error == "material_too_large"
+    assert calls == []
+
+
+def test_options_over_the_cap_fail_alone_and_the_package_is_complete(monkeypatch):
+    """The options read the question files, which vision.md does not — their material can pass the cap on its own."""
+    monkeypatch.setattr(package, "_MAX_MATERIAL_CHARS", 3_000)
+    s3 = FakeS3Store()
+    notes = D + "envision/notes-questions.md"
+    files = {p: f"# {p}\n" for p in B} | {_QFILE: QUESTIONS, notes: "가" * 5_000}
+    calls: list = []
+    done = _run(_generate(s3, files, _writer(calls), paths=[*B, notes]))
+    assert done.status == "ready" and done.truncated == []
+    assert [step for step, _ in calls] == ["vision"]
+    assert [(s.name, s.status, s.error) for s in done.steps] == [
+        ("vision", "done", None), ("options", "failed", "material_too_large")]
+
+
 def test_the_handoff_writer_waits_long_and_reports_stream_progress(monkeypatch):
     """With the Strands default read limit (120 seconds), the first output of a large project cannot be
     awaited (observed). Progress comes from the Strands callback's body chunks (data) and thinking (reasoningText)."""

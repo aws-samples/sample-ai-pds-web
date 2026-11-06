@@ -434,6 +434,14 @@ describe("PackagePanel", () => {
     expect(screen.getByRole("heading", { name: "결정 장부" })).toBeInTheDocument();
   });
 
+  it("names the sources an older package was built without, not just their count", () => {
+    const pkg: PackageView = { ...READY, manifest: { ...READY.manifest!,
+      truncated: [`${D}discovery-document.md`] } };
+    render(<PackagePanel pkg={pkg} generating={false} {...handlers()} />);
+    expect(screen.getByText(/원본 1건이 잘리거나 빠진 채 만들어졌습니다/)).toBeInTheDocument();
+    expect(screen.getByText("discovery/discovery-document.md")).toBeInTheDocument();
+  });
+
   it("says how to fix each kind of finding and ignores kinds an older package had", () => {
     const pkg: PackageView = { ...READY, manifest: { ...READY.manifest!, findings: [
       { file: "vision.md", line: 4, term: "개인 링크의 유효 기간은?", kind: "dropped" },
