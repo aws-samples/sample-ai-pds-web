@@ -742,10 +742,12 @@ def test_rows_carry_over_by_key_and_leave_only_with_a_reason():
 # ---- routes ----
 
 @pytest.fixture
-def env(monkeypatch):
+def env(monkeypatch, tmp_path):
     monkeypatch.setenv("AIPDS_S3_BUCKET", "")
     s3 = FakeS3Store()
     monkeypatch.setattr(app_module, "s3_store_factory", lambda project_id: s3)
+    # Prototype build trees — never the developer's own ~/aipds-protos.
+    monkeypatch.setattr(app_module, "_proto_root", lambda: tmp_path)
 
     async def make(project_id):
         return Workspace(FakeRunner())
@@ -814,6 +816,33 @@ def test_route_generates_views_and_downloads(env):
     assert not any(n.endswith(("-questions.md", "build-instructions.md", "design-context.md",
                                "audit.md")) or n.startswith("prototype/") for n in names)
     assert package.OPTIONS not in names and "PRD.md" not in names
+    # No prototype was branded: no design folder, and nothing points at one.
+    assert not any(n.startswith("design/") for n in names)
+    assert "design/" not in zf.read("pkg-b-handoff/README.md").decode() and "design/" not in prompt
+
+
+def test_the_brand_a_prototype_applied_goes_into_the_zip(env, tmp_path):
+    """The brand reached the prototype only through its build workspace (proto/design_sync), and the zip carried no prototype
+    source — so the team rebuilt the screens without it."""
+    client, s3, _ = env
+    _seed(client, "pkg-brand", {p: f"# {p}\n" for p in B})
+    tree = tmp_path / "pkg-brand" / "customer-inquiry-triage"
+    tree.mkdir(parents=True)
+    (tree / "DESIGN.md").write_text("# 브랜드\n여백을 넉넉히.\n", encoding="utf-8")
+    (tree / "aipds-theme.css").write_text(":root { --primary: #0a5; }\n", encoding="utf-8")
+    client.post("/projects/pkg-brand/handoff/package")
+    body = _wait_settled(client, "pkg-brand")
+    assert body["manifest"]["status"] == "ready"
+    assert "design/" in body["files"]["README.md"] and "design/" in body["files"]["start-prompt.md"]
+
+    zf = zipfile.ZipFile(io.BytesIO(client.get("/projects/pkg-brand/handoff/package/archive").content))
+    root = "pkg-brand-handoff/"
+    assert zf.read(root + "design/DESIGN.md").decode() == "# 브랜드\n여백을 넉넉히.\n"
+    assert zf.read(root + "design/aipds-theme.css").decode() == ":root { --primary: #0a5; }\n"
+    assert "./pkg-brand-handoff/design/" in zf.read(root + "start-prompt.md").decode()
+    assert "`design/`" in zf.read(root + "README.md").decode()
+    # Still no prototype source.
+    assert not any(n.startswith(root + "prototype") for n in zf.namelist())
 
 
 def test_route_resumes_from_the_interrupted_step(env):

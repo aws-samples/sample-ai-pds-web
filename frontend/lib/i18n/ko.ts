@@ -703,6 +703,7 @@ export const ko = {
   "handoff.contains.open": "start-prompt.md: AI-DLC를 시작하는 첫 요청 — 그대로 붙여 넣습니다",
   "handoff.contains.ledger": "decisions.md: 결정 장부. Discovery와 인계 직전에 PM이 정한 결정과 그 답을 질문과 함께 — 모델 없이 그대로 옮깁니다",
   "handoff.contains.originals": "Discovery 원본 중 근거 문서와 업로드 원자료(있는 것만 그대로) — 단계별 질문 파일은 결정 장부로 대신하고, 빌드 지시서·디자인 컨텍스트·설문지는 넣지 않습니다 · README.md: 읽는 순서와 규칙",
+  "handoff.contains.design": "design/: 프로토타입이 브랜드를 적용했다면 그 브랜드 지침(DESIGN.md)과 색·글꼴 값(aipds-theme.css) — 프로토타입이 실제로 쓴 판 그대로",
   "handoff.contains.noSource": "프로토타입 소스 코드는 넣지 않습니다. 코딩 어시스턴트가 목업 위에 그대로 살을 붙이기 때문입니다.",
   "handoff.section.problem": "문제와 근거",
   "handoff.section.audience": "대상 사용자",
