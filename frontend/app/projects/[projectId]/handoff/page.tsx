@@ -17,7 +17,7 @@ import {
   archiveFolder, downloadPackage, getPackage, getReadiness, getSupplement, putSupplement, resetHandoff,
   reviseAnswer, startPackage,
 } from "@/lib/api/handoff";
-import type { Confirmation, PackageView, SupplementUpdate } from "@/lib/api/handoff";
+import type { Decision, PackageView, SupplementUpdate } from "@/lib/api/handoff";
 import { ApiError } from "@/lib/api/client";
 import { useAsync } from "@/lib/useAsync";
 import { useProjectMeta } from "@/lib/useProjectModel";
@@ -87,17 +87,17 @@ export default function HandoffPage({ params }: { params: Promise<{ projectId: s
     }
   };
 
-  // Changing a settled answer: the server writes it and starts the turn that carries the change through the documents. The turn
-  // takes minutes, so we move straight to the workspace, which attaches to it (same as approval on the review screen).
-  const revise = async (c: Confirmation, answer: string) => {
+  // Changing a Discovery decision: the server writes it and starts the turn that carries the change through the documents. The
+  // turn takes minutes, so we move straight to the workspace, which attaches to it (same as approval on the review screen).
+  const revise = async (d: Decision, answer: string) => {
     setBusy(true);
     setMessage(null);
     try {
-      await reviseAnswer(projectId, c.file, c.number, answer);
+      await reviseAnswer(projectId, d.file, d.number, answer);
       router.push(`/projects/${encodeURIComponent(projectId)}/workspace`);
     } catch (e) {
       setMessage(t(e instanceof ApiError && e.status === 409 && e.detail === "turn_in_progress"
-        ? "handoff.supp.confirm.reviseBusy" : "handoff.supp.confirm.reviseFailed"));
+        ? "handoff.supp.decisions.reviseBusy" : "handoff.supp.decisions.reviseFailed"));
       setBusy(false);
     }
   };
@@ -153,8 +153,7 @@ export default function HandoffPage({ params }: { params: Promise<{ projectId: s
   const supplementView = supplement.data;
   const answers = savedAnswers(supplementView);
   const resettable = !!pkg?.manifest || answers > 0;
-  const questionCount = (supplementView?.questions.length ?? 0) + (supplementView?.confirmations.length ?? 0)
-    + (supplementView?.open_questions.length ?? 0);
+  const questionCount = (supplementView?.questions.length ?? 0) + (supplementView?.open_questions.length ?? 0);
   const openDecisions = supplementView?.has_package
     ? supplementView.open_questions.filter((q) => !q.answer).length : null;
 
@@ -201,7 +200,7 @@ export default function HandoffPage({ params }: { params: Promise<{ projectId: s
             onSave={(u) => void save(u, false)}
             onSaveAndGenerate={(u) => void save(u, true)}
             onBack={() => setMode("status")}
-            onRevise={(c, answer) => void revise(c, answer)}
+            onRevise={readOnly ? undefined : (d, answer) => void revise(d, answer)}
             readOnly={readOnly}
           />
         ) : shown === "package" && pkg?.manifest ? (

@@ -39,10 +39,12 @@ def test_the_web_writes_the_new_answer_and_hands_the_change_to_the_agent(monkeyp
     """Observed (ws-o, ws-g): asked in chat to change an answer, one agent kept "the web fills [Answer]" and left the old one —
     the ledger then contradicted the document it had rewritten — and the other broke the rule. The web writes it now."""
     ws = _seed(monkeypatch, "rev-1")
+    # The tab lists every answered decision with its options, so it can ask any of them again.
     before = client.get("/projects/rev-1/handoff/supplement").json()
-    item = next(c for c in before["confirmations"] if c["number"] == 1)
-    # The tab gets the options, so it can ask the question again.
+    item = next(d for d in before["decisions"] if d["number"] == 1)
+    assert item["answer"] == "A" and item["choices"] == ["Subscription"]
     assert [o["letter"] for o in item["options"]] == ["A", "B", "X"] and item["multi_select"] is False
+    assert {d["number"] for d in before["decisions"]} == {1, 2, 3, 4, 5, 7}
 
     r = _revise("rev-1", answer="B")
     assert r.status_code == 200 and r.json()["turn_id"]
@@ -57,9 +59,8 @@ def test_the_web_writes_the_new_answer_and_hands_the_change_to_the_agent(monkeyp
     assert record.text in text and "workflow-changes" not in record.text
     # The workspace attaches to this turn after the tab moves there: the turn carries the bubble it draws first.
     assert client.get("/projects/rev-1/turn").json()["turn"]["input"] == record.text
-    # The decision is the PM's now: it leaves the AI-suggestion confirmations.
     after = client.get("/projects/rev-1/handoff/supplement").json()
-    assert 1 not in [c["number"] for c in after["confirmations"]]
+    assert next(d for d in after["decisions"] if d["number"] == 1)["choices"] == ["One-time purchase"]
 
 
 def test_only_a_different_answer_to_an_answered_discovery_question_is_accepted(monkeypatch):

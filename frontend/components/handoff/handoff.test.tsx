@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { cleanup, render, screen, within } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { http, HttpResponse } from "msw";
 import { server } from "@/test/msw/server";
@@ -33,7 +33,6 @@ const PATH_B: Readiness = {
     { key: "assumptions", number: 8, status: "partial", sources: [] },
     { key: "open_questions", number: 9, status: "derived", sources: [] },
   ],
-  ai_defaults: { answered: 18, suggested: 4, accepted: 3, items: [] },
   discovery_document: `${D}discovery-document.md`,
   broken_references: [],
   blockers: [],
@@ -97,13 +96,12 @@ describe("ReadinessPanel", () => {
     expect(screen.queryByRole("button", { name: "Discovery에서 반영하기 →" })).not.toBeInTheDocument();
   });
 
-  it("shows the accepted-suggestion count without hiding it", () => {
+  it("does not single out answers that matched an AI suggestion — every answer is the PM's", () => {
     readiness();
-    expect(screen.getByText(/^3 \/ 4 · 개발자가 다시 물을 수 있는/)).toBeInTheDocument();
+    expect(screen.queryByText(/AI 제안/)).not.toBeInTheDocument();
   });
 });
 
-const STRATEGY = `${D}product-strategy/strategy-questions.md`;
 const VIEW: SupplementView = {
   has_package: false,
   questions: [
@@ -116,26 +114,24 @@ const VIEW: SupplementView = {
     { id: "goals.success", section: "goals",
       answer: { text: "처리 시간 절반", unknown: false, updated_at: "t" } },
   ],
-  confirmations: [
-    { key: `${STRATEGY}#1`, file: STRATEGY, number: 1, ask: "수익 모델은?", answer: "A: 첫 해는 할인",
-      stage: "product_strategy", choices: ["구독형 — 매장 수 기준 월 과금"],
-      note: "Discovery 결과 기반 제안", remark: "첫 해는 할인", confirmed_at: null,
-      in_vision: [], in_scope: false, multi_select: false,
-      options: [{ letter: "A", text: "구독형 — 매장 수 기준 월 과금", is_other: false, recommended: false },
-                { letter: "B", text: "건별 과금", is_other: false, recommended: false },
-                { letter: "X", text: "기타", is_other: true, recommended: false }] },
-    { key: `${D}envision/prfaq-clarifying-questions.md#1`, file: `${D}envision/prfaq-clarifying-questions.md`,
-      number: 1, ask: "제품명은?", answer: "A", stage: "envision",
-      choices: ["샘플몰 안전ON"], note: "페인 포인트 분석 기반 제안", remark: "", confirmed_at: "t",
-      in_vision: [], in_scope: false, multi_select: false,
-      options: [{ letter: "A", text: "샘플몰 안전ON", is_other: false, recommended: false },
-                { letter: "B", text: "안전ON", is_other: false, recommended: false }],
-    },
-  ],
   open_questions: [],
   open_deferred: [],
   open_answered: [],
+  decisions: [],
 };
+
+const STRATEGY = `${D}product-strategy/strategy-questions.md`;
+const DECISIONS: SupplementView["decisions"] = [
+  { file: STRATEGY, number: 1, ask: "수익 모델은?", answer: "A: 첫 해는 할인", stage: "product_strategy",
+    choices: ["구독형 — 매장 수 기준 월 과금"], remark: "첫 해는 할인", multi_select: false,
+    options: [{ letter: "A", text: "구독형 — 매장 수 기준 월 과금", is_other: false, recommended: true },
+              { letter: "B", text: "건별 과금", is_other: false, recommended: false },
+              { letter: "X", text: "기타", is_other: true, recommended: false }] },
+  { file: `${D}envision/prfaq-clarifying-questions.md`, number: 1, ask: "제품명은?", answer: "B", stage: "envision",
+    choices: ["안전ON"], remark: "", multi_select: false,
+    options: [{ letter: "A", text: "샘플몰 안전ON", is_other: false, recommended: true },
+              { letter: "B", text: "안전ON", is_other: false, recommended: false }] },
+];
 
 describe("SupplementForm", () => {
   it("has no prefilled AI answers — only what the PM wrote", () => {
@@ -146,13 +142,12 @@ describe("SupplementForm", () => {
     expect(screen.getByLabelText("이 문제가 실제로 있다는 걸 무엇으로 알았나요?")).toHaveValue("인터뷰 5명");
   });
 
-  it("saves unknown, confirmations and keeps superseded answers on record", async () => {
+  it("saves unknown and keeps superseded answers on record", async () => {
     const onSave = vi.fn();
     render(<SupplementForm view={VIEW} busy={false} message={null}
                            onSave={onSave} onSaveAndGenerate={() => {}} onBack={() => {}} />);
     const cards = screen.getAllByRole("checkbox");
     await userEvent.click(cards[2]); // failure factor: "모름" (don't know)
-    await userEvent.click(screen.getByRole("button", { name: "맞다" }));
     await userEvent.click(screen.getByRole("button", { name: "저장" }));
     expect(onSave).toHaveBeenCalledWith({
       answers: {
@@ -160,82 +155,39 @@ describe("SupplementForm", () => {
         "assumptions.failure_reasons": { text: "", unknown: true },
         "goals.success": { text: "처리 시간 절반", unknown: false },
       },
-      confirmed: [`${D}envision/prfaq-clarifying-questions.md#1`, `${STRATEGY}#1`],
       open_answers: {},
     });
   });
 
-  it("shows the decision itself, grouped by Discovery stage", () => {
-    // Observed (ws-g): 40 confirmation items showed only as "고른 답: A · strategy-questions.md" (chosen answer: A · ...).
-    render(<SupplementForm view={VIEW} busy={false} message={null}
-                           onSave={() => {}} onSaveAndGenerate={() => {}} onBack={() => {}} />);
-    expect(screen.getByText("구독형 — 매장 수 기준 월 과금")).toBeInTheDocument();
-    expect(screen.getByText("첫 해는 할인")).toBeInTheDocument();
-    expect(screen.getByText("AI 제안 근거: Discovery 결과 기반 제안")).toBeInTheDocument();
-    const summaries = [...document.querySelectorAll("summary")].map((el) => el.textContent);
-    // Stage order (PR/FAQ before product strategy) and the confirmation count per stage.
-    expect(summaries).toEqual(["PR/FAQ · 문제 정의 1건 · 확인 1", "제품 전략 1건 · 확인 0"]);
-    expect(screen.queryByText(/strategy-questions\.md/)).not.toBeInTheDocument();
-  });
-
-  it("puts the AI suggestions vision.md relies on first, scope and success metrics leading", () => {
-    // Observed (ws-o): the first-release targets went to development as unconfirmed AI suggestions, and the development
-    // harness re-asked the scope but not them. With a package, what vision.md relies on rises; the rest stays by stage.
-    const [pricing, name] = VIEW.confirmations;
-    const third = { ...pricing, key: `${STRATEGY}#4`, number: 4, ask: "출시 지역은?", choices: ["서울"] };
-    const view: SupplementView = {
-      ...VIEW, has_package: true,
-      confirmations: [
-        { ...pricing, in_vision: ["완료율 60%"], in_scope: true },
-        { ...name, in_vision: ["사내 예산으로 운영한다."], in_scope: false },
-        third,
-      ],
-    };
-    render(<SupplementForm view={view} busy={false} message={null}
-                           onSave={() => {}} onSaveAndGenerate={() => {}} onBack={() => {}} />);
-    const headings = screen.getAllByRole("heading", { level: 5 }).map((el) => el.textContent);
-    expect(headings).toEqual(["첫 출시 범위·성공 지표가 된 AI 제안 1건", "vision.md에 들어간 그 밖의 AI 제안 1건",
-                              "vision.md에 직접 쓰이지 않은 결정 1건"]);
-    expect(screen.getByText("완료율 60%")).toBeInTheDocument();
-    expect(screen.getAllByText("vision.md에서")).toHaveLength(2);
-    // Only the decision vision.md does not use stays in the stage groups.
-    const summaries = [...document.querySelectorAll("summary")].map((el) => el.textContent);
-    expect(summaries).toEqual(["제품 전략 1건 · 확인 0"]);
-  });
-
-  it("counts only the gap questions as progress — confirming is optional", () => {
+  it("counts only the gap questions as progress, and asks nothing about Discovery answers", () => {
     render(<SupplementForm view={VIEW} busy={false} message={null}
                            onSave={() => {}} onSaveAndGenerate={() => {}} onBack={() => {}} />);
     expect(screen.getByText(/^1 \/ 3 답함/)).toBeInTheDocument();
-    expect(screen.getByText("선택")).toBeInTheDocument();
+    expect(screen.queryByText(/AI 제안/)).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "맞다" })).not.toBeInTheDocument();
   });
 
-  it("confirms a whole group at once, from right above its items, and saves only on save", async () => {
-    const onSave = vi.fn();
-    const third = { ...VIEW.confirmations[0], key: `${STRATEGY}#4`, number: 4, ask: "출시 지역은?", choices: ["서울"],
-                    confirmed_at: null };
-    render(<SupplementForm view={{ ...VIEW, confirmations: [...VIEW.confirmations, third] }} busy={false} message={null}
-                           onSave={onSave} onSaveAndGenerate={() => {}} onBack={() => {}} />);
-    const strategy = screen.getByText(/^제품 전략/).closest("details")!;
-    await userEvent.click(within(strategy).getByRole("button", { name: "아래 2건 전부 맞다" }));
-    expect(within(strategy).getByRole("button", { name: "모두 확인함" })).toBeDisabled();
-    // One can still be undone.
-    await userEvent.click(within(screen.getByText("출시 지역은?").closest("li")!).getByRole("button", { name: "확인함" }));
-    expect(within(strategy).getByRole("button", { name: "아래 1건 전부 맞다" })).toBeEnabled();
-    // The stage already fully confirmed offers nothing to press.
-    const envision = screen.getByText(/^PR\/FAQ/).closest("details")!;
-    expect(within(envision).getByRole("button", { name: "모두 확인함" })).toBeDisabled();
-    expect(onSave).not.toHaveBeenCalled();
-    await userEvent.click(screen.getByRole("button", { name: "저장" }));
-    expect(onSave.mock.calls[0][0].confirmed.sort()).toEqual(
-      [`${D}envision/prfaq-clarifying-questions.md#1`, `${STRATEGY}#1`].sort());
+  it("lists every Discovery decision folded by stage, with nothing to confirm", () => {
+    render(<SupplementForm view={{ ...VIEW, decisions: DECISIONS }} busy={false} message={null}
+                           onSave={() => {}} onSaveAndGenerate={() => {}} onBack={() => {}} onRevise={() => {}} />);
+    expect(screen.getByRole("heading", { name: "Discovery에서 정한 결정" })).toBeInTheDocument();
+    const summaries = [...document.querySelectorAll("summary")].map((el) => el.textContent);
+    expect(summaries).toEqual(["PR/FAQ · 문제 정의 1건", "제품 전략 1건"]);
+    // The answer that matched the AI pick and the one that did not are listed alike.
+    expect(screen.getByText("구독형 — 매장 수 기준 월 과금")).toBeInTheDocument();
+    expect(screen.getByText("안전ON")).toBeInTheDocument();
+    expect(screen.getByText("첫 해는 할인")).toBeInTheDocument();
+    expect(screen.queryByText(/AI 제안/)).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "맞다" })).not.toBeInTheDocument();
+    // Not counted as progress.
+    expect(screen.getByText(/^1 \/ 3 답함/)).toBeInTheDocument();
   });
 
-  it("changes a kept AI suggestion by asking the question again, not by a chat request", async () => {
+  it("changes a decision by asking its question again, not by a chat request", async () => {
     // Observed (ws-o, ws-g): asked in chat, one agent left the [Answer] tag alone (the web owns it) and the ledger contradicted
-    // the rewritten document; the other edited it against the rule. The tab now asks the question again and the web writes it.
+    // the rewritten document; the other edited it against the rule. The tab asks the question again and the web writes it.
     const onRevise = vi.fn();
-    render(<SupplementForm view={VIEW} busy={false} message={null}
+    render(<SupplementForm view={{ ...VIEW, decisions: DECISIONS }} busy={false} message={null}
                            onSave={() => {}} onSaveAndGenerate={() => {}} onBack={() => {}} onRevise={onRevise} />);
     const item = screen.getByText("수익 모델은?").closest("li")!;
     await userEvent.click(within(item).getByRole("button", { name: "답 바꾸기" }));
@@ -243,17 +195,18 @@ describe("SupplementForm", () => {
     expect(submit).toBeDisabled();   // still the same answer
     await userEvent.click(within(item).getByRole("radio", { name: /건별 과금/ }));
     await userEvent.click(submit);
-    expect(onRevise).toHaveBeenCalledWith(expect.objectContaining({ key: `${STRATEGY}#1` }), "B");
-    // Without a handler (no way to change it), the item offers no change action.
-    cleanup();
-    render(<SupplementForm view={VIEW} busy={false} message={null}
+    expect(onRevise).toHaveBeenCalledWith(expect.objectContaining({ file: STRATEGY, number: 1 }), "B");
+  });
+
+  it("offers no change action without a way to change", () => {
+    render(<SupplementForm view={{ ...VIEW, decisions: DECISIONS }} busy={false} message={null}
                            onSave={() => {}} onSaveAndGenerate={() => {}} onBack={() => {}} />);
+    expect(screen.getByText("수익 모델은?")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "답 바꾸기" })).not.toBeInTheDocument();
   });
 
   it("drops blank answers from the update", () => {
-    const u = toUpdate({ ...VIEW, superseded: [] }, { "problem.why_now": { text: "  ", unknown: false } },
-                       new Set());
+    const u = toUpdate({ ...VIEW, superseded: [] }, { "problem.why_now": { text: "  ", unknown: false } });
     expect(u.answers).toEqual({});
   });
 });
@@ -498,13 +451,11 @@ describe("handoff api", () => {
     let body: unknown = null;
     server.use(http.put(`${base}/supplement`, async ({ request }) => {
       body = await request.json();
-      return HttpResponse.json({ questions: [], superseded: [], confirmations: [],
+      return HttpResponse.json({ questions: [], superseded: [], decisions: [],
                                  open_questions: [], open_deferred: [], open_answered: [] });
     }));
-    await putSupplement("p1", { answers: { "problem.evidence": { text: "x", unknown: false } }, confirmed: [],
-                                open_answers: {} });
-    expect(body).toEqual({ answers: { "problem.evidence": { text: "x", unknown: false } }, confirmed: [],
-                           open_answers: {} });
+    await putSupplement("p1", { answers: { "problem.evidence": { text: "x", unknown: false } }, open_answers: {} });
+    expect(body).toEqual({ answers: { "problem.evidence": { text: "x", unknown: false } }, open_answers: {} });
   });
 
   it("names the zip after the folder inside it, with the same rule as the server", () => {
@@ -662,9 +613,9 @@ describe("ResetDialog", () => {
     expect(onCancel).toHaveBeenCalled();
   });
 
-  it("counts every answer and confirmation the PM left in the tab", () => {
-    // VIEW: 1 fixed-question answer + 1 superseded answer + 1 confirmation.
-    expect(savedAnswers(VIEW)).toBe(3);
+  it("counts every answer the PM left in the tab", () => {
+    // VIEW: 1 fixed-question answer + 1 superseded answer.
+    expect(savedAnswers(VIEW)).toBe(2);
     expect(savedAnswers(null)).toBe(0);
   });
 });

@@ -16,7 +16,7 @@ from aipds import doc_revisions
 from aipds.agent import prompts
 from aipds.answer_summary import answer_summary
 from aipds.audit_log import UserInput
-from aipds.handoff import package, readiness, supplement
+from aipds.handoff import ledger, package, readiness, supplement
 from aipds.parsers.questions import parse_question_file
 from aipds.routes.deps import ensure_workspace
 from aipds.routes.turns import ensure_idle, start_turn
@@ -50,25 +50,32 @@ async def get_handoff_readiness(pid: str):
 async def _view(pid: str, s3, state: readiness.Readiness,
                 record: supplement.Supplement) -> supplement.SupplementView:
     """Supplement screen. If there is a last package, its open decisions that are the PM's
-    share are included along with their options, and the AI suggestions vision.md relies on
-    — neither is stored; they are read from the documents each time."""
+    share are included along with their options — read from the documents each time, not
+    stored."""
+    decisions = await _decisions(pid)
     manifest = await package.load_manifest(s3)
     doc, kind = None, "vision"
     if manifest is not None and manifest.status == "ready":
         doc, kind = await package.stored_decisions(s3)
     if doc is None:
-        return supplement.view(state, record)
+        return supplement.view(state, record, decisions=decisions)
     language = app_module.project_language(pid)
-    # The earlier layouts' documents (open decisions, PRD) carry no unconfirmed marks to read.
-    cited = package.cited_suggestions(doc, state, language) if kind == "vision" else {}
     return supplement.view(state, record, package.open_questions(doc, language, kind=kind),
-                           await package.load_options(s3), has_package=True, cited=cited)
+                           await package.load_options(s3), has_package=True, decisions=decisions)
+
+
+async def _decisions(pid: str) -> list[supplement.Decision]:
+    """Every answered Discovery question, read from the question files — where the tab lets the PM change a decision."""
+    ws = await ensure_workspace(pid)
+    paths = [p for p in await _paths(pid) if p.startswith(_DISCOVERY) and p.endswith("-questions.md")]
+    texts = await asyncio.gather(*(ws.runner.read_file(p) for p in paths))
+    return ledger.decisions(dict(zip(paths, texts)))
 
 
 @router.get("/projects/{pid}/handoff/supplement", response_model=supplement.SupplementView)
 async def get_handoff_supplement(pid: str):
     """Supplementary questions (empty sections, open decisions that are the PM's share) and
-    their answers, plus the confirmation state of accepted AI suggestions."""
+    their answers."""
     state = await _readiness(pid)
     s3 = app_module.s3_store_factory(pid)
     return await _view(pid, s3, state, await supplement.load(s3))
@@ -126,8 +133,7 @@ async def revise_answer(pid: str, body: ReviseBody):
 
 @router.put("/projects/{pid}/handoff/supplement", response_model=supplement.SupplementView)
 async def put_handoff_supplement(pid: str, body: supplement.SupplementUpdate):
-    """Saves the whole form. Only answers and confirmations are recorded; AI-PLC artifacts
-    are not touched."""
+    """Saves the whole form. Only answers are recorded; AI-PLC artifacts are not touched."""
     state = await _readiness(pid)
     s3 = app_module.s3_store_factory(pid)
     try:
@@ -194,8 +200,8 @@ class ResetResult(BaseModel):
 
 @router.delete("/projects/{pid}/handoff", response_model=ResetResult)
 async def reset_handoff(pid: str):
-    """Fully resets the handoff tab: package, previous versions, supplementary answers, and
-    AI suggestion confirmations. Discovery artifacts are not touched. Rejected while
+    """Fully resets the handoff tab: package, previous versions and supplementary answers.
+    Discovery artifacts are not touched. Rejected while
     generation is running — the running job would rewrite the manifest after the
     deletion."""
     await ensure_workspace(pid)

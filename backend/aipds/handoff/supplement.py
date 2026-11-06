@@ -20,10 +20,10 @@
 #   - "PM(외부 확인)" lines are not decisions the PM chooses but facts to be obtained from legal, regulators, or partners.
 #     Offering choices turns it into picking the desired conclusion (observed ws-g: for "증빙 효력을 갖는가?", "인정한다"
 #     appeared as a choice). So we take only the answer received or, if not yet, who it is being confirmed with (`pending_with`).
-#   - Existing content is not changed. The way to change it is the workspace. All that is collected here is answers to gaps
-#     and a "that's right" confirmation for existing "AI 제안 수락" (AI suggestion accepted) items.
-#   - No AI defaults are offered. In observed data, the PM picked the displayed default 89% of the time —
-#     offering a default would make this answer an "AI 제안 수락" too. Instead there is "모름" (unknown) (→ open question).
+#   - Existing content is not changed. The way to change it is the workspace. All that is collected here is answers to gaps.
+#     Discovery answers are not asked again: every one of them is the PM's choice (handoff/ledger).
+#   - No AI defaults are offered. In observed data, the PM picked the displayed default 89% of the time — a marked default
+#     steers the choice, so these options carry none. Instead there is "모름" (unknown) (→ open question).
 #     Choices are offered (`Option`). With blank free-text, each question was a small writing assignment. What produced the 89%
 #     was the recommendation marker, not the choices, so choices are shown only when grounded in the source, without a
 #     recommendation, and with the model's ordering erased (handoff/package.parse_options).
@@ -48,7 +48,7 @@ from datetime import datetime, timezone
 
 from pydantic import BaseModel, Field
 
-from aipds.handoff.readiness import Readiness
+from aipds.handoff.readiness import Readiness, Stage
 from aipds.models import QuestionOption
 from aipds.s3store import S3StoreLike
 
@@ -75,9 +75,6 @@ _QUESTION_IDS = frozenset(qid for qid, _ in QUESTIONS)
 
 #: Upper bound for one answer. The screen is a multi-line input; anything beyond this is a pasted document — that is the job of uploads.
 MAX_ANSWER_CHARS = 4000
-#: Confirmation key: `aiplc-docs/…-questions.md#<question number>`.
-_CONFIRM_KEY = re.compile(r"^aiplc-docs/[^#\s]+-questions\.md#\d{1,4}$")
-_MAX_CONFIRMATIONS = 500
 #: Key for an open-question answer: `open:` + hash of the question sentence. Regeneration changes the number (O-03), so we
 #: link by sentence — if a regenerated version changes the sentence, it appears as a new question and the answer stays in the record.
 _OPEN_KEY = re.compile(r"^open:[0-9a-f]{12}$")
@@ -103,8 +100,6 @@ class OpenAnswer(Answer):
 
 class Supplement(BaseModel):
     answers: dict[str, Answer] = {}
-    #: Confirmation key → confirmation time. A record that the PM said "that's right" to an "AI 제안 수락" item.
-    confirmed: dict[str, str] = {}
     #: Answers to the PM's share of open decisions. Keyed by `open_key(question)`.
     open_answers: dict[str, OpenAnswer] = {}
 
@@ -122,7 +117,6 @@ class OpenAnswerIn(AnswerIn):
 class SupplementUpdate(BaseModel):
     """The whole form. Saving replaces — the state the screen holds is the record."""
     answers: dict[str, AnswerIn] = {}
-    confirmed: list[str] = Field(default=[], max_length=_MAX_CONFIRMATIONS)
     open_answers: dict[str, OpenAnswerIn] = Field(default={}, max_length=_MAX_OPEN_ANSWERS)
 
 
@@ -147,41 +141,27 @@ class Option(BaseModel):
     source: str
 
 
-class Citation(BaseModel):
-    """A vision.md line that relies on an accepted AI suggestion it marks as unconfirmed."""
-    #: The gist of that line.
-    text: str
-    #: The line is in the first-release scope or the success metrics — what development builds toward.
-    scope: bool = False
-
-
 class QuestionView(BaseModel):
     id: str
     section: str
     answer: Answer | None
 
 
-class ConfirmationView(BaseModel):
-    key: str
+class Decision(BaseModel):
+    """One answered Discovery question, as the handoff tab lists it so the PM can change it (routes/handoff.revise_answer, built by handoff/ledger.decisions)."""
     file: str
     number: int
     ask: str
+    #: The raw answer (`"A"`, `"A: note"`, `"A,C"`, or free text) — what the question form starts from when asked again.
     answer: str
-    stage: str
-    #: The sentence of the chosen choice — what the PM confirms.
-    choices: list[str]
-    note: str
-    remark: str
-    confirmed_at: str | None
-    #: The question's options — the tab asks it again with these when the PM changes the answer (routes/handoff.revise_answer).
+    stage: Stage = "other"
+    #: The decision in words: the chosen options' text, or the free answer. From the letter alone the PM cannot tell what it is
+    #: (measured: 40 items shown as "고른 답: A").
+    choices: list[str] = []
+    #: The PM's note in `"A: note"`.
+    remark: str = ""
     options: list[QuestionOption] = []
     multi_select: bool = False
-    #: The vision.md lines that rely on this decision as an unconfirmed AI suggestion. Empty if vision.md does not (or there is
-    #: no package yet).
-    in_vision: list[str] = []
-    #: One of those lines is in the first-release scope or the success metrics. Observed (ws-o): those targets went to development
-    #: as unconfirmed AI suggestions, and the development harness re-asked the scope but not them.
-    in_scope: bool = False
 
 
 class OpenQuestionView(BaseModel):
@@ -202,7 +182,6 @@ class SupplementView(BaseModel):
     questions: list[QuestionView]
     #: Has an answer, but material for that section now exists in AI-PLC artifacts. That side wins.
     superseded: list[QuestionView]
-    confirmations: list[ConfirmationView]
     #: The PM's share of the last open decisions whose timing is before build. Empty if there is no package.
     open_questions: list[OpenQuestionView] = []
     #: The PM's share, but fine to decide during the build. Folded away without asking — may still be answered.
@@ -210,14 +189,12 @@ class SupplementView(BaseModel):
     #: Answered but not in the current open decisions — the answer was applied or the question sentence changed.
     #: Not deleted (same judgment as `superseded`).
     open_answered: list[OpenQuestionView] = []
+    #: Every answered Discovery question — where the PM changes a decision. Not asked again, not counted as progress.
+    decisions: list[Decision] = []
 
 
 class InvalidSupplement(ValueError):
-    """The form has an unknown question id or a malformed confirmation key."""
-
-
-def confirmation_key(file: str, number: int) -> str:
-    return f"{file}#{number}"
+    """The form has an unknown question id or a malformed open-question key."""
 
 
 #: Related IDs at the end of a question (`(R-08, C-05)`). Requirement numbers change on every regeneration, so they are
@@ -236,7 +213,7 @@ def view(readiness: Readiness, record: Supplement,
          open_questions: list[OpenQuestion] | None = None,
          options: dict[str, list[Option]] | None = None, *,
          has_package: bool = False,
-         cited: dict[str, list[Citation]] | None = None) -> SupplementView:
+         decisions: list[Decision] | None = None) -> SupplementView:
     open_sections = {s.key for s in readiness.sections if s.status in ("partial", "missing")}
     active: list[QuestionView] = []
     superseded: list[QuestionView] = []
@@ -246,16 +223,6 @@ def view(readiness: Readiness, record: Supplement,
             active.append(entry)
         elif entry.answer is not None:
             superseded.append(entry)
-    confirmations: list[ConfirmationView] = []
-    for item in readiness.ai_defaults.items:
-        key = confirmation_key(item.file, item.number)
-        citations = (cited or {}).get(key, [])
-        confirmations.append(ConfirmationView(
-            key=key, file=item.file, number=item.number, ask=item.ask,
-            answer=item.answer, stage=item.stage, choices=item.choices, note=item.note,
-            remark=item.remark, confirmed_at=record.confirmed.get(key),
-            options=item.options, multi_select=item.multi_select,
-            in_vision=[c.text for c in citations], in_scope=any(c.scope for c in citations)))
     asked: dict[str, OpenQuestionView] = {}
     deferred: dict[str, OpenQuestionView] = {}
     for q in open_questions or []:
@@ -270,8 +237,9 @@ def view(readiness: Readiness, record: Supplement,
     answered = [OpenQuestionView(key=key, id="", question=a.question, answer=a)
                 for key, a in record.open_answers.items() if key not in asked and key not in deferred]
     return SupplementView(has_package=has_package, questions=active, superseded=superseded,
-                          confirmations=confirmations, open_questions=list(asked.values()),
-                          open_deferred=list(deferred.values()), open_answered=answered)
+                          open_questions=list(asked.values()),
+                          open_deferred=list(deferred.values()), open_answered=answered,
+                          decisions=decisions or [])
 
 
 def apply(previous: Supplement, update: SupplementUpdate, *, now: str | None = None) -> Supplement:
@@ -280,9 +248,6 @@ def apply(previous: Supplement, update: SupplementUpdate, *, now: str | None = N
     unknown_ids = sorted(set(update.answers) - _QUESTION_IDS)
     if unknown_ids:
         raise InvalidSupplement(f"unknown question ids: {unknown_ids}")
-    bad_keys = sorted(k for k in update.confirmed if not _CONFIRM_KEY.match(k))
-    if bad_keys:
-        raise InvalidSupplement(f"malformed confirmation keys: {bad_keys}")
     # The key comes from the question sentence. If it doesn't match, it could overwrite another question's answer.
     bad_open = sorted(k for k, a in update.open_answers.items()
                       if not _OPEN_KEY.match(k) or open_key(a.question) != k)
@@ -298,9 +263,7 @@ def apply(previous: Supplement, update: SupplementUpdate, *, now: str | None = N
         pending = " ".join(given.pending_with.split())
         if (kept := _kept(previous.open_answers.get(key), given, stamp, pending)) is not None:
             open_answers[key] = OpenAnswer(question=" ".join(given.question.split()), **kept)
-    confirmed = {key: previous.confirmed.get(key, stamp)
-                 for key in dict.fromkeys(update.confirmed)}
-    return Supplement(answers=answers, confirmed=confirmed, open_answers=open_answers)
+    return Supplement(answers=answers, open_answers=open_answers)
 
 
 def _kept(old: Answer | None, given: AnswerIn, stamp: str,

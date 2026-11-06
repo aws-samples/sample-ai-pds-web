@@ -6,19 +6,18 @@ import { useEffect } from "react";
 import type { SupplementView } from "@/lib/api/handoff";
 import { useT } from "@/lib/i18n/provider";
 
-/** The count of what the PM left in the handoff tab that a reset will erase — supplementary answers (including superseded ones) and AI suggestion confirmations. */
+/** The count of what the PM left in the handoff tab that a reset will erase — supplementary answers, superseded ones included. */
 export function savedAnswers(view: SupplementView | null | undefined): number {
   if (!view) return 0;
   const open = [...view.open_questions, ...view.open_deferred, ...view.open_answered];
   return [...view.questions, ...view.superseded].filter((q) => q.answer).length
-    + open.filter((q) => q.answer).length
-    + view.confirmations.filter((c) => c.confirmed_at).length;
+    + open.filter((q) => q.answer).length;
 }
 
 export function ResetDialog({
   answers, busy, error, onCancel, onConfirm,
 }: {
-  /** The number of supplementary answers and AI suggestion confirmations to be erased. At 0, no cannot-be-undone warning is shown. */
+  /** The number of supplementary answers to be erased. At 0, no cannot-be-undone warning is shown. */
   answers: number;
   busy: boolean;
   error: string | null;

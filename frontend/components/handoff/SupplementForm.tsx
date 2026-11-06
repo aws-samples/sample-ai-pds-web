@@ -2,20 +2,20 @@
 // questions for empty sections, plus the PM decisions the last PRD left as open questions that must be settled before the build.
 // Decisions that can be settled during the build are collapsed — the PRD has written down how to build in the meantime.
 //
-// Questions are not pre-filled with AI defaults. In measurement, PMs picked the displayed default 89% of the time —
-// giving a default turns this answer into "accepting the AI suggestion" again. For pre-build decisions, the server gives
+// Questions are not pre-filled with AI defaults. In measurement, PMs picked the displayed default 89% of the time — a marked
+// default steers the choice. For pre-build decisions, the server gives
 // options grounded in the sources without a recommendation, and the screen preselects nothing. With no options, it is a
 // blank field. Either way, there are "직접 입력" (enter my own) and "모름" (don't know).
 //
-// Confirming does not change content. Changing an AI suggestion the PM kept goes to where the decision lives — the question
+// Discovery answers are not asked again. Every one of them is the PM's pick — the question form preselects nothing — so an
+// answer that matches the option the AI marked is a decision too, not something left to confirm (server handoff/ledger).
+// They are listed, folded by stage, only so the PM can change one: changing goes to where the decision lives — the question
 // file's `[Answer]:` tag, which the web writes — and the agent then carries it through the documents (routes/handoff.revise_answer).
-// It is not kept here as a second record: the same decision recorded differently in two places is what that path avoids.
 "use client";
 import { useMemo, useState, type ReactNode } from "react";
 import { STAGE_ORDER } from "@/lib/api/handoff";
 import type {
-  Confirmation, OpenOption, OpenQuestion, SupplementQuestion, SupplementQuestionId, SupplementUpdate,
-  SupplementView,
+  Decision, OpenOption, OpenQuestion, SupplementQuestion, SupplementQuestionId, SupplementUpdate, SupplementView,
 } from "@/lib/api/handoff";
 import type { Dict } from "@/lib/i18n";
 import { useT } from "@/lib/i18n/provider";
@@ -46,7 +46,7 @@ const openAll = (view: SupplementView) =>
 const filled = (d: Draft[string] | undefined) =>
   !!d && (d.unknown || !!d.text.trim() || !!d.pending_with?.trim());
 
-export function toUpdate(view: SupplementView, draft: Draft, confirmed: Set<string>): SupplementUpdate {
+export function toUpdate(view: SupplementView, draft: Draft): SupplementUpdate {
   const answers: SupplementUpdate["answers"] = {};
   for (const q of view.questions) {
     const d = draft[q.id];
@@ -65,7 +65,7 @@ export function toUpdate(view: SupplementView, draft: Draft, confirmed: Set<stri
                               pending_with: d.pending_with ?? "" };
     }
   }
-  return { answers, confirmed: [...confirmed], open_answers };
+  return { answers, open_answers };
 }
 
 export function SupplementForm({
@@ -77,20 +77,18 @@ export function SupplementForm({
   onSave: (update: SupplementUpdate) => void;
   onSaveAndGenerate: (update: SupplementUpdate) => void;
   onBack: () => void;
-  /** Changes a settled answer (the server writes it to the question file and starts the turn that carries it through). The
-   *  web owns the `[Answer]:` tags, so this — not a chat request — is how a decision changes; without it the item has no
+  /** Changes a Discovery decision (the server writes it to the question file and starts the turn that carries it through). The
+   *  web owns the `[Answer]:` tags, so this — not a chat request — is how a decision changes; without it the list has no
    *  change action. */
-  onRevise?: (c: Confirmation, answer: string) => void;
+  onRevise?: (d: Decision, answer: string) => void;
   /** Viewing member. Answers are visible but cannot be edited. */
   readOnly?: boolean;
 }) {
   const t = useT();
   const [draft, setDraft] = useState<Draft>(() => initialDraft(view));
-  // The AI-suggestion item whose answer is being changed, and the answer picked so far.
+  // The decision whose answer is being changed (`file#number`), and the answer picked so far.
   const [revising, setRevising] = useState<string | null>(null);
   const [next, setNext] = useState("");
-  const [confirmed, setConfirmed] = useState<Set<string>>(
-    () => new Set(view.confirmations.filter((c) => c.confirmed_at).map((c) => c.key)));
 
   const groups = useMemo(() => {
     const bySection = new Map<string, SupplementQuestion[]>();
@@ -100,84 +98,56 @@ export function SupplementForm({
     return [...bySection.entries()];
   }, [view.questions]);
 
-  // Progress counts only blank questions. Confirmation is optional — with it in the denominator, even after filling
-  // in every question it showed "아직 40개 남음" (40 still remaining) (measured ws-g).
+  // Progress counts only blank questions — the gaps and the PM's before-build decisions. Discovery decisions are not to-dos.
   const total = view.questions.length + view.open_questions.length;
   const done = view.questions.filter((q) => filled(draft[q.id])).length
     + view.open_questions.filter((q) => filled(draft[q.key])).length;
 
-  // With a package, the decisions vision.md relies on as unconfirmed AI suggestions come first, and of those the ones in the
-  // first-release scope or the success metrics lead — development builds toward them, and in measurement (ws-o) the
-  // development harness re-asked the scope but not those targets. The rest are collapsed by stage. Confirmed decisions
-  // appear in the decision ledger as "AI 제안 · PM 확인".
-  const scope = view.has_package ? view.confirmations.filter((c) => c.in_scope) : [];
-  const inVision = view.has_package
-    ? view.confirmations.filter((c) => c.in_vision.length && !c.in_scope) : [];
   const stages = useMemo(() => {
-    const byStage = new Map<string, Confirmation[]>();
-    for (const c of view.confirmations) {
-      if (view.has_package && c.in_vision.length) continue;
-      byStage.set(c.stage, [...(byStage.get(c.stage) ?? []), c]);
-    }
+    const byStage = new Map<string, Decision[]>();
+    for (const d of view.decisions) byStage.set(d.stage, [...(byStage.get(d.stage) ?? []), d]);
     return STAGE_ORDER.filter((st) => byStage.has(st)).map((st) => [st, byStage.get(st)!] as const);
-  }, [view.confirmations, view.has_package]);
-  const restCount = stages.reduce((n, [, items]) => n + items.length, 0);
+  }, [view.decisions]);
 
-  // One confirmation item. The question, the chosen decision, elaboration, (with a package) the vision.md lines it became,
-  // and the AI rationale.
+  // One Discovery decision: the question, the decision in words, the PM's note, and — on request — the question asked again.
   // Drawn by a function, not a component — a component defined inside render is a new type every time, so the list
   // would remount.
-  const renderItem = (c: Confirmation) => {
-    const on = confirmed.has(c.key);
+  const renderDecision = (d: Decision) => {
+    const key = `${d.file}#${d.number}`;
     return (
-      <li key={c.key} className="px-4 py-3 border-t border-slate-100 first:border-t-0">
-        <p className="text-[13px] font-semibold text-slate-900">{c.ask}</p>
+      <li key={key} className="px-4 py-3 border-t border-slate-100 first:border-t-0">
+        <p className="text-[13px] font-semibold text-slate-900">{d.ask}</p>
         <p className="mt-1 text-[13px] text-slate-800">
-          <span className="mr-1.5 text-xs text-slate-400">{t("handoff.supp.confirm.chosen")}</span>
-          {c.choices.length ? c.choices.join(" / ") : c.answer}
+          <span className="mr-1.5 text-xs text-slate-400">{t("handoff.supp.decisions.chosen")}</span>
+          {d.choices.join(" / ")}
         </p>
-        {c.remark && (
+        {d.remark && (
           <p className="mt-0.5 text-xs text-slate-600">
-            <span className="mr-1.5 text-slate-400">{t("handoff.supp.confirm.remark")}</span>{c.remark}
+            <span className="mr-1.5 text-slate-400">{t("handoff.supp.decisions.remark")}</span>{d.remark}
           </p>
         )}
-        {view.has_package && c.in_vision.map((line) => (
-          <p key={line} className="mt-0.5 text-xs text-violet-800">
-            <span className="mr-1.5 text-violet-400">{t("handoff.supp.confirm.visionLine")}</span>{line}
-          </p>
-        ))}
-        {c.note && (
-          <p className="mt-0.5 text-[11px] text-slate-400">{t("handoff.supp.confirm.note")}: {c.note}</p>
-        )}
-        <div className="mt-2 flex gap-1.5">
-          <button type="button" aria-pressed={on} onClick={() => toggle(c.key)}
-                  className={`px-2.5 py-1 rounded-lg border text-xs ${
-                    on ? "bg-sky-50 border-sky-200 text-sky-700 font-bold" : "border-slate-300 text-slate-600"}`}>
-            {on ? t("handoff.supp.confirm.confirmed") : t("handoff.supp.confirm.yes")}
+        {onRevise && (
+          <button type="button" aria-expanded={revising === key}
+                  onClick={() => { setRevising(revising === key ? null : key); setNext(d.answer); }}
+                  className="mt-2 px-2.5 py-1 rounded-lg border border-slate-300 text-xs text-slate-600">
+            {t("handoff.supp.decisions.revise")}
           </button>
-          {onRevise && (
-            <button type="button" aria-expanded={revising === c.key}
-                    onClick={() => { setRevising(revising === c.key ? null : c.key); setNext(c.answer); }}
-                    className="px-2.5 py-1 rounded-lg border border-slate-300 text-xs text-slate-600">
-              {t("handoff.supp.confirm.revise")}
-            </button>
-          )}
-        </div>
-        {revising === c.key && onRevise && (
+        )}
+        {revising === key && onRevise && (
           <div className="mt-2.5 p-3 rounded-lg bg-slate-50 border border-slate-200">
-            <p className="mb-2 text-xs text-slate-600">{t("handoff.supp.confirm.reviseHint")}</p>
-            <QuestionCard question={{ number: c.number, category: null, text: c.ask, options: c.options,
-                                      answer: c.answer, multi_select: c.multi_select }}
+            <p className="mb-2 text-xs text-slate-600">{t("handoff.supp.decisions.reviseHint")}</p>
+            <QuestionCard question={{ number: d.number, category: null, text: d.ask, options: d.options,
+                                      answer: d.answer, multi_select: d.multi_select }}
                           value={next} onChange={setNext} />
             <div className="mt-2 flex justify-end gap-1.5">
               <button type="button" onClick={() => setRevising(null)}
                       className="px-2.5 py-1 rounded-lg border border-slate-300 text-xs text-slate-600">
-                {t("handoff.supp.confirm.reviseCancel")}
+                {t("handoff.supp.decisions.reviseCancel")}
               </button>
-              <button type="button" disabled={busy || !next.trim() || next.trim() === c.answer.trim()}
-                      onClick={() => onRevise(c, next.trim())}
+              <button type="button" disabled={busy || !next.trim() || next.trim() === d.answer.trim()}
+                      onClick={() => onRevise(d, next.trim())}
                       className="px-2.5 py-1 rounded-lg bg-violet-600 text-white text-xs font-bold disabled:opacity-45">
-                {t("handoff.supp.confirm.reviseSubmit")}
+                {t("handoff.supp.decisions.reviseSubmit")}
               </button>
             </div>
           </div>
@@ -260,28 +230,6 @@ export function SupplementForm({
 
   const set = (id: string, patch: Partial<Draft[string]>) =>
     setDraft((d) => ({ ...d, [id]: { ...(d[id] ?? { text: "", unknown: false }), ...patch } }));
-  const toggle = (key: string) => setConfirmed((s) => {
-    const next = new Set(s);
-    if (next.has(key)) next.delete(key); else next.add(key);
-    return next;
-  });
-  // "전부 맞다" for one group. An unconfirmed AI suggestion keeps its mark in vision.md and the ledger, and the development
-  // side is told to ask the PM again about those — dozens of one-by-one clicks stood between the PM and saying "I agree with
-  // these". It sits right above the group's items (inside a stage only once it is opened), so it confirms what is on screen;
-  // each item can still be undone, and nothing is recorded until saved.
-  const renderConfirmAll = (items: Confirmation[]) => {
-    const left = items.filter((c) => !confirmed.has(c.key)).length;
-    return (
-      <div className="flex justify-end px-4 py-1.5">
-        <button type="button" disabled={left === 0}
-                onClick={() => setConfirmed((s) => new Set([...s, ...items.map((c) => c.key)]))}
-                className="px-2.5 py-1 rounded-lg border border-sky-200 text-xs text-sky-700 disabled:opacity-45">
-          {left === 0 ? t("handoff.supp.confirm.allDone")
-            : t("handoff.supp.confirm.all").replace("{n}", String(left))}
-        </button>
-      </div>
-    );
-  };
 
   return (
     <section className="max-w-[960px]">
@@ -351,61 +299,19 @@ export function SupplementForm({
         </details>
       )}
 
-      {view.confirmations.length > 0 && (
+      {stages.length > 0 && (
         <div className="mb-[18px]">
-          <h4 className="text-[15px] font-semibold text-slate-900">
-            {t("handoff.supp.confirm.title")}{" "}
-            <span className="text-xs font-normal text-slate-500">{t("handoff.supp.confirm.optional")}</span>
-          </h4>
-          <p className="mb-2.5 text-xs text-slate-500">{t("handoff.supp.confirm.hint")}</p>
-          {view.has_package ? (
-            <>
-              {scope.length > 0 && (
-                <>
-                  <h5 className="mt-1 text-[13px] font-semibold text-amber-800">
-                    {t("handoff.supp.confirm.scope").replace("{n}", String(scope.length))}
-                  </h5>
-                  <p className="mb-1.5 text-xs text-amber-800">{t("handoff.supp.confirm.scopeHint")}</p>
-                  <div className="mb-3 bg-white border border-amber-300 rounded-xl">
-                    {renderConfirmAll(scope)}
-                    <ul>{scope.map(renderItem)}</ul>
-                  </div>
-                </>
-              )}
-              <h5 className="mt-1 mb-1.5 text-[13px] font-semibold text-slate-900">
-                {t("handoff.supp.confirm.inVision").replace("{n}", String(inVision.length))}
-              </h5>
-              {inVision.length > 0 ? (
-                <div className="mb-3 bg-white border border-violet-200 rounded-xl">
-                  {renderConfirmAll(inVision)}
-                  <ul>{inVision.map(renderItem)}</ul>
-                </div>
-              ) : (
-                <p className="mb-3 text-xs text-slate-500">{t("handoff.supp.confirm.inVisionNone")}</p>
-              )}
-              {restCount > 0 && (
-                <h5 className="mb-1.5 text-[13px] font-semibold text-slate-700">
-                  {t("handoff.supp.confirm.rest").replace("{n}", String(restCount))}
-                </h5>
-              )}
-            </>
-          ) : (
-            <p className="mb-2 text-xs text-violet-700">{t("handoff.supp.confirm.noPackage")}</p>
-          )}
-          {/* Collapsed by stage. Confirmation is not a to-do; it is where you pick the decisions you want to look into. */}
+          <h4 className="text-[15px] font-semibold text-slate-900">{t("handoff.supp.decisions.title")}</h4>
+          <p className="mb-2.5 text-xs text-slate-500">{t("handoff.supp.decisions.hint")}</p>
           {stages.map(([stage, items]) => (
             <details key={stage} className="mb-2 bg-white border border-slate-200 rounded-xl">
               <summary className="px-4 py-2.5 cursor-pointer text-[13px] font-semibold text-slate-900">
                 {t(`handoff.stage.${stage}` as keyof Dict)}{" "}
                 <span className="font-normal text-slate-500">
-                  {t("handoff.supp.confirm.count").replace("{n}", String(items.length))
-                    .replace("{done}", String(items.filter((c) => confirmed.has(c.key)).length))}
+                  {t("handoff.supp.decisions.count").replace("{n}", String(items.length))}
                 </span>
               </summary>
-              {renderConfirmAll(items)}
-              <ul>
-                {items.map(renderItem)}
-              </ul>
+              <ul>{items.map(renderDecision)}</ul>
             </details>
           ))}
         </div>
@@ -432,11 +338,11 @@ export function SupplementForm({
         <span className="flex-1" />
         {message && <span className="text-xs text-slate-500">{message}</span>}
         {!readOnly && (<>
-        <button type="button" disabled={busy} onClick={() => onSave(toUpdate(view, draft, confirmed))}
+        <button type="button" disabled={busy} onClick={() => onSave(toUpdate(view, draft))}
                 className="px-3 py-2 rounded-lg border border-slate-300 text-[13px] text-slate-600 disabled:opacity-45">
           {t("handoff.supp.save")}
         </button>
-        <button type="button" disabled={busy} onClick={() => onSaveAndGenerate(toUpdate(view, draft, confirmed))}
+        <button type="button" disabled={busy} onClick={() => onSaveAndGenerate(toUpdate(view, draft))}
                 className="px-4 py-2 rounded-lg bg-violet-600 text-white text-[13px] font-bold hover:bg-violet-700 disabled:opacity-45">
           {t("handoff.supp.saveAndGenerate")}
         </button>

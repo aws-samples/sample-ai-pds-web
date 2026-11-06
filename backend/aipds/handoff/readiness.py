@@ -24,9 +24,8 @@ from typing import Literal
 
 from pydantic import BaseModel
 
-from aipds.models import Question, QuestionOption
+from aipds.models import Question
 from aipds.parsers.doc_references import missing_references
-from aipds.parsers.questions import parse_question_file
 from aipds.proto import layout
 
 _DISCOVERY = layout.DISCOVERY_PREFIX
@@ -40,7 +39,6 @@ _GTM = _DISCOVERY + "go-to-market/"
 DISCOVERY_DOCUMENT = _DISCOVERY + "discovery-document.md"
 #: The validation plan the agent places outside the prototype directory in Path B (measured on ws-n).
 _GLOBAL_VALIDATION_PLAN = _DISCOVERY + "validation-plan.md"
-_QUESTION_SUFFIX = "-questions.md"
 
 #: Two shapes of pain point analysis: conversational (`pain-point-analysis.md`) and URL/report-based
 #: (`pain-points-from-url.md`, measured on ws-b: `pain-points-from-report.md`).
@@ -119,40 +117,10 @@ def stage_of(path: str) -> Stage:
     return "other"
 
 
-class AcceptedSuggestion(BaseModel):
-    file: str
-    number: int
-    ask: str
-    #: The raw answer (`"A"`, `"A: note"`, `"A,C"`).
-    answer: str
-    stage: Stage = "other"
-    #: Text of the chosen options — the actual decision. In order if several. From the letter in `answer` alone, the PM
-    #: cannot tell what they are confirming (measured: all 40 confirmation items showed up as "고른 답: A" (chosen answer: A)).
-    choices: list[str] = []
-    #: The note the AI attached after the option's `←` (e.g. "페인 포인트 분석 기반 제안", "suggested based on pain point analysis").
-    note: str = ""
-    #: The remark in `"A: note"` — what the PM added to the option.
-    remark: str = ""
-    #: The question's options, so the handoff tab can ask it again when the PM changes the answer.
-    options: list[QuestionOption] = []
-    multi_select: bool = False
-
-
-class AiDefaults(BaseModel):
-    #: Number of questions with an answer.
-    answered: int
-    #: Of those, the number of questions that had an option with the AI-suggestion marker.
-    suggested: int
-    #: Of those, the number where the suggested option was chosen. Defaults left at A without a marker cannot be counted, so this is a lower bound.
-    accepted: int
-    items: list[AcceptedSuggestion]
-
-
 class Readiness(BaseModel):
     origin: Origin | None
     prototypes: list[Prototype]
     sections: list[Section]
-    ai_defaults: AiDefaults
     discovery_document: str | None
     broken_references: list[str]
     #: Reasons that block generation. If empty, it can be generated.
@@ -160,12 +128,10 @@ class Readiness(BaseModel):
 
 
 def contents_needed(paths: Sequence[str]) -> list[str]:
-    """Files whose contents `assess` must read — question files, the Discovery Document, and the two files
-    for the reconciliation check (the change history and `spec-as-built.md`)."""
+    """Files whose contents `assess` must read — the Discovery Document, and the two files for the reconciliation
+    check (the change history and `spec-as-built.md`)."""
     names = (layout.CHANGE_HISTORY, _SPEC_AS_BUILT)
-    return [p for p in paths
-            if p.endswith(_QUESTION_SUFFIX) or p == DISCOVERY_DOCUMENT
-            or p.rsplit("/", 1)[-1] in names]
+    return [p for p in paths if p == DISCOVERY_DOCUMENT or p.rsplit("/", 1)[-1] in names]
 
 
 def assess(paths: Sequence[str], contents: Mapping[str, str]) -> Readiness:
@@ -182,7 +148,6 @@ def assess(paths: Sequence[str], contents: Mapping[str, str]) -> Readiness:
         origin=origin,
         prototypes=prototypes,
         sections=_sections(present, envision and has_document, prototypes),
-        ai_defaults=_ai_defaults(contents),
         discovery_document=DISCOVERY_DOCUMENT if has_document else None,
         broken_references=(missing_references(document, sorted(present))
                            if document is not None else []),
@@ -296,61 +261,6 @@ def _sections(present: set[str], prfaq: bool,
         sources = list(dict.fromkeys(primary + secondary))
         sections.append(Section(key=key, number=number, status=status, sources=sources))
     return sections
-
-
-def _ai_defaults(contents: Mapping[str, str]) -> AiDefaults:
-    answered = suggested = 0
-    items: list[AcceptedSuggestion] = []
-    for path in sorted(contents):
-        if not path.endswith(_QUESTION_SUFFIX):
-            continue
-        parsed = parse_question_file(path.rsplit("/", 1)[-1], contents[path])
-        for question in parsed.questions:
-            if not question.answer:
-                continue
-            answered += 1
-            marked = suggested_letters(question)
-            if not marked:
-                continue
-            suggested += 1
-            chosen = chosen_letters(question)
-            if chosen & marked:
-                choices, note = _chosen_texts(question, chosen)
-                items.append(AcceptedSuggestion(
-                    file=path, number=question.number,
-                    ask=question.ask or question.text, answer=question.answer,
-                    stage=stage_of(path), choices=choices, note=note,
-                    remark=_remark(question.answer or ""),
-                    options=question.options, multi_select=question.multi_select))
-    return AiDefaults(answered=answered, suggested=suggested,
-                      accepted=len(items), items=items)
-
-
-def suggested_letters(question: Question) -> set[str]:
-    return {o.letter for o in question.options
-            if not o.is_other and (o.recommended or SUGGESTION_MARK in o.text)}
-
-
-def _chosen_texts(question: Question, chosen: set[str]) -> tuple[list[str], str]:
-    """Text of the chosen options, and the `←` note the AI attached to those options (the first one)."""
-    choices: list[str] = []
-    note = ""
-    for option in question.options:
-        if option.letter not in chosen or option.is_other:
-            continue
-        text, _, mark = option.text.partition(SUGGESTION_MARK)
-        choices.append(text.strip())
-        if mark.strip() and not note:
-            note = mark.strip()
-    return choices, note
-
-
-def _remark(answer: str) -> str:
-    match = _SINGLE_LETTER.match(answer.strip())
-    if not match:
-        return ""
-    _, _, rest = answer.partition(":")
-    return rest.strip()
 
 
 def chosen_letters(question: Question) -> set[str]:

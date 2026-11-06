@@ -182,23 +182,6 @@ def test_the_table_replaces_whatever_the_model_wrote_under_open_questions():
     assert open_rows.insert("# P\n", table).endswith("### Open Questions\n\n" + table + "\n")
 
 
-def test_marks_follow_ledger_citations_not_the_model():
-    kept = {("go-to-market/gtm-questions.md", 13)}
-    doc = ("# P\n"
-           "- 목표 5분 이하 [decisions.md · go-to-market/gtm-questions.md Q13]\n"
-           "- 모델이 붙인 표시 (AI 제안, PM 미확인) [discovery-document.md · 요약]\n"
-           "| 사용률 | 30일 | 집계 [decisions.md · go-to-market/gtm-questions.md Q12, Q13] |\n"
-           "- 확인된 결정 [decisions.md · go-to-market/gtm-questions.md Q14]\n"
-           "### Open Questions\n"
-           "- 표 안은 그대로 [decisions.md · go-to-market/gtm-questions.md Q13]\n")
-    out = open_rows.mark(doc, kept, LAB["ai_kept"], "decisions.md").splitlines()
-    assert out[1] == "- 목표 5분 이하 (AI 제안, PM 미확인) [decisions.md · go-to-market/gtm-questions.md Q13]"
-    assert out[2] == "- 모델이 붙인 표시 [discovery-document.md · 요약]"
-    assert out[3] == "| 사용률 | 30일 | 집계 (AI 제안, PM 미확인) [decisions.md · go-to-market/gtm-questions.md Q12, Q13] |"
-    assert out[4] == "- 확인된 결정 [decisions.md · go-to-market/gtm-questions.md Q14]"
-    assert out[6] == "- 표 안은 그대로 [decisions.md · go-to-market/gtm-questions.md Q13]"
-
-
 def test_the_record_round_trips():
     record = open_rows.Record(rows=[open_rows.Row(id="O-01", key="k", question="q", who="PM", when="빌드 전",
                                                   until="—", source="s")],

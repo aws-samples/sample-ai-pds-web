@@ -117,8 +117,7 @@ export function PackagePanel({
           <b>{t("handoff.pkg.supplementChanged")}</b> {t("handoff.pkg.regenerateHint")}
         </div>
       )}
-      {/* Each check has a different fix path. Most are regeneration, but success metrics that became AI suggestions must be
-          confirmed by the PM or fixed in the source, and regenerating leaves them as is. */}
+      {/* Each check has a different fix path — the fix sentence per kind says which. */}
       {present.length > 0 && (
         <div role="alert" className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 mb-3 text-[13px] text-rose-900">
           <b className="block">{t("handoff.pkg.findings").replace("{n}", String(findings.length))}</b>

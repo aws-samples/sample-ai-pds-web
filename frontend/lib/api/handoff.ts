@@ -4,8 +4,8 @@
 // only carries the shapes.
 import { API_BASE_URL, ApiError } from "./client";
 import { apiFetch } from "./http";
-import type { QuestionOption } from "./types";
 import { CREDENTIALS } from "@/lib/auth";
+import type { QuestionOption } from "./types";
 
 export type Origin = "A.1" | "A.2" | "A" | "B" | "EP1";
 export type SectionStatus = "sourced" | "partial" | "missing" | "derived";
@@ -39,18 +39,10 @@ export interface HandoffPrototype {
   history: string | null;
 }
 
-export interface AcceptedSuggestion {
-  file: string;
-  number: number;
-  ask: string;
-  answer: string;
-}
-
 export interface Readiness {
   origin: Origin | null;
   prototypes: HandoffPrototype[];
   sections: Section[];
-  ai_defaults: { answered: number; suggested: number; accepted: number; items: AcceptedSuggestion[] };
   discovery_document: string | null;
   broken_references: string[];
   blockers: string[];
@@ -85,27 +77,18 @@ export const STAGE_ORDER: Stage[] = [
   "prototype", "product_strategy", "go_to_market", "other",
 ];
 
-export interface Confirmation {
-  key: string;
+/** One answered Discovery question — every one is the PM's decision. Server handoff/supplement.Decision. */
+export interface Decision {
   file: string;
   number: number;
   ask: string;
-  /** The raw answer (`"A"`, `"A: 부연"`, `"A,C"`). The screen shows `choices`. */
+  /** The raw answer (`"A"`, `"A: 부연"`, `"A,C"`, or free text) — where the question form starts when asked again. */
   answer: string;
   stage: Stage;
-  /** The sentences of the chosen options — what the PM confirms. */
+  /** The decision in words: the chosen options' text, or the free answer. */
   choices: string[];
-  /** The note the AI attached after an option's `←`. */
-  note: string;
   /** The elaboration in `"A: 부연"` (A: elaboration). */
   remark: string;
-  confirmed_at: string | null;
-  /** The vision.md lines that rely on this decision as an unconfirmed AI suggestion. Empty if vision.md does not (or there
-   *  is no package yet). */
-  in_vision: string[];
-  /** One of those lines is in the first-release scope or the success metrics. */
-  in_scope: boolean;
-  /** The question's options — the tab asks it again with these when the PM changes the answer. */
   options: QuestionOption[];
   multi_select: boolean;
 }
@@ -149,7 +132,6 @@ export interface SupplementView {
   has_package: boolean;
   questions: SupplementQuestion[];
   superseded: SupplementQuestion[];
-  confirmations: Confirmation[];
   /** Among the last open decisions, those that are the PM's to answer and due before the build.
    *  Empty if there is no package. */
   open_questions: OpenQuestion[];
@@ -157,11 +139,12 @@ export interface SupplementView {
   open_deferred: OpenQuestion[];
   /** Answered, but not in the current open decisions — either applied or the sentence changed. */
   open_answered: OpenQuestion[];
+  /** Every answered Discovery question — where the PM changes a decision. Not asked again. */
+  decisions: Decision[];
 }
 
 export interface SupplementUpdate {
   answers: Partial<Record<SupplementQuestionId, { text: string; unknown: boolean }>>;
-  confirmed: string[];
   open_answers: Record<string, { question: string; text: string; unknown: boolean; pending_with?: string }>;
 }
 
@@ -274,8 +257,8 @@ export async function downloadPackage(pid: string): Promise<Blob> {
   return res.blob();
 }
 
-/** Fully reset the handoff tab — the package, earlier editions, supplementary answers, and AI
- *  suggestion confirmations. Discovery artifacts stay as they are. If generation is running, the
+/** Fully reset the handoff tab — the package, earlier editions and supplementary answers.
+ *  Discovery artifacts stay as they are. If generation is running, the
  *  server rejects with 409. */
 export async function resetHandoff(pid: string): Promise<{ deleted: number }> {
   return (await apiFetch<{ deleted: number }>(base(pid), { method: "DELETE" }))!;

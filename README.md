@@ -95,7 +95,7 @@ change it; members only read; to anyone else it is a 404, the same as a project 
 | `/projects/{id}/review` | Document review and the approval gate | project |
 | `/projects/{id}/questions` | One question file, expanded to answer | project |
 | `/projects/{id}/prototypes` | Build sessions, hosting, and the validation survey | project |
-| `/projects/{id}/handoff` | The AI-DLC handoff — readiness, supplementary questions, confirming AI suggestions, and the package (vision document, decision ledger, start prompt) as a zip | project |
+| `/projects/{id}/handoff` | The AI-DLC handoff — readiness, supplementary questions, and the package (vision document, decision ledger, start prompt) as a zip | project |
 | `/survey/{token}` | The anonymous validation survey | **public** (token) |
 | `/api/proto/{pid}/{slug}` | The built prototype, served **only on the preview domain** (`AipdsPreviewStack`). The share link plants the access cookie; without it, 404 is the correct answer | **public** (token cookie) |
 | `/admin/users` · `/admin/models` · `/admin/design` | Users and roles, the model catalog, the brand design profile | admin |
@@ -289,8 +289,9 @@ question sheet or approves the Discovery document at the approval gate, and appr
 revision is always the person's call. Options marked *★ AI pick* are a suggestion, not a default the
 form submits for you. The handoff package keeps the same line: the model drafts the vision document,
 but code builds its open-questions table from candidates it collects — a row the model adds must quote
-its source, and code checks the quote is there — and marks the AI suggestions no one has confirmed on
-the handoff tab.
+its source, and code checks the quote is there. An answer the PM picked is handed over as the PM's
+decision even when it matches the AI pick, and is not asked again; a value the originals mark as an
+estimate or an assumption keeps that mark in the vision document, which code makes sure of.
 
 **What the AI did is visible.** Everything a user types and every answer submitted is written to
 `audit.md` verbatim with the real time, by the app rather than by the AI; the AI appends its own

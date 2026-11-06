@@ -46,14 +46,6 @@ def test_an_answer_whose_section_got_sourced_later_is_superseded_not_dropped():
     assert v.superseded[0].answer.text == "인터뷰 5명"
 
 
-def test_accepted_ai_suggestions_are_listed_for_confirmation():
-    state = assess(A1, {STRATEGY: QUESTIONS})
-    record = supplement.Supplement(confirmed={STRATEGY + "#2": "t0"})
-    v = supplement.view(state, record)
-    assert [c.key for c in v.confirmations] == [STRATEGY + "#1", STRATEGY + "#2", STRATEGY + "#4"]
-    assert [c.confirmed_at for c in v.confirmations] == [None, "t0", None]
-
-
 def test_apply_keeps_the_time_of_unchanged_answers():
     first = supplement.apply(supplement.Supplement(), supplement.SupplementUpdate(
         answers={"problem.evidence": supplement.AnswerIn(text="  인터뷰 5명 ")}), now="t1")
@@ -74,18 +66,9 @@ def test_apply_drops_blank_answers_and_replaces_the_form():
     assert record.answers == {}
 
 
-def test_apply_keeps_the_first_confirmation_time():
-    key = STRATEGY + "#1"
-    first = supplement.apply(supplement.Supplement(),
-                             supplement.SupplementUpdate(confirmed=[key]), now="t1")
-    again = supplement.apply(first, supplement.SupplementUpdate(confirmed=[key, key]), now="t2")
-    assert again.confirmed == {key: "t1"}
-
-
 @pytest.mark.parametrize("update", [
     supplement.SupplementUpdate(answers={"requirements.extra": supplement.AnswerIn(text="x")}),
-    supplement.SupplementUpdate(confirmed=["../etc/passwd#1"]),
-    supplement.SupplementUpdate(confirmed=[D + "discovery-document.md#1"]),
+    supplement.SupplementUpdate(open_answers={"open:000000000000": supplement.OpenAnswerIn(question="q", text="a")}),
 ])
 def test_apply_rejects_unknown_ids_and_malformed_keys(update):
     with pytest.raises(supplement.InvalidSupplement):
@@ -132,17 +115,16 @@ def test_route_round_trip(monkeypatch):
     assert r.status_code == 200
     body = r.json()
     assert len(body["questions"]) == len(supplement.QUESTIONS)
-    first_key = body["confirmations"][0]["key"]
+    # Discovery answers are the PM's — none is listed to confirm again.
+    assert "confirmations" not in body
 
     r = client.put("/projects/supp-b/handoff/supplement", json={
         "answers": {"problem.evidence": {"text": "인터뷰 5명"},
-                    "assumptions.failure_reasons": {"unknown": True}},
-        "confirmed": [first_key]})
+                    "assumptions.failure_reasons": {"unknown": True}}})
     assert r.status_code == 200
     by_id = {q["id"]: q["answer"] for q in r.json()["questions"]}
     assert by_id["problem.evidence"]["text"] == "인터뷰 5명"
     assert by_id["assumptions.failure_reasons"]["unknown"] is True
-    assert r.json()["confirmations"][0]["confirmed_at"]
 
     stored = json.loads(s3.blobs[supplement.SUPPLEMENT_KEY])
     assert set(stored["answers"]) == {"problem.evidence", "assumptions.failure_reasons"}
@@ -253,3 +235,10 @@ def test_an_external_check_has_no_options_and_can_be_answered_with_who_is_checki
     again = supplement.apply(record, supplement.SupplementUpdate(open_answers={
         key: supplement.OpenAnswerIn(question=q.question, pending_with="법무팀(10/20 회신)")}), now="t2")
     assert again.open_answers[key].updated_at == "t2"
+
+
+def test_a_record_from_before_still_loads_and_drops_its_confirmations():
+    """Records saved while the tab asked the PM to confirm AI-matched answers carry `confirmed`; they still load."""
+    raw = json.dumps({"answers": {}, "confirmed": {STRATEGY + "#1": "t0"}, "open_answers": {}})
+    record = supplement.Supplement.model_validate_json(raw)
+    assert record == supplement.Supplement() and "confirmed" not in record.model_dump()
