@@ -132,10 +132,12 @@ export function PackagePanel({
           </ul>
         </div>
       )}
+      {/* Only packages built before sources were loaded whole have these. Each is a source vision.md was written without part of — named, not just counted. */}
       {m.truncated.length > 0 && (
-        <p className="mb-3 text-xs text-slate-500">
-          {t("handoff.pkg.truncated").replace("{n}", String(m.truncated.length))}
-        </p>
+        <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 mb-3 text-[13px] text-amber-900">
+          <b className="block">{t("handoff.pkg.truncated").replace("{n}", String(m.truncated.length))}</b>
+          {m.truncated.map((p) => <code key={p} className="mr-1.5 text-xs">{p.replace("aiplc-docs/", "")}</code>)}
+        </div>
       )}
 
       <div className="grid lg:grid-cols-[minmax(240px,20%)_1fr] gap-6 items-start">

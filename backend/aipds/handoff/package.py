@@ -104,8 +104,8 @@ ARCHIVE_EXCLUDED = frozenset({"build-instructions.md", "design-context.md",
 #: Question files. The decision ledger carries over the answered decisions as is; the rest is progress records such as approvals and mode choices —
 #: observed (ws-g instance package): 15 of the 26 originals were question files, which made it look like "it hands over every document".
 _QUESTION_SUFFIX = "-questions.md"
-#: Loaded earlier the further forward they are. When the size cap is hit, the tail is cut. The decision ledger comes right after the
-#: Discovery document — it is every answered decision, and losing it to the cap would leave rule 7 nothing to mark.
+#: Loaded earlier the further forward they are. The decision ledger comes right after the Discovery document — it is every answered
+#: decision, the material rule 7 marks from.
 _PRIORITY = (
     "discovery-document.md", LEDGER, "spec-as-built.md", "prototype-spec.md", "PROTOTYPE-",
     "validation-results.md", "survey-aggregate.md", "change-history.md", "iteration-log.md",
@@ -113,8 +113,21 @@ _PRIORITY = (
     "identified-solutions.md", "ranking.md", "validation-plan.md",
     "product-strategy/", "go-to-market/",
 )
-_MAX_FILE_CHARS = 40_000
-_MAX_TOTAL_CHARS = 350_000
+#: Size cap of the material: what one call can read, not a budget to fit into. Nothing is cut or left out to meet it — over it,
+#: the build fails (`MaterialTooLarge`), or only the options step for its larger material. There used to be a per-file cap of 40,000 characters, set before any model call was
+#: measured, and it cut the Discovery document mid-text. The rules build that document by appending Part 1 → 2 → 3 with no
+#: length limit, so its tail is always the Go-to-Market part — launch plan, first-release scope, success monitoring — and that
+#: is what the cap cut. Observed (a workshop run): 45,144 characters, the launch plan from 40,672 on, and vision.md lost the
+#: staged success criteria and the remediation triggers. Leaving whole files out instead would only move the loss.
+#: The calls run on 1M-context models (observed: a 200,749-token input succeeded). Korean material measured about 0.77 tokens
+#: per character; at a conservative 1 token per character, 900,000 leaves room for the instructions and the 64,000-token output.
+#: The largest material observed so far is about 220,000 characters.
+_MAX_MATERIAL_CHARS = 900_000
+
+
+class MaterialTooLarge(Exception):
+    """The material passes what one call can read. Not a ValueError — that is `malformed_output`."""
+
 
 Status = Literal["generating", "ready", "failed", "interrupted"]
 StepStatus = Literal["pending", "running", "done", "failed"]
@@ -164,7 +177,7 @@ class Manifest(BaseModel):
     sources: dict[str, str] = {}
     supplement: str = ""
     findings: list[Finding] = []
-    #: Originals not loaded, or loaded truncated, because of the size cap.
+    #: Originals cut or left out by the size cap. Only manifests from before material was loaded whole have any.
     truncated: list[str] = []
     #: The previous version's open decisions owned by the PM. Passed on to this version to carry over; the check flags any that disappear without an answer.
     carried: list[str] = []
@@ -1328,21 +1341,14 @@ async def read_sources(read: Reader, paths: Sequence[str]) -> dict[str, str]:
     return out
 
 
-def _fit(sources: dict[str, str]) -> tuple[dict[str, str], list[str]]:
-    """Fit within the size cap. Truncates each file, and when the total is exceeded, drops the tail (lower priority)."""
-    kept: dict[str, str] = {}
-    truncated: list[str] = []
-    total = 0
-    for path, text in sources.items():
-        if len(text) > _MAX_FILE_CHARS:
-            text = text[:_MAX_FILE_CHARS] + "\n[… truncated]\n"
-            truncated.append(path)
-        if total + len(text) > _MAX_TOTAL_CHARS:
-            truncated.append(path)
-            continue
-        kept[path] = text
-        total += len(text)
-    return kept, sorted(set(truncated))
+def _check_size(material: dict[str, str]) -> dict[str, str]:
+    """The material as is, if one call can read it. Otherwise `MaterialTooLarge` — never a cut or a left-out file."""
+    total = sum(len(text) for text in material.values())
+    if total > _MAX_MATERIAL_CHARS:
+        largest = sorted(material, key=lambda p: len(material[p]), reverse=True)[:5]
+        raise MaterialTooLarge(f"material is {total:,} characters, over {_MAX_MATERIAL_CHARS:,} — largest: "
+                               + ", ".join(f"{p} {len(material[p]):,}" for p in largest))
+    return material
 
 
 async def start(s3: S3StoreLike, readiness: Readiness, *, resume: bool = False,
@@ -1405,10 +1411,9 @@ async def run(s3: S3StoreLike, *, read: Reader, paths: Sequence[str], readiness:
         # The ledger needs no model and the same originals and records yield the same table, so it is built first and is
         # vision.md's material as well as a package file.
         ledger = ledger_mod.build(sources, record, language)
-        material, truncated = _fit(vision_material(sources, ledger))
-        fitted, _ = _fit(sources)
+        material = _check_size(vision_material(sources, ledger))
         await state.save(manifest.model_copy(update={
-            "sources": digests, "supplement": supplement, "truncated": truncated}))
+            "sources": digests, "supplement": supplement, "truncated": []}))
         written = await _finished_documents(s3, state)
         lab = _labels(language)
         candidates: list[open_rows.Candidate] = []
@@ -1435,7 +1440,7 @@ async def run(s3: S3StoreLike, *, read: Reader, paths: Sequence[str], readiness:
         try:
             if file == OPTIONS:
                 document = await _write_options(call, progress, language=language,
-                                                vision=written[VISION], sources=fitted)
+                                                vision=written[VISION], sources=sources)
             else:
                 prompt = build_prompt(language=language, readiness=readiness, record=record,
                                       sources=material, candidates=candidates)
@@ -1512,7 +1517,8 @@ async def _write_options(call: Caller, progress: "_Progress", *, language: str, 
     if not asked:
         return "{}"
     section = "\n".join(line for _, line in _table_lines(vision, _labels(language), "vision"))
-    prompt = build_options_prompt(language=language, questions=asked, sources=sources,
+    # The options read the question files too, so their material is larger than vision.md's. Over the cap, only this step fails.
+    prompt = build_options_prompt(language=language, questions=asked, sources=_check_size(sources),
                                   decisions=section)
     text = await asyncio.wait_for(call(prompt, progress.update), timeout=CALL_TIMEOUT_S)
     options = parse_options(text, asked, list(sources))
@@ -1609,7 +1615,8 @@ class _Ticker:
 
 def _reason(exc: BaseException) -> str:
     """Failure reason code shown on screen."""
-    return ("timeout" if _is_timeout(exc)
+    return ("material_too_large" if isinstance(exc, MaterialTooLarge)
+            else "timeout" if _is_timeout(exc)
             else "too_long" if _in_chain(exc, "MaxTokensReachedException")
             else "malformed_output" if isinstance(exc, ValueError)
             else "generation_failed")
