@@ -1,8 +1,7 @@
 // Handoff readiness — shows the server's assessment (handoff/readiness) as-is.
 //
 // Only one thing blocks: without a spec there is nothing to build (blockers). Everything else is a warning — empty
-// sections stay as "no material", and accepted AI suggestions surface as an evidence grade. Showing rather than hiding
-// them is this screen's job.
+// sections stay as "no material". Showing rather than hiding them is this screen's job.
 //
 // Spec consistency is a warning too. Reflecting what changed during the build into the spec is done by Discovery's reconciliation
 // pass (discovery-config/CLAUDE.md), so here we send the user back there — filling a draft into the workspace
@@ -153,15 +152,6 @@ export function ReadinessPanel({
               ? t("handoff.check.refs.broken").replace("{n}", String(r.broken_references.length))
                 .replace("{list}", r.broken_references.join(", "))
               : t("handoff.check.refs.ok")}
-        />
-        <Row
-          tone="info"
-          name={t("handoff.check.ai")}
-          hint={t("handoff.check.ai.hint")}
-          value={t("handoff.check.ai.value").replace("{accepted}", String(r.ai_defaults.accepted))
-            .replace("{suggested}", String(r.ai_defaults.suggested))}
-          action={r.ai_defaults.accepted > 0
-            ? { label: t("handoff.check.ai.confirm"), onClick: onSupplement } : undefined}
         />
       </div>
 

@@ -416,31 +416,3 @@ def insert(doc: str, table: str) -> str:
             tail = ["", *lines[end:]] if end < len(lines) else []
             return "\n".join([*lines[:i + 1], "", table, *tail]) + "\n"
     return "\n".join([*lines, "", "### Open Questions", "", table]) + "\n"
-
-
-# ---- Marks for unconfirmed AI suggestions ----
-
-_BRACKET = re.compile(r"\[[^\[\]]*\]")
-
-
-def mark(doc: str, kept: set[tuple[str, int]], label: str, ledger_name: str) -> str:
-    """Puts "(<label>)" before the first citation on a line that cites the ledger row of an accepted, unconfirmed AI suggestion,
-    and removes the marks the model wrote. The instructions alone mismarked — a line marked without citing such a row, a row cited
-    without the mark — and the ledger already says who decided each row."""
-    mark_text = f"({label})"
-    out: list[str] = []
-    in_open = False
-    for line in doc.split("\n"):
-        if _HEADING.match(line):
-            in_open = bool(_OPEN_HEADING.match(line))
-            out.append(line)
-            continue
-        line = re.sub(rf"\s*{re.escape(mark_text)}", "", line)
-        if not in_open:
-            for bracket in _BRACKET.finditer(line):
-                body = bracket.group(0)
-                if ledger_name in body and any(ref in kept for ref in _refs(body)):
-                    line = line[:bracket.start()].rstrip() + f" {mark_text} " + line[bracket.start():]
-                    break
-        out.append(line)
-    return "\n".join(out)

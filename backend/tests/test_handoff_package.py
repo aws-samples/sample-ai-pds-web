@@ -37,7 +37,7 @@ def _vision(open_table: str) -> str:
 ### Success Metrics
 | Metric | Today | Target | How it is measured |
 |---|---|---|---|
-| 완료율 | 재료 없음 | 95% | 건별 집계 (AI 제안, PM 미확인) [decisions.md · use-case-intake/use-case-intake-questions.md Q1] |
+| 완료율 | 재료 없음 | 95% | 건별 집계 [decisions.md · use-case-intake/use-case-intake-questions.md Q1] |
 
 ## Full Scope Vision
 ### Product Vision Statement
@@ -987,60 +987,35 @@ def test_the_start_prompt_and_readme_ask_for_who_confirmed_an_external_fact_and_
     assert "who confirmed it and when" in package._README["en"]
 
 
-# ---- the AI suggestions vision.md relies on ----
+# ---- decisions are the PM's; estimates stay estimates ----
 
-_RELIES = """# 샘플몰 — Vision
-
-## Business Context
-### Success Metrics
-| Metric | Today | Target | How it is measured |
-|---|---|---|---|
-| 완료율 | 60% | 95% (AI 제안, PM 미확인) | 건별 집계 [decisions.md · use-case-intake/use-case-intake-questions.md Q1] |
-### Business Constraints
-- 사내 예산으로 운영한다. (AI 제안, PM 미확인) [decisions.md · use-case-intake/use-case-intake-questions.md Q2, Q3]
-
-## Full Scope Vision
-### Growth and Roadmap
-- 2단계는 파일럿 뒤에 요청한다. [decisions.md · use-case-intake/use-case-intake-questions.md Q4]
-
-## MVP Scope
-### Features In Scope
-| Feature | Description | Why it cannot wait |
-|---|---|---|
-| 발송 | 대상 지정 후 발송 (AI 제안, PM 미확인) | 첫 장면 [use-case-intake/use-case-intake-questions.md · Q4] |
-"""
+_ESTIMATED = D + "use-case-intake/use-cases.md"
 
 
-def test_cited_suggestions_tell_scope_lines_from_the_rest():
-    state = assess(B + [_QFILE], {_QFILE: QUESTIONS})
-    cited = package.cited_suggestions(_RELIES, state, "ko")
-    key = lambda n: supplement.confirmation_key(_QFILE, n)  # noqa: E731
-    # Q1: a success metric. Q2: a constraint, outside the scope. Q3 is the PM's own choice, so it is dropped.
-    # Q4: an unmarked roadmap line does not count; the marked scope row does, in the earlier citation shape too.
-    assert set(cited) == {key(1), key(2), key(4)}
-    assert [(c.text, c.scope) for c in cited[key(1)]] == [("완료율 60%", True)]
-    assert [(c.text, c.scope) for c in cited[key(2)]] == [("사내 예산으로 운영한다.", False)]
-    assert [(c.text, c.scope) for c in cited[key(4)]] == [("발송 대상 지정 후 발송", True)]
-
-    view = supplement.view(state, supplement.Supplement(), has_package=True, cited=cited)
-    flags = {c.number: (c.in_scope, c.in_vision) for c in view.confirmations}
-    assert flags == {1: (True, ["완료율 60%"]), 2: (False, ["사내 예산으로 운영한다."]),
-                     4: (True, ["발송 대상 지정 후 발송"])}
-
-
-def test_route_supplement_marks_the_ai_suggestions_the_vision_relies_on(env):
+def test_the_supplement_no_longer_asks_the_pm_to_confirm_their_own_answers(env):
+    """Every Discovery answer is the PM's pick — the form preselects nothing. The tab used to list the ones that matched the
+    AI's marked option for the PM to confirm again."""
     client, _, writer = env
-    _seed(client, "pkg-relies", {p: f"# {p}\n" for p in B} | {_QFILE: QUESTIONS})
-    before = client.get("/projects/pkg-relies/handoff/supplement").json()
-    assert all(not c["in_vision"] and not c["in_scope"] for c in before["confirmations"])
+    _seed(client, "pkg-pm", {p: f"# {p}\n" for p in B} | {_QFILE: QUESTIONS})
+    writer["call"] = _writer()
+    client.post("/projects/pkg-pm/handoff/package")
+    assert _wait_settled(client, "pkg-pm")["manifest"]["status"] == "ready"
+    body = client.get("/projects/pkg-pm/handoff/supplement").json()
+    assert "confirmations" not in body
+    package_view = client.get("/projects/pkg-pm/handoff/package").json()
+    for name in ("vision.md", "README.md", "start-prompt.md", "decisions.md"):
+        assert "AI 제안" not in package_view["files"][name], name
 
-    writer["call"] = _writer(doc=_RELIES)
-    client.post("/projects/pkg-relies/handoff/package")
-    assert _wait_settled(client, "pkg-relies")["manifest"]["status"] == "ready"
-    body = client.get("/projects/pkg-relies/handoff/supplement").json()
-    # Code marks by ledger citation: Q4's roadmap line gains the mark the model left off, and the scope row that cites
-    # the question file instead of its ledger row loses the one the model wrote.
-    assert {c["number"]: c["in_scope"] for c in body["confirmations"]} == {1: True, 2: False, 4: False}
+
+def test_an_estimate_the_cited_original_marks_keeps_its_mark_in_the_vision():
+    s3 = FakeS3Store()
+    files = {p: f"# {p}\n" for p in B} | {
+        _ESTIMATED: "# 활용 사례\n\n## 대상\n\n- 담당자 21명이 연 약 1,584시간(담당자 추정)을 서명 수합에 쓴다.\n"}
+    doc = _OPEN.replace("| 지점 담당자 | 21명 | 누락자 추적 [use-case-intake/use-cases.md · 대상] |",
+                        "| 지점 담당자 | 21명, 연 약 1,584시간 | 누락자 추적 [use-case-intake/use-cases.md · 대상] |")
+    _run(_generate(s3, files, _writer(doc=doc)))
+    vision = s3.blobs[package.PACKAGE_PREFIX + package.VISION]
+    assert "| 지점 담당자 | 21명, 연 약 1,584시간 (추정) | 누락자 추적" in vision
 
 
 # ---- open questions ask only what Discovery left open ----
@@ -1051,9 +1026,9 @@ def test_the_prompt_does_not_reopen_what_discovery_decided():
     accepted, a launch scope the press release went beyond."""
     prompt = _flat(package.build_prompt(language="ko", readiness=assess(B, {}),
                                         record=supplement.Supplement(), sources={}))
-    # What counts as decided: the Discovery document, the approved spec of record, a ledger answer — whoever decided.
+    # What counts as decided: the Discovery document, the approved spec of record, the PM's answer in the ledger.
     assert "A decision is already made when the Discovery document states it" in prompt
-    assert "spec of record" in prompt and "whoever decided, the PM or an AI suggestion the PM kept" in prompt
+    assert "spec of record" in prompt and "the decision ledger records the PM's answer to it" in prompt
     assert "Do not ask whether to confirm what one of them states" in prompt
     # Closing needs a reason code can check; new questions need a quoted passage.
     assert '"decided": made, by the test above. "by" cites what makes it' in prompt
@@ -1061,7 +1036,9 @@ def test_the_prompt_does_not_reopen_what_discovery_decided():
     # The press release is the full vision; the launch plan, decided last, sets the first release.
     assert "that is the full vision, not a contradiction" in prompt and "the launch plan stands" in prompt
     assert "keeps the name the material gives it" in prompt
-    assert "marks for unconfirmed AI suggestions are added afterwards" in prompt
+    # Every ledger decision is the PM's; an estimate stays an estimate.
+    assert "every decision in the ledger is the PM's" in prompt and "AI suggestion" not in prompt
+    assert "A value the material marks as an estimate or an assumption keeps that mark" in prompt
 
 
 def test_a_kept_product_name_is_not_taken_for_an_internal_number():

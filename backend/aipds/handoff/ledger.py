@@ -1,8 +1,13 @@
 # backend/aipds/handoff/ledger.py — decision ledger: a table carrying over, as is, the decisions the PM answered in Discovery.
 #
-# **Why it exists.** Discovery documents hold the results of decisions, but not whether a decision was chosen
-# by the PM or was an AI-proposed default accepted as is. Which decisions development trusts and which it
-# re-checks is determined by that difference — in observations, 89% of questions where the AI marked a default were answered with that default.
+# **Why it exists.** Discovery documents hold the results of decisions, not the questions they answer. The ledger is the
+# decisions as the PM gave them: every answered question, the chosen option's words and the PM's elaboration, so development
+# can trace a requirement back to the question that settled it.
+#
+# **Every answer is the PM's.** The question form preselects nothing and has no "take the suggestions" shortcut, so an answer
+# that matches the option the AI marked is still one the PM picked. The ledger once set those apart as "AI suggestion kept"
+# — about half of all answers (98 of 200 across seven projects) — and vision.md, the handoff tab and the harness instructions
+# then asked the PM to confirm, again, what they had already decided. Agreeing with a suggestion is a decision.
 #
 # **It does not call the model.** It only moves question file answers and handoff tab records into a table. A
 # rewritten document can diverge from the source (observed: internal contradictions in a rewritten PRD), and
@@ -26,15 +31,9 @@ _TEXT = {
     "ko": {
         "title": "# 결정 장부",
         "lead": ("Discovery의 질문 파일에서 PM이 답한 결정과 인계 직전에 PM이 보탠 답을 그대로 "
-                 "옮겼습니다. 결정의 내용과 이유는 `discovery-document.md`에 있고, 이 표는 "
-                 "**누가 정했는가**를 보여 줍니다."),
-        "legend": ("- **PM 선택**: PM이 직접 고르거나 썼습니다.\n"
-                   "- **AI 제안 그대로**: AI가 기본값으로 표시한 보기를 PM이 그대로 골랐습니다. "
-                   "구현을 좌우하면 PM에게 다시 확인하세요.\n"
-                   "- **AI 제안 · PM 확인**: 위와 같지만 인계 직전에 PM이 맞다고 확인했습니다.\n"
-                   "- **인계 시 보완(PM)**: Discovery 밖에서, 인계 직전에 PM이 답했습니다."),
-        "columns": ("근거", "질문", "답", "누가 정했나"),
-        "pm": "PM 선택", "ai": "AI 제안 그대로", "confirmed": "AI 제안 · PM 확인",
+                 "옮겼습니다. 모두 PM이 정한 것입니다. 결정의 내용과 이유는 `discovery-document.md`에 "
+                 "있고, 이 표는 각 결정이 어느 질문에서 나왔는지와 그 답을 보여 줍니다."),
+        "columns": ("근거", "질문", "답"),
         "handoff": "인계 시 보완(PM)", "handoff_title": "## 인계 시 보완(PM)",
         "handoff_columns": ("질문", "답", "답한 시각"),
         "unknown": "모름 (열린 결정으로 넘김)", "checking": "확인 중",
@@ -53,15 +52,10 @@ _TEXT = {
     "en": {
         "title": "# Decision ledger",
         "lead": ("Decisions the PM answered in the Discovery question files, and answers the PM "
-                 "added right before handoff, copied as they are. What was decided and why is in "
-                 "`discovery-document.md`; this table shows **who decided**."),
-        "legend": ("- **PM choice**: the PM picked or wrote it.\n"
-                   "- **AI suggestion kept**: the PM kept the option an AI marked as the default. "
-                   "If it shapes the build, confirm it with the PM.\n"
-                   "- **AI suggestion · PM confirmed**: as above, and the PM confirmed it before handoff.\n"
-                   "- **Added at handoff (PM)**: the PM answered it outside Discovery, right before handoff."),
-        "columns": ("Source", "Question", "Answer", "Decided by"),
-        "pm": "PM choice", "ai": "AI suggestion kept", "confirmed": "AI suggestion · PM confirmed",
+                 "added right before handoff, copied as they are. The PM made every one of them. What "
+                 "was decided and why is in `discovery-document.md`; this table shows which question each "
+                 "decision answers, and the answer."),
+        "columns": ("Source", "Question", "Answer"),
         "handoff": "Added at handoff (PM)", "handoff_title": "## Added at handoff (PM)",
         "handoff_columns": ("Question", "Answer", "Answered at"),
         "unknown": "Unknown (moved to open decisions)", "checking": "Being checked with",
@@ -91,27 +85,19 @@ _SINGLE = re.compile(r"^([A-J])\s*(?::\s*(.*))?$", re.DOTALL)
 def build(contents: Mapping[str, str], record: supplement_mod.Supplement, language: str) -> str:
     """Question files (workspace path → content) and handoff tab records → `decisions.md`."""
     lab = _TEXT.get(language, _TEXT["ko"])
-    confirmed = set(record.confirmed)
-    by_stage: dict[str, list[tuple[str, str, str, str]]] = {}
+    by_stage: dict[str, list[tuple[str, str, str]]] = {}
     for path in sorted(p for p in contents if p.endswith("-questions.md")):
         parsed = parse_question_file(path.rsplit("/", 1)[-1], contents[path])
         cite = path.removeprefix("aiplc-docs/discovery/")
         for q in parsed.questions:
             if not (q.answer or "").strip():
                 continue
-            suggested = readiness_mod.suggested_letters(q)
             chosen = readiness_mod.chosen_letters(q)
-            if chosen & suggested:
-                who = (lab["confirmed"]
-                       if supplement_mod.confirmation_key(path, q.number) in confirmed
-                       else lab["ai"])
-            else:
-                who = lab["pm"]
             by_stage.setdefault(readiness_mod.stage_of(path), []).append(
-                (f"{cite} Q{q.number}", q.ask or q.text, _answer(q, chosen), who))
+                (f"{cite} Q{q.number}", q.ask or q.text, _answer(q, chosen)))
 
     head = "| " + " | ".join(lab["columns"]) + " |\n|" + "---|" * len(lab["columns"])
-    parts = [lab["title"], lab["lead"], lab["legend"]]
+    parts = [lab["title"], lab["lead"]]
     for stage in _STAGE_ORDER:
         rows = by_stage.get(stage)
         if not rows:
@@ -127,12 +113,36 @@ def build(contents: Mapping[str, str], record: supplement_mod.Supplement, langua
     return "\n\n".join(parts) + "\n"
 
 
+def decisions(contents: Mapping[str, str]) -> list[supplement_mod.Decision]:
+    """Every answered question in the question files (workspace path → content), in file and question order. All of them —
+    an answer that matches the AI's marked option is the PM's decision like any other."""
+    out: list[supplement_mod.Decision] = []
+    for path in sorted(p for p in contents if p.endswith("-questions.md")):
+        parsed = parse_question_file(path.rsplit("/", 1)[-1], contents[path])
+        for q in parsed.questions:
+            answer = (q.answer or "").strip()
+            if not answer:
+                continue
+            chosen = readiness_mod.chosen_letters(q)
+            match = _SINGLE.match(answer)
+            out.append(supplement_mod.Decision(
+                file=path, number=q.number, ask=q.ask or q.text, answer=answer,
+                stage=readiness_mod.stage_of(path),
+                choices=[_option_text(o.text) for o in q.options if o.letter in chosen and not o.is_other] or [answer],
+                remark=(match.group(2) or "").strip() if match and chosen else "",
+                options=q.options, multi_select=q.multi_select))
+    return out
+
+
+def _option_text(text: str) -> str:
+    return text.partition(readiness_mod.SUGGESTION_MARK)[0].strip()
+
+
 def _answer(q: Question, chosen: set[str]) -> str:
     """The text of the chosen option (with the elaboration appended if any). If not an option letter, the PM's answer as written."""
     if not chosen:
         return (q.answer or "").strip()
-    texts = [o.text.partition(readiness_mod.SUGGESTION_MARK)[0].strip()
-             for o in q.options if o.letter in chosen and not o.is_other]
+    texts = [_option_text(o.text) for o in q.options if o.letter in chosen and not o.is_other]
     match = _SINGLE.match((q.answer or "").strip())
     remark = (match.group(2) or "").strip() if match else ""
     return " / ".join(texts) + (f" — {remark}" if remark else "")

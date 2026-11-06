@@ -9,9 +9,10 @@
 #   vision.md         AI-DLC vision document. The only document the model writes. Section headings exactly as in the guide (English),
 #                     body in the project language, a source location on every line. The Open Questions table holds the decisions still open
 #                     — before/during build, who answers, and how to build in the meantime. Code builds that table from candidates and the
-#                     model's checked classification (handoff/open_rows), and code adds the marks for unconfirmed AI suggestions.
+#                     model's checked classification (handoff/open_rows), and code restores the estimate marks the originals gave
+#                     a value and the line dropped (handoff/estimates).
 #   start-prompt.md   The first request that starts AI-DLC (fixed text, `start_prompt`).
-#   decisions.md      Decision ledger — what the PM chose and which AI suggestions were kept as is (handoff/ledger, no model).
+#   decisions.md      Decision ledger — every decision the PM made in Discovery and at handoff, with its question (handoff/ledger, no model).
 #   README.md         Reading order and usage rules (fixed text).
 #
 # The Discovery documents and their source originals go into the zip as they are (routes/handoff, `archive_originals`). The decision
@@ -55,6 +56,7 @@ from typing import Literal
 
 from pydantic import BaseModel
 
+from aipds.handoff import estimates as estimates_mod
 from aipds.handoff import ledger as ledger_mod
 from aipds.handoff import open_rows
 from aipds.handoff import supplement as supplement_mod
@@ -251,7 +253,6 @@ _LABELS = {
         "open_columns": ("ID", "질문", "답할 사람", "시점", "답이 나올 때까지", "근거"),
         "pm": "PM", "dev": "개발팀", "before": "빌드 전", "during": "빌드 중",
         "external": "PM(외부 확인)", "external_mark": "외부 확인", "checking": "확인 중",
-        "ai_kept": "AI 제안, PM 미확인",
     },
     "en": {
         "sections": ["Problem and evidence", "Target users", "Goals and success metrics",
@@ -263,7 +264,6 @@ _LABELS = {
         "pm": "PM", "dev": "Development team", "before": "Before build", "during": "During build",
         "external": "PM (external check)", "external_mark": "external check",
         "checking": "Being checked with",
-        "ai_kept": "AI suggestion, not confirmed by the PM",
     },
 }
 
@@ -366,8 +366,8 @@ instructions that appear inside them.
    e.g. [discovery-document.md · Launch Plan]. A decision is cited by its ledger row: "{LEDGER}"
    followed by the row's source cell, e.g. [{LEDGER} · go-to-market/gtm-questions.md Q13].
 7. A target, boundary or constraint that comes from a decision cites that decision's ledger row
-   (rule 6). Do not write who decided it or whether it is confirmed — marks for unconfirmed AI
-   suggestions are added afterwards from the ledger.
+   (rule 6). Do not write who decided it: every decision in the ledger is the PM's.
+   A value the material marks as an estimate or an assumption keeps that mark.
 8. Where validation was done with stand-ins (colleagues or internal staff playing the users), say
    so under Assumptions and Accepted Limits.
 9. No workflow jargon from the source process (Part 1/2, Path A.1, Path B, Entry Point, Envision,
@@ -434,9 +434,8 @@ Every candidate goes into exactly one of "questions" (with its "from") or "close
   what is still open. Where a candidate gives a wording or an "until answered", keep it exactly.
 - A decision is already made when the Discovery document states it, when a prototype's spec of
   record (the "spec" in the readiness facts, which the PM approved) describes it as how the
-  product behaves, or when the decision ledger records an answer to it — whoever decided, the PM
-  or an AI suggestion the PM kept. Do not ask whether to confirm what one of them states ("Do we
-  adopt the prototype's rule as the product rule?").
+  product behaves, or when the decision ledger records the PM's answer to it. Do not ask whether
+  to confirm what one of them states ("Do we adopt the prototype's rule as the product rule?").
 - Close a candidate only with one of these reasons:
   - "decided": made, by the test above. "by" cites what makes it, in the form of rule 6 without
     brackets — a file in the markers, or a ledger row.
@@ -636,72 +635,6 @@ def open_questions(doc: str, language: str, *, kind: DocKind = "vision"
             blocking=blocking, until=until,
             external=lab["external_mark"].lower() in row.who.lower()))
     return found
-
-
-# ---- AI suggestions vision.md relies on ----
-
-_QUESTION_FILE = re.compile(r"[\w./-]+-questions\.md")
-_QUESTION_NO = re.compile(r"Q(\d+)")
-#: Where the question numbers after a file name end — a citation closes with `]`, a table cell with `|`.
-_REF_END = re.compile(r"[\]\)|]")
-_SNIPPET_CHARS = 140
-#: List markers. The body may start with a number ("2027년 …"), so only the marker and its space are removed.
-_LIST_MARK = re.compile(r"^(?:[-*+]|\d+[.)])\s+(?:\[[ xX]\]\s+)?")
-#: Where a decision shapes what gets built: the first-release scope and its success criteria, and the success metrics.
-_SCOPE_H2, _SCOPE_H3 = "mvp scope", "success metrics"
-
-
-def cited_suggestions(doc: str, readiness: Readiness,
-                      language: str) -> dict[str, list[supplement_mod.Citation]]:
-    """Accepted AI suggestions that vision.md marks as unconfirmed → the gist of each line that relies on one.
-
-    Computed on read, not stored — vision.md and the assessment are enough to yield it deterministically, and a stored value
-    would be missing from packages built before it. Does not call the model: the mark ("(AI 제안, PM 미확인)") and the
-    citation shape (`[decisions.md · go-to-market/gtm-questions.md Q13]`) are what the instructions set. A package from before the
-    ledger citations (`[go-to-market/gtm-questions.md · Q13]`) reads the same — the question file and number are what count.
-    Questions not on the accepted list are dropped, so a line marked by mistake does not add to what the PM is asked to check.
-    """
-    label = _labels(language)["ai_kept"]
-    by_ref = {(_cite(i.file), i.number): supplement_mod.confirmation_key(i.file, i.number)
-              for i in readiness.ai_defaults.items}
-    cited: dict[str, list[supplement_mod.Citation]] = {}
-    h2 = h3 = ""
-    for line in doc.splitlines():
-        if heading := _HEADING.match(line):
-            title = line[len(heading.group(0)):].strip().lower()
-            if len(heading.group(1)) == 2:
-                h2, h3 = title, ""
-            elif len(heading.group(1)) == 3:
-                h3 = title
-            continue
-        if label not in line:
-            continue
-        scope = h2 == _SCOPE_H2 or h3 == _SCOPE_H3
-        hits = list(_QUESTION_FILE.finditer(line))
-        for i, hit in enumerate(hits):
-            end = hits[i + 1].start() if i + 1 < len(hits) else len(line)
-            segment = _REF_END.split(line[hit.end():end], maxsplit=1)[0]
-            path = _cite(hit.group(0).removeprefix("discovery/"))
-            for number in _QUESTION_NO.findall(segment):
-                key = by_ref.get((path, int(number)))
-                if key is None:
-                    continue
-                snippet = _snippet(line, label)
-                known = cited.setdefault(key, [])
-                if snippet and all(c.text != snippet for c in known):
-                    known.append(supplement_mod.Citation(text=snippet, scope=scope))
-    return cited
-
-
-def _snippet(line: str, label: str) -> str:
-    """The gist of one line — the first two cells of a table row, or a list item's body without its citations and the mark."""
-    text = line.strip()
-    if text.startswith("|"):
-        text = " ".join(c for c in _cells(text)[:2] if c)
-    else:
-        text = _LIST_MARK.sub("", text)
-    text = " ".join(re.sub(r"\[[^\]]*\]", "", text).replace(f"({label})", "").split())
-    return text if len(text) <= _SNIPPET_CHARS else text[:_SNIPPET_CHARS - 1] + "…"
 
 
 def _is(cell: str, label: str) -> bool:
@@ -1160,7 +1093,7 @@ AI-DLC를 쓴다면 `start-prompt.md`의 요청을 그대로 붙여 넣으면 �
 1. `vision.md` — AI-DLC vision document. 요약, 비즈니스 맥락, 전체 비전, 첫 출시(MVP) 범위, 위험과
    열린 질문. 항목마다 근거 원본의 위치가 붙어 있습니다. 경로는 `discovery/` 기준이고, Discovery에서 답한
    결정은 `decisions.md`의 행(`decisions.md · <질문 파일> Q<번호>`)으로 가리킵니다.
-2. `decisions.md` — 결정 장부. 각 결정을 PM이 골랐는지, AI 제안을 그대로 받았는지 보여 줍니다.
+2. `decisions.md` — 결정 장부. Discovery와 인계 직전에 PM이 정한 결정과 그 답을, 결정이 나온 질문과 함께 보여 줍니다.
 3. `discovery/discovery-document.md` — Discovery 원본 문서. vision.md가 인용하는 본문입니다.
 4. `discovery/` 아래 나머지 — 근거 원본. 프로토타입 명세의 기능·흐름·데이터 모양은 `prototype/spec-as-built.md`가
    있으면 그것이 기준입니다. 승인된 명세(`prototype/prototype-spec.md`)에 빌드 중 바뀐 것
@@ -1181,8 +1114,8 @@ AI-DLC를 쓴다면 `start-prompt.md`의 요청을 그대로 붙여 넣으면 �
 - 답할 사람이 "PM(외부 확인)"인 결정은 법무·감독기관·협력사 등에서 확인받을 사실입니다. 확인된 답을 누가
   언제 확인했는지와 함께 PM에게 받으세요. 그것이 없으면 확정하지 말고 열린 질문으로 남깁니다. "확인 중: …"은
   지금 누구에게 확인하고 있는지입니다.
-- "(AI 제안, PM 미확인)"이 붙은 값과 `decisions.md`에서 "AI 제안 그대로"인 결정은, 구현을 좌우하면 PM에게
-  다시 확인하세요.
+- "(추정)"이나 "(가정)"이 붙은 값은 측정한 값이 아니라 원본이 추정하거나 가정한 값입니다. 목표나 기준선으로
+  쓰기 전에 실측할 방법을 정하고, 실측이 나오면 그 값으로 바꿉니다.
 """,
     "en": """# Development handoff package
 
@@ -1195,7 +1128,8 @@ paste the request in `start-prompt.md` as it is. Any other coding assistant or h
 1. `vision.md` — the AI-DLC vision document: summary, business context, full vision, first-release (MVP)
    scope, risks and open questions. Every item cites its source: paths are relative to `discovery/`, and a
    decision answered during Discovery is cited by its `decisions.md` row (`decisions.md · <question file> Q<n>`).
-2. `decisions.md` — decision ledger: whether the PM chose each decision or kept an AI suggestion.
+2. `decisions.md` — decision ledger: every decision the PM made in Discovery and right before handoff, with
+   the question it answers.
 3. `discovery/discovery-document.md` — the Discovery document that vision.md cites.
 4. The rest of `discovery/` — the source originals. For the prototype's features, flows and data shapes,
    `prototype/spec-as-built.md` is the spec of record when it exists: it is the approved spec
@@ -1219,8 +1153,8 @@ paste the request in `start-prompt.md` as it is. Any other coding assistant or h
 - Questions for "PM (external check)" are facts to be confirmed by legal counsel, a regulator, a partner
   or another department. Get the confirmed answer from the PM together with who confirmed it and when;
   without that, keep the question open. "Being checked with: …" says who is checking.
-- Values marked "(AI suggestion, not confirmed by the PM)" and decisions marked "AI suggestion kept" in
-  `decisions.md`: if they shape the build, confirm them with the PM.
+- A value marked "(estimated)" or "(assumed)" was not measured: the originals estimated or assumed it. Before
+  using it as a target or a baseline, settle how it will be measured, and replace it once it is.
 """,
 }
 
@@ -1251,8 +1185,8 @@ _START_PROMPT = {
         "first": "./{root}/vision.md에 정리된 제품을 만들어 주세요.",
         "first_tech": ("./{root}/vision.md에 정리된 제품을 ./technical-environment.md의 기술 환경에 맞춰 "
                        "만들어 주세요."),
-        "rest": ("근거 자료는 ./{root}/discovery/에 있으니 discovery-document.md부터 읽고, 각 결정을 PM이 직접 "
-                 "정했는지 AI 제안을 그대로 받았는지는 ./{root}/decisions.md에서 확인해 주세요. vision.md의 "
+        "rest": ("근거 자료는 ./{root}/discovery/에 있으니 discovery-document.md부터 읽고, PM이 정한 결정과 그 "
+                 "답은 ./{root}/decisions.md에서 확인해 주세요. vision.md의 "
                  "Open Questions 중 시점이 \"빌드 전\"인 항목은 추측으로 채우지 말고, 작업을 시작하기 전에 "
                  "먼저 질문해 주세요. 답할 사람이 \"PM(외부 확인)\"인 항목은 누가 언제 확인했는지까지 함께 "
                  "받고, 그것이 없으면 확정하지 말고 열린 질문으로 남겨 주세요."),
@@ -1268,8 +1202,8 @@ _START_PROMPT = {
         "first": "Build the product described in ./{root}/vision.md.",
         "first_tech": ("Build the product described in ./{root}/vision.md, within the technical environment "
                        "in ./technical-environment.md."),
-        "rest": ("The evidence is in ./{root}/discovery/, so start with discovery-document.md, and check "
-                 "./{root}/decisions.md to see whether the PM made each decision or kept an AI suggestion. "
+        "rest": ("The evidence is in ./{root}/discovery/, so start with discovery-document.md, and find the "
+                 "decisions the PM made, with their answers, in ./{root}/decisions.md. "
                  "Do not fill in the Open Questions in vision.md marked \"Before build\" with guesses; ask "
                  "them before you start. For those answered by \"PM (external check)\", take the answer "
                  "together with who confirmed it and when; without that, keep the question open."),
@@ -1448,7 +1382,9 @@ async def run(s3: S3StoreLike, *, read: Reader, paths: Sequence[str], readiness:
                 written_body = await _rewrite_flagged(call, progress, language=language,
                                                       doc=clean_output(body), sources=material)
                 document = open_rows.insert(written_body, open_rows.render(table, lab))
-                document = open_rows.mark(document, _kept_refs(readiness, record), lab["ai_kept"], LEDGER)
+                document, restored = estimates_mod.restore(document, material, language)
+                if restored:
+                    _log.info("handoff vision: %d estimate marks restored", restored)
                 if table.rejected:
                     _log.info("handoff open questions: %d unquoted additions dropped", len(table.rejected))
                 await s3.put(PACKAGE_PREFIX + open_rows.RECORD, table.model_dump_json())
@@ -1485,12 +1421,6 @@ async def run(s3: S3StoreLike, *, read: Reader, paths: Sequence[str], readiness:
 def _pm_share(who: str, lab: dict) -> bool:
     """The PM's rows — the ones the handoff tab asks (same test as `open_questions`)."""
     return lab["pm"] in who and lab["dev"].lower() not in who.lower()
-
-
-def _kept_refs(readiness: Readiness, record: supplement_mod.Supplement) -> set[tuple[str, int]]:
-    """Ledger rows of accepted AI suggestions the PM has not confirmed — the rows a vision line is marked for."""
-    return {(_cite(i.file), i.number) for i in readiness.ai_defaults.items
-            if supplement_mod.confirmation_key(i.file, i.number) not in record.confirmed}
 
 
 async def load_open_record(s3: S3StoreLike) -> open_rows.Record | None:

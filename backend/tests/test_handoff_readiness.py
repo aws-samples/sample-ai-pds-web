@@ -6,7 +6,6 @@
 from __future__ import annotations
 
 import asyncio
-from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
@@ -199,28 +198,6 @@ X) Other
 """
 
 
-def test_any_arrow_marker_is_an_ai_suggestion_and_only_letter_answers_accept_it():
-    path = D + "product-strategy/strategy-questions.md"
-    r = assess([path], {path: QUESTIONS})
-    d = r.ai_defaults
-    # 6 questions answered (Q6 unanswered), of which 5 had a marker (Q7 had none).
-    assert (d.answered, d.suggested) == (6, 5)
-    # Q1 "A", Q2 "A: 부연", and Q4 "A,C" are acceptances. Q3 "B" is a rejection, and Q5's free-form answer is not an acceptance.
-    assert [i.number for i in d.items] == [1, 2, 4]
-    assert d.accepted == 3
-    assert d.items[0].file == path
-
-
-def test_real_korean_corpus_has_suggestions_under_translated_markers():
-    """The ko question files in fixtures/real use translated markers like `← 권고` and `← 추천: …`."""
-    root = Path(__file__).parent / "fixtures" / "real"
-    files = {str(p.relative_to(root)): p.read_text(encoding="utf-8")
-             for p in root.glob("*/discovery/**/*-questions.md")}
-    r = assess(list(files), files)
-    assert r.ai_defaults.suggested > 0
-    assert r.ai_defaults.accepted <= r.ai_defaults.suggested <= r.ai_defaults.answered
-
-
 def test_broken_references_in_the_discovery_document_are_reported():
     doc = "## 검증 결과\n전체 결과: `prototype/validation-results.md`\n"
     paths = [p for p in A1 if not p.endswith("validation-results.md")]
@@ -229,10 +206,9 @@ def test_broken_references_in_the_discovery_document_are_reported():
     assert r.discovery_document == D + "discovery-document.md"
 
 
-def test_contents_needed_is_question_files_and_the_document():
-    assert contents_needed(A1) == [
-        D + "discovery-document.md", D + "envision/prfaq-clarifying-questions.md",
-        D + "product-strategy/strategy-questions.md", D + "go-to-market/gtm-questions.md"]
+def test_contents_needed_is_the_document_not_the_question_files():
+    """The question files were read to count the answers that matched an AI suggestion — no longer a category (handoff/ledger)."""
+    assert contents_needed(A1) == [D + "discovery-document.md"]
 
 
 client = TestClient(app)
@@ -255,24 +231,12 @@ def test_route_reads_the_workspace(monkeypatch):
     assert r.status_code == 200
     body = r.json()
     assert body["origin"] == "B"
-    assert body["ai_defaults"]["accepted"] == 3
+    assert "ai_defaults" not in body
     assert [s["key"] for s in body["sections"]] == list(SECTIONS)
 
 
 def test_route_unknown_project_is_404():
     assert client.get("/projects/nope/handoff/readiness").status_code == 404
-
-
-def test_accepted_suggestions_carry_the_decision_not_just_the_letter():
-    """Measured (ws-g): all 40 confirmation items showed as "고른 답: A", so there was no way to tell what was being confirmed."""
-    path = D + "product-strategy/strategy-questions.md"
-    first, second, fourth = assess([path], {path: QUESTIONS}).ai_defaults.items
-    assert first.stage == "product_strategy"
-    assert first.choices == ["Subscription"]
-    assert first.note == "제안: 페인 포인트 분석에서 도출"
-    assert first.remark == ""
-    assert second.choices == ["Premium"] and second.remark == "단, 첫 해는 할인"
-    assert fourth.choices == ["Seoul", "Daegu"] and fourth.note == "Suggested"
 
 
 @pytest.mark.parametrize("path, stage", [
