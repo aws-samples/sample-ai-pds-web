@@ -1114,7 +1114,7 @@ AI-DLC를 쓴다면 `start-prompt.md`의 요청을 그대로 붙여 넣으면 �
    결과(`prototype/validation-*.md`), 검증 후 바뀐 것(`prototype/iteration-log.md`),
    비즈니스 맥락과 페인 포인트·해법 분석이 있습니다. 단계별 질문과 답은 `decisions.md`에 옮겼습니다.
 5. `uploads/` — PM이 올린 원자료(있는 것만). 실제 양식·규정·명단의 모양입니다.
-
+{design}
 ## 이 패키지를 쓰는 규칙
 
 - 기술 선택(언어·DB·인프라)은 담지 않았습니다. 프로토타입의 빌드 지시서도 넣지 않았습니다. 기술 스택과
@@ -1152,7 +1152,7 @@ paste the request in `start-prompt.md` as it is. Any other coding assistant or h
    changed after validation (`prototype/iteration-log.md`), and the business context and pain point and
    solution analyses. Each stage's questions and answers are in `decisions.md`.
 5. `uploads/` — source material the PM uploaded, if any: the shape of real forms, rules and rosters.
-
+{design}
 ## Rules for using this package
 
 - No technology choices (languages, databases, infrastructure) are included, and the prototype's build
@@ -1203,6 +1203,7 @@ _START_PROMPT = {
                  "Open Questions 중 시점이 \"빌드 전\"인 항목은 추측으로 채우지 말고, 작업을 시작하기 전에 "
                  "먼저 질문해 주세요. 답할 사람이 \"PM(외부 확인)\"인 항목은 누가 언제 확인했는지까지 함께 "
                  "받고, 그것이 없으면 확정하지 말고 열린 질문으로 남겨 주세요."),
+        "design": "화면의 색·글꼴·톤은 ./{root}/design/의 브랜드 지침을 따라 주세요.",
         "codex": "Codex CLI에서는 `/aidlc` 대신 `$aidlc`를 씁니다.",
         "tech_note": ("개발팀이 기술 스택·도구·금지 사항을 AI-DLC의 technical environment 문서로 프로젝트 루트에 "
                       "써 두었다면(`./technical-environment.md`), 이 요청을 씁니다."),
@@ -1220,6 +1221,7 @@ _START_PROMPT = {
                  "Do not fill in the Open Questions in vision.md marked \"Before build\" with guesses; ask "
                  "them before you start. For those answered by \"PM (external check)\", take the answer "
                  "together with who confirmed it and when; without that, keep the question open."),
+        "design": "Make the screens follow the brand guide in ./{root}/design/ for colours, fonts and tone.",
         "codex": "Codex CLI uses `$aidlc` instead of `/aidlc`.",
         "tech_note": ("If the team has written its stack, tools and what is not allowed in AI-DLC's technical "
                       "environment document at the project root (`./technical-environment.md`), use this "
@@ -1228,17 +1230,47 @@ _START_PROMPT = {
 }
 
 
-def start_prompt(language: str, folder: str) -> str:
+def start_prompt(language: str, folder: str, *, design: bool = False) -> str:
     """Contents of `start-prompt.md`. The first code block is the default request — the screen's copy button picks it up.
-    `folder` is `archive_folder(pid)`."""
+    `folder` is `archive_folder(pid)`. With `design`, the request names the brand files under `design/` — the document is read
+    as data, so what the build must follow goes in the request (the guide's own rule, `_START_PROMPT`)."""
     t = {k: v.replace("{root}", folder)
          for k, v in _START_PROMPT.get(language, _START_PROMPT["ko"]).items()}
+    if design:
+        t["rest"] += " " + t["design"]
     return (f"{t['title']}\n\n{t['lead']}\n\n```text\n/aidlc {t['first']} {t['rest']}\n```\n\n"
             f"{t['codex']}\n\n{t['tech_note']}\n\n```text\n/aidlc {t['first_tech']} {t['rest']}\n```\n")
 
 
-def readme(language: str) -> str:
-    return _README.get(language, _README["ko"])
+#: The README line for `design/`, there only when a prototype was branded — a line pointing at nothing would send the team
+#: looking for a brand that does not exist.
+_README_DESIGN = {
+    "ko": ("6. `design/` — 프로토타입에 적용한 브랜드. `DESIGN.md`는 관리자가 올린 브랜드 지침(톤·여백·금기)이고,\n"
+           "   `aipds-theme.css`는 그 색·글꼴 값입니다(있는 것만). 화면은 이 브랜드를 따릅니다. 값은 CSS 변수로 적혀 있을\n"
+           "   뿐 구현 기술을 정하지 않습니다.\n"),
+    "en": ("6. `design/` — the brand the prototype applied. `DESIGN.md` is the brand guide an admin uploaded (tone,\n"
+           "   spacing, what not to do), and `aipds-theme.css` holds its colours and fonts, if any. The screens follow this\n"
+           "   brand. The values are written as CSS variables only; they do not choose an implementation technology.\n"),
+}
+#: Where the brand files go in the zip. One folder; a folder per prototype only when branded prototypes differ.
+DESIGN_DIR = "design/"
+
+
+def design_archive(by_prototype: dict[str, dict[str, bytes]]) -> dict[str, bytes]:
+    """Each branded prototype's brand files (proto/source.design_entries) → zip-relative path → bytes. Prototypes share one
+    admin profile, so the files are usually the same: then once under `design/`; otherwise under `design/<prototype>/`."""
+    branded = {pid: files for pid, files in sorted(by_prototype.items()) if files}
+    if not branded:
+        return {}
+    shared = len({tuple(sorted(files.items())) for files in branded.values()}) == 1
+    if shared:
+        return {DESIGN_DIR + name: data for name, data in next(iter(branded.values())).items()}
+    return {f"{DESIGN_DIR}{pid}/{name}": data for pid, files in branded.items() for name, data in files.items()}
+
+
+def readme(language: str, *, design: bool = False) -> str:
+    text = _README.get(language, _README["ko"])
+    return text.replace("{design}", _README_DESIGN.get(language, _README_DESIGN["ko"]) if design else "")
 
 
 # ---- Generation and retrieval ----

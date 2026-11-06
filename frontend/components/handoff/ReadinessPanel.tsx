@@ -179,6 +179,7 @@ export function ReadinessPanel({
           <li>{t("handoff.contains.open")}</li>
           <li>{t("handoff.contains.ledger")}</li>
           <li>{t("handoff.contains.originals")}</li>
+          <li>{t("handoff.contains.design")}</li>
         </ul>
         <p className="mt-1">{t("handoff.contains.noSource")}</p>
       </div>

@@ -18,6 +18,8 @@ from aipds.answer_summary import answer_summary
 from aipds.audit_log import UserInput
 from aipds.handoff import ledger, package, readiness, supplement
 from aipds.parsers.questions import parse_question_file
+from aipds.proto.layout import discover as discover_prototypes
+from aipds.proto.source import design_entries
 from aipds.routes.deps import ensure_workspace
 from aipds.routes.turns import ensure_idle, start_turn
 
@@ -180,18 +182,36 @@ async def get_handoff_package(pid: str):
     ws = await ensure_workspace(pid)
     view = await package.view(app_module.s3_store_factory(pid), read=ws.runner.read_file,
                               paths=paths, running=package.jobs.running(pid))
-    _fresh_start_prompt(pid, view.files)
+    if view.files:
+        _fresh_fixed_files(pid, view.files, design=bool(await _design(pid, paths)))
     return view
 
 
-def _fresh_start_prompt(pid: str, files: dict[str, str]) -> None:
-    """Rewrites the start prompt with the current folder name. What is stored is the name at
-    build time, so this keeps even packages built before the naming rule changed consistent
-    with the paths in the downloaded zip — it is determined from the language and folder
-    alone, with no model."""
+def _fresh_fixed_files(pid: str, files: dict[str, str], *, design: bool) -> None:
+    """Rewrites the start prompt and the README from what the zip holds now. What is stored is
+    the text at build time, so this keeps them consistent with the downloaded zip — the
+    folder name (even for packages built before the naming rule changed) and whether there
+    is a `design/` folder to point at. Both are fixed text from the language and these two
+    facts, with no model."""
+    language = app_module.project_language(pid)
     if package.START_PROMPT in files:
         files[package.START_PROMPT] = package.start_prompt(
-            app_module.project_language(pid), package.archive_folder(pid))
+            language, package.archive_folder(pid), design=design)
+    if package.README in files:
+        files[package.README] = package.readme(language, design=design)
+
+
+async def _design(pid: str, paths: list[str]) -> dict[str, bytes]:
+    """The brand files of the project's branded prototypes, by their path in the zip
+    (handoff/package.design_archive). Read when the zip is, like the originals: the
+    prototype's own copy — the admin profile may have changed or gone since, and an
+    unbranded prototype has none (proto/source.design_entries)."""
+    s3 = app_module.s3_store_factory(pid)
+    slugs = sorted(discover_prototypes(paths))
+    found = await asyncio.gather(*(
+        design_entries(build_dir=app_module._proto_root() / pid / slug, s3=s3, slug=slug)
+        for slug in slugs))
+    return package.design_archive(dict(zip(slugs, found)))
 
 
 class ResetResult(BaseModel):
@@ -219,7 +239,8 @@ def _content_disposition(pid: str) -> str:
 @router.get("/projects/{pid}/handoff/package/archive")
 async def download_handoff_package(pid: str):
     """Under `{pid}-handoff/`: package files + Discovery sources (`discovery/`, evidence
-    only) + uploaded source materials (`uploads/`). Prototype sources are not included."""
+    only) + uploaded source materials (`uploads/`) + the brand a prototype applied
+    (`design/`, if any). Prototype sources are not included."""
     s3 = app_module.s3_store_factory(pid)
     manifest = await package.load_manifest(s3)
     if manifest is None or manifest.status != "ready":
@@ -227,7 +248,8 @@ async def download_handoff_package(pid: str):
     paths = await _paths(pid)
     ws = await ensure_workspace(pid)
     built = await package.read_package(s3, manifest)
-    _fresh_start_prompt(pid, built)
+    design = await _design(pid, paths)
+    _fresh_fixed_files(pid, built, design=bool(design))
     raw = await package.read_sources(ws.runner.read_file, package.archive_originals(paths))
     uploads = await s3.list(_UPLOADS)
     buf = io.BytesIO()
@@ -243,5 +265,9 @@ async def download_handoff_package(pid: str):
         # the input that development receives.
         for key in uploads:
             zf.writestr(root + key, await s3.get_bytes(key))
+        # The brand the prototype applied. Without it the team rebuilds the screens in default
+        # colours — the brand reached the prototype only through the build workspace.
+        for path, data in design.items():
+            zf.writestr(root + path, data)
     return Response(content=buf.getvalue(), media_type="application/zip",
                     headers={"Content-Disposition": _content_disposition(pid)})

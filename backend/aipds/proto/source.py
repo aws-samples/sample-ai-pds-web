@@ -15,8 +15,10 @@ import asyncio
 import os
 from pathlib import Path
 
+from aipds.pathsafe import read_bytes_beneath
 from aipds.project_bundle import SOURCE_EXCLUDED_DIRS, source_excluded
-from aipds.proto.store import PrototypeStore, local_entries
+from aipds.proto import design_sync
+from aipds.proto.store import PrototypeStore, local_entries, source_prefix
 from aipds.s3store import S3StoreLike
 
 
@@ -32,6 +34,53 @@ async def source_entries(*, build_dir: Path, s3: S3StoreLike,
         return entries
     return [(rel, data) for rel, data in await PrototypeStore(s3).entries(slug)
             if not source_excluded(rel)]
+
+
+async def design_entries(*, build_dir: Path, s3: S3StoreLike, slug: str) -> dict[str, bytes]:
+    """The brand files the web put into this prototype → name → bytes: `DESIGN.md` (the admin profile's prose, as the build
+    read it) and `aipds-theme.css` (its tokens). Empty if the prototype was not branded.
+
+    The root theme file is the only evidence the web planted them (proto/design_sync): without it, a root `DESIGN.md` may be the
+    build agent's own notes, so nothing is returned. A stub theme carries no tokens and is left out; its `DESIGN.md`, if any, is
+    the prose of a profile without tokens. A prototype whose user chose a look other than the brand has neither (design_choice).
+    Same source as `source_entries` — the local build tree first, else the current generation in S3.
+    """
+    names = (design_sync.DESIGN_FILENAME, design_sync.THEME_FILENAME)
+    found = await asyncio.to_thread(_local_design, build_dir, names)
+    if not found:
+        found = await _stored_design(s3, slug, names)
+    theme = found.get(design_sync.THEME_FILENAME)
+    if theme is None:
+        return {}
+    if design_sync.is_stub(theme.decode("utf-8", errors="replace")):
+        found.pop(design_sync.THEME_FILENAME)
+    return found
+
+
+def _local_design(build_dir: Path, names: tuple[str, ...]) -> dict[str, bytes]:
+    if not build_dir.is_dir():
+        return {}
+    out: dict[str, bytes] = {}
+    for name in names:
+        try:
+            out[name] = read_bytes_beneath(build_dir, name)
+        except (OSError, ValueError):
+            continue
+    return out
+
+
+async def _stored_design(s3: S3StoreLike, slug: str, names: tuple[str, ...]) -> dict[str, bytes]:
+    current = await PrototypeStore(s3).current(slug)
+    if current is None:
+        return {}
+    prefix = f"{source_prefix(slug)}{current['gen']:06d}/"
+    out: dict[str, bytes] = {}
+    for name in names:
+        try:
+            out[name] = await s3.get_bytes(prefix + name)
+        except FileNotFoundError:
+            continue
+    return out
 
 
 def newest_source_mtime(build_dir: Path) -> float | None:
