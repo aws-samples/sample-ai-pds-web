@@ -74,6 +74,11 @@ def hosting_key(slug: str) -> str:
     return f"prototypes/{slug}/hosting.json"
 
 
+def brand_key(slug: str) -> str:
+    """The PM's brand setting for this prototype (proto/design_choice.brand_setting)."""
+    return f"prototypes/{slug}/brand.json"
+
+
 def _index_key(token: str) -> str:
     digest = hashlib.sha256(token.encode("utf-8")).hexdigest()
     return f"{TOKEN_INDEX_PREFIX}{digest}.json"

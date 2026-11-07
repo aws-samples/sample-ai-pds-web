@@ -51,6 +51,8 @@ export function PrototypeCard({
   shareUrl,
   busy,
   readOnly = false,
+  brandAvailable = false,
+  onBrandChange,
 }: {
   info: PrototypeInfo;
   onBuild: () => void;
@@ -77,6 +79,10 @@ export function PrototypeCard({
    *  This URL **contains an access token**. Participants get into the prototype with this alone,
    *  so the sharing scope is the access scope. */
   shareUrl?: string;
+  /** The deployment has an admin brand profile — only then is there a brand to turn on or off. */
+  brandAvailable?: boolean;
+  /** The PM turns the company brand on or off for this prototype (the card setting, server proto/design_choice). */
+  onBrandChange?: (apply: boolean) => void;
   busy: boolean;
   /** Viewer member. Only preview, link, logs, download and viewing surveys remain; no build, hosting or reset. */
   readOnly?: boolean;
@@ -165,6 +171,19 @@ export function PrototypeCard({
           )}
         </div>
         <span className="block text-[11px] text-slate-400 mt-0.5 truncate">{info.spec_path}</span>
+        {/* The brand decision, where the PM can see and change it. The design-context answer was taken before the build;
+            observed, a PM who chose a plain look asked in chat for the company brand later, and nothing could apply it.
+            The files are placed or removed by the web at the next build session or hosting, so the hint says when. */}
+        {brandAvailable && (
+          <label className="mt-1 inline-flex items-center gap-1.5 text-xs text-slate-600">
+            <input type="checkbox" checked={info.brand} disabled={readOnly || busy || !onBrandChange}
+                   onChange={(e) => onBrandChange?.(e.target.checked)} />
+            {t("proto.brandApply")}
+            <span className="text-[11px] text-slate-400">
+              {info.brand_set === null ? t("proto.brandFromAnswer") : t("proto.brandNext")}
+            </span>
+          </label>
+        )}
         {hostError && (
           <p role="alert" className="text-xs text-rose-600 mt-1">{hostError}</p>
         )}

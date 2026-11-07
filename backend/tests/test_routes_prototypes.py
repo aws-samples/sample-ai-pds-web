@@ -325,7 +325,8 @@ def test_list_state_none(proto_env):
                                    "preview_stale": False,
                                    "access_url": None,
                                    "response_count": 0,
-                                   "has_survey": False}]
+                                   "has_survey": False,
+                                   "brand": False, "brand_set": None}]
 
 
 def _seed_source_generation(s3, files=None):
@@ -1054,7 +1055,8 @@ def test_reset_leaves_the_card_listable_as_none(proto_env, monkeypatch):
                                    "preview_stale": False,
                                    "access_url": None,
                                    "response_count": 0,
-                                   "has_survey": False}]
+                                   "has_survey": False,
+                                   "brand": False, "brand_set": None}]
 
 
 def test_reset_closes_a_live_session_and_frees_its_build_slot(proto_env, monkeypatch):
@@ -2331,3 +2333,37 @@ def test_an_auto_start_turn_records_that_there_was_nothing_to_show(proto_env, mo
 
 def test_history_for_an_unknown_project_is_404(proto_env):
     assert client.get(f"/projects/nope/prototypes/{SLUG}/history").status_code == 404
+
+
+def test_the_pm_turns_the_brand_on_and_off_on_the_card(proto_env, monkeypatch):
+    """Observed (a workshop run): the PM chose a plain look, then asked in chat for the company brand — nothing could apply
+    it. The card setting is the PM's word on it now, and the next build or hosting follows it."""
+    import asyncio
+
+    from aipds.design_profile import DesignProfileStore
+    from aipds.proto import layout
+    from aipds.proto.store import brand_key
+
+    _seed_spec(proto_env["s3"])
+    proto_env["s3"].blobs[layout.design_context_key(SLUG)] = (
+        "## Question 1\n어떤 모습?\n\nA) 깔끔하고 현대적인 기본 디자인\nB) 우리 조직의 브랜드에 맞춘다\n\n[Answer]: A\n")
+
+    # No profile in the deployment: nothing to turn on.
+    body = client.get(f"/projects/{PID}/prototypes").json()
+    assert body["brand_profile"] is False and body["prototypes"][0]["brand"] is False
+
+    profiles = DesignProfileStore(FakeS3Store())
+    asyncio.run(profiles.save(filename="acme.md", uploaded_by="admin@x", markdown="```tokens\nprimary: #111111\n```\n"))
+    monkeypatch.setattr(app_module, "design_profile_store", lambda: profiles)
+    card = client.get(f"/projects/{PID}/prototypes").json()["prototypes"][0]
+    assert (card["brand"], card["brand_set"]) == (False, None)          # the plain-look answer keeps it out
+
+    r = client.put(f"/projects/{PID}/prototypes/{SLUG}/brand", json={"apply": True})
+    assert r.status_code == 200 and r.json() == {"brand": True, "brand_set": True}
+    card = client.get(f"/projects/{PID}/prototypes").json()["prototypes"][0]
+    assert (card["brand"], card["brand_set"]) == (True, True)
+
+    r = client.put(f"/projects/{PID}/prototypes/{SLUG}/brand", json={"apply": None})
+    assert r.json() == {"brand": False, "brand_set": None} and brand_key(SLUG) not in proto_env["s3"].blobs
+
+    assert client.put(f"/projects/{PID}/prototypes/nope/brand", json={"apply": True}).status_code == 404

@@ -134,3 +134,32 @@ async def test_a_non_brand_answer_keeps_the_brand_out_but_does_not_take_it_away(
     design_sync.sync_design(tmp_path, await effective_profile(None, s3, "prototype", tmp_path), "ko")
     assert design_sync.stub_css() in (tmp_path / design_sync.THEME_FILENAME).read_text(encoding="utf-8")
     assert not (tmp_path / design_sync.DESIGN_FILENAME).exists()
+
+
+async def test_the_card_setting_comes_before_the_answer_and_the_brand_already_there(tmp_path):
+    from aipds.design_profile import DesignProfile
+    from aipds.proto import design_sync
+    from aipds.proto.store import brand_key
+
+    profile = DesignProfile(filename="DESIGN.md", uploaded_at="t", uploaded_by="admin",
+                            markdown="", tokens={"primary": "#da291c"}, prose="# 브랜드\n")
+    s3 = FakeS3Store()
+    s3.blobs[layout.design_context_key("prototype")] = _KO_TEMPLATE.format(answer="A")
+    s3.blobs[brand_key("prototype")] = '{"apply": true}'
+    assert await effective_profile(profile, s3, "prototype", tmp_path) is profile     # turned on despite the answer
+    design_sync.sync_design(tmp_path, profile, "ko")
+    s3.blobs[brand_key("prototype")] = '{"apply": false}'
+    assert await effective_profile(profile, s3, "prototype", tmp_path) is None        # turned off despite the brand there
+    s3.blobs[brand_key("prototype")] = "not json"
+    assert await effective_profile(profile, s3, "prototype", tmp_path) is profile     # unreadable: as if not set
+
+
+def test_a_prototype_without_the_brand_is_told_how_to_get_it(tmp_path):
+    """Without a word in the workspace, a request for the company brand could only be met by inventing its values."""
+    from aipds.proto import design_sync
+
+    design_sync.sync_design(tmp_path, None, "ko", available=True)
+    claude = (tmp_path / "CLAUDE.md").read_text(encoding="utf-8")
+    assert "브랜드 적용" in claude and "손으로 만들어 넣지 마라" in claude
+    design_sync.sync_design(tmp_path, None, "ko")                                       # no profile at all
+    assert not (tmp_path / "CLAUDE.md").exists()

@@ -276,8 +276,9 @@ async def test_start_skips_the_brand_when_design_context_chose_another_look(tmp_
 
     build_dir = session.build_dir()
     assert not (build_dir / THEME_FILENAME).exists()
-    claude_md = build_dir / "CLAUDE.md"
-    assert not claude_md.is_file() or "aipds:design:start" not in claude_md.read_text()
+    # The build agent is told the brand is off for this prototype and how the PM turns it on — not given brand rules.
+    claude_md = (build_dir / "CLAUDE.md").read_text()
+    assert "브랜드 적용" in claude_md and "aipds-theme.css" not in claude_md
 
 
 async def test_start_without_a_profile_plants_nothing(tmp_path):

@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import io
+import json
 import logging
 import re
 import zipfile
@@ -33,7 +34,8 @@ from aipds.proto.session import has_build_output, purge_session_state
 from aipds.proto.history import load_context, load_history, record_opening
 from aipds.turn_job import TurnBusy, subscribe
 from aipds.proto.hosting import host_prototype, prototype_store, stop_prototype
-from aipds.proto.store import PrototypeStore
+from aipds.proto.design_choice import brand_setting, effective_profile
+from aipds.proto.store import PrototypeStore, brand_key
 from aipds.proto.source import newest_source_mtime, source_entries
 # The module that owns the token-gate route also assembles its path -- rewriting
 # it here with an f-string would mean managing the browser-side mount (`/api`)
@@ -264,9 +266,14 @@ async def list_prototypes(pid: str):
         asyncio.gather(*(survey_summary(s3, slug) for slug, _ in ordered)),
         asyncio.gather(*(_card_name(s3, spec_path) for _, spec_path in ordered)),
     )
+    # Brand: only meaningful when the deployment has a profile. Same gate as the build and hosting (design_choice), so the
+    # card says what the next build or hosting will do.
+    has_profile = await app_module.design_profile_store().load() is not None
+    brands = await asyncio.gather(*(_card_brand(pid, s3, slug) for slug, _ in ordered)) if has_profile else [
+        (False, None)] * len(ordered)
     out = []
-    for (slug, spec_path), has_s3_source, survey, name in zip(
-            ordered, s3_built, surveys, names):
+    for (slug, spec_path), has_s3_source, survey, name, (brand_on, brand_set) in zip(
+            ordered, s3_built, surveys, names, brands):
         state = "none"
         port: int | None = None
 
@@ -371,10 +378,48 @@ async def list_prototypes(pid: str):
                     "preview_stale": preview_stale,
                     "access_url": access_url,
                     "response_count": survey.responses,
-                    "has_survey": survey.exists})
+                    "has_survey": survey.exists,
+                    "brand": brand_on, "brand_set": brand_set})
     # Capacity travels with the list so a card can explain a 429 before the
     # user clicks (the cap is new -- MicroVM builds had no ceiling).
-    return {"prototypes": out, **app_module.build_semaphore.snapshot()}
+    return {"prototypes": out, "brand_profile": has_profile, **app_module.build_semaphore.snapshot()}
+
+
+_PROFILE_PRESENT = object()
+
+
+async def _card_brand(pid: str, s3, slug: str) -> tuple[bool, bool | None]:
+    """(will the next build or hosting apply the brand, the PM's card setting if any)."""
+    import aipds.app as app_module
+    build_dir = app_module._proto_root() / pid / slug
+    on = await effective_profile(_PROFILE_PRESENT, s3, slug, build_dir) is not None
+    return on, await brand_setting(s3, slug)
+
+
+class BrandSetting(BaseModel):
+    #: True: apply the company brand · False: do not · None: no setting — the design-context answer decides again.
+    apply: bool | None
+
+
+@router.put("/projects/{pid}/prototypes/{slug}/brand")
+async def put_brand(pid: str, slug: str, body: BrandSetting):
+    """The PM's brand setting for one prototype. It takes effect at the next build session or hosting — those are where the
+    brand files are placed or removed (proto/design_sync) — and comes before the design-context answer (proto/design_choice).
+
+    Why a setting and not the answer: the answer was taken before the build. Observed (a workshop run), the PM chose a plain
+    look, then asked in chat for the company brand; nothing could apply it, and a later hosting took away what the build had
+    added. The setting is the PM's word on it now, with no agent in between."""
+    import aipds.app as app_module
+    _require_registered(pid)
+    s3 = app_module.s3_store_factory(pid)
+    if slug not in proto_layout.discover(await s3.list(proto_layout.DISCOVERY_PREFIX)):
+        raise HTTPException(status_code=404, detail="unknown prototype")
+    if body.apply is None:
+        await s3.delete_prefix(brand_key(slug))
+    else:
+        await s3.put(brand_key(slug), json.dumps({"apply": body.apply}))
+    on, setting = await _card_brand(pid, s3, slug)
+    return {"brand": on, "brand_set": setting}
 
 
 # ---- build session lifecycle ----
