@@ -53,7 +53,7 @@ export function sectionLabel(t: (k: keyof Dict) => string, key: SectionKey): str
 }
 
 export function ReadinessPanel({
-  readiness, questionCount, openDecisions = null, generating, hasPackage, onSupplement, onGenerate,
+  readiness, questionCount, openDecisions = null, generating, hasPackage, onSupplement, onGenerate, onGenerateFresh,
   onViewPackage, onReconcile, readOnly = false,
 }: {
   readiness: Readiness;
@@ -66,6 +66,8 @@ export function ReadinessPanel({
   hasPackage: boolean;
   onSupplement: () => void;
   onGenerate: () => void;
+  /** Regenerates with vision.md written anew instead of as an edit of the last version. */
+  onGenerateFresh?: () => void;
   onViewPackage: () => void;
   /** Go to the workspace chat and fill `draft` into the input. */
   onReconcile: (draft: string) => void;
@@ -161,8 +163,16 @@ export function ReadinessPanel({
                 className="px-5 py-2.5 rounded-lg bg-violet-600 text-white text-sm font-bold hover:bg-violet-700 disabled:opacity-45 disabled:cursor-not-allowed">
           {hasPackage ? t("handoff.regenerate") : t("handoff.generate")}
         </button>
+        {/* A rebuild edits the last vision.md, so the PM reviews only what changed. Writing anew is for a version they
+            want rethought — offered, never the default. */}
+        {hasPackage && onGenerateFresh && (
+          <button type="button" onClick={onGenerateFresh} disabled={blocked || generating}
+                  className="px-3 py-2 rounded-lg border border-slate-300 text-[13px] text-slate-600 disabled:opacity-45">
+            {t("handoff.regenerateFresh")}
+          </button>
+        )}
         <span className="text-[13px] text-slate-500">
-          {generating ? t("handoff.generating") : t("handoff.generateNote")}
+          {generating ? t("handoff.generating") : hasPackage ? t("handoff.regenerateNote") : t("handoff.generateNote")}
         </span>
         </>)}
         {hasPackage && !generating && (

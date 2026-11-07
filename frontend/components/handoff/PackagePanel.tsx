@@ -73,6 +73,7 @@ export function PackagePanel({
         </button>
         <span className="text-xs text-slate-500 mr-1.5">
           {t("handoff.pkg.stamp").replace("{time}", stamp(m.finished_at ?? m.started_at))} ·{" "}
+          {m.edited && <>{t("handoff.pkg.edited")} ·{" "}</>}
           <b className={stale ? "text-amber-700" : "text-emerald-700"}>
             {stale ? t("handoff.pkg.staleBadge") : t("handoff.pkg.fresh")}
           </b>
