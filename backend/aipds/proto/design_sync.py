@@ -119,11 +119,6 @@ def theme_copies(build_dir: Path) -> list[Path]:
                   if p.name == THEME_FILENAME and not p.is_symlink())
 
 
-def is_stub(css: str) -> bool:
-    """Whether a theme file is the no-profile stub — written when the profile was removed, or has no tokens."""
-    return _NO_PROFILE_MARKER in css
-
-
 def theme_required(build_dir: Path) -> bool:
     """Must the brand profile be applied to this workspace?
 

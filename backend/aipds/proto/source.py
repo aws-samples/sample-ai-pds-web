@@ -37,24 +37,22 @@ async def source_entries(*, build_dir: Path, s3: S3StoreLike,
 
 
 async def design_entries(*, build_dir: Path, s3: S3StoreLike, slug: str) -> dict[str, bytes]:
-    """The brand files the web put into this prototype → name → bytes: `DESIGN.md` (the admin profile's prose, as the build
-    read it) and `aipds-theme.css` (its tokens). Empty if the prototype was not branded.
+    """The brand guide the web put into this prototype → `{"DESIGN.md": bytes}` (the admin profile's prose, as the build read
+    it), or empty if the prototype was not branded.
 
-    The root theme file is the only evidence the web planted them (proto/design_sync): without it, a root `DESIGN.md` may be the
-    build agent's own notes, so nothing is returned. A stub theme carries no tokens and is left out; its `DESIGN.md`, if any, is
-    the prose of a profile without tokens. A prototype whose user chose a look other than the brand has neither (design_choice).
-    Same source as `source_entries` — the local build tree first, else the current generation in S3.
+    The root theme file is the only evidence the web planted it (proto/design_sync): without it, a root `DESIGN.md` may be the
+    build agent's own notes, so nothing is returned. The theme file itself is not returned — CSS variables wired into the
+    prototype's own stack are a technical artifact, like the build instructions. A prototype whose user chose a look other than
+    the brand has neither file (design_choice). Same source as `source_entries` — the local build tree first, else the current
+    generation in S3.
     """
     names = (design_sync.DESIGN_FILENAME, design_sync.THEME_FILENAME)
     found = await asyncio.to_thread(_local_design, build_dir, names)
     if not found:
         found = await _stored_design(s3, slug, names)
-    theme = found.get(design_sync.THEME_FILENAME)
-    if theme is None:
+    if design_sync.THEME_FILENAME not in found or design_sync.DESIGN_FILENAME not in found:
         return {}
-    if design_sync.is_stub(theme.decode("utf-8", errors="replace")):
-        found.pop(design_sync.THEME_FILENAME)
-    return found
+    return {design_sync.DESIGN_FILENAME: found[design_sync.DESIGN_FILENAME]}
 
 
 def _local_design(build_dir: Path, names: tuple[str, ...]) -> dict[str, bytes]:

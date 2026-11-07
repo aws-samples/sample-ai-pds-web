@@ -190,13 +190,12 @@ async def get_handoff_package(pid: str):
 def _fresh_fixed_files(pid: str, files: dict[str, str], *, design: bool) -> None:
     """Rewrites the start prompt and the README from what the zip holds now. What is stored is
     the text at build time, so this keeps them consistent with the downloaded zip — the
-    folder name (even for packages built before the naming rule changed) and whether there
-    is a `design/` folder to point at. Both are fixed text from the language and these two
-    facts, with no model."""
+    folder name in the start prompt (even for packages built before the naming rule changed)
+    and, in the README, whether there is a `design/` folder to point at. Both are fixed text,
+    with no model."""
     language = app_module.project_language(pid)
     if package.START_PROMPT in files:
-        files[package.START_PROMPT] = package.start_prompt(
-            language, package.archive_folder(pid), design=design)
+        files[package.START_PROMPT] = package.start_prompt(language, package.archive_folder(pid))
     if package.README in files:
         files[package.README] = package.readme(language, design=design)
 
@@ -239,7 +238,7 @@ def _content_disposition(pid: str) -> str:
 @router.get("/projects/{pid}/handoff/package/archive")
 async def download_handoff_package(pid: str):
     """Under `{pid}-handoff/`: package files + Discovery sources (`discovery/`, evidence
-    only) + uploaded source materials (`uploads/`) + the brand a prototype applied
+    only) + uploaded source materials (`uploads/`) + the brand guide a prototype applied
     (`design/`, if any). Prototype sources are not included."""
     s3 = app_module.s3_store_factory(pid)
     manifest = await package.load_manifest(s3)
@@ -265,8 +264,8 @@ async def download_handoff_package(pid: str):
         # the input that development receives.
         for key in uploads:
             zf.writestr(root + key, await s3.get_bytes(key))
-        # The brand the prototype applied. Without it the team rebuilds the screens in default
-        # colours — the brand reached the prototype only through the build workspace.
+        # The brand guide the prototype applied, as reference for the team's technical
+        # environment document — it reached the prototype only through the build workspace.
         for path, data in design.items():
             zf.writestr(root + path, data)
     return Response(content=buf.getvalue(), media_type="application/zip",
