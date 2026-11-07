@@ -76,10 +76,10 @@ export default function HandoffPage({ params }: { params: Promise<{ projectId: s
   // Initial screen: the package if there is one, otherwise readiness. After the user chooses, follow their choice.
   const shown: Mode = mode ?? (status === "ready" ? "package" : "status");
 
-  const generate = async (resume = false) => {
+  const generate = async (resume = false, fresh = false) => {
     setActionError(null);
     try {
-      const manifest = await startPackage(projectId, resume);
+      const manifest = await startPackage(projectId, resume, fresh);
       setPkg({ manifest, files: {}, stale: [], supplement_changed: false, resumable: false });
       setMode("status");
     } catch {
@@ -222,6 +222,7 @@ export default function HandoffPage({ params }: { params: Promise<{ projectId: s
             hasPackage={status === "ready"}
             onSupplement={() => setMode("supplement")}
             onGenerate={() => void generate()}
+            onGenerateFresh={() => void generate(false, true)}
             onViewPackage={() => setMode("package")}
             onReconcile={(draft) =>
               router.push(`/projects/${projectId}/workspace?draft=${encodeURIComponent(draft)}`)}

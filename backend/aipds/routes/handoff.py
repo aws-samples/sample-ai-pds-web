@@ -151,6 +151,8 @@ class GenerateRequest(BaseModel):
     #: the rest. If the sources changed in the meantime, the server starts over from scratch
     #: (handoff/package.run).
     resume: bool = False
+    #: Writes vision.md anew instead of editing the last version (handoff/previous).
+    fresh: bool = False
 
 
 @router.post("/projects/{pid}/handoff/package", status_code=202,
@@ -170,7 +172,7 @@ async def generate_handoff_package(pid: str, body: GenerateRequest | None = None
     package.jobs.spawn(pid, package.run(
         s3, read=ws.runner.read_file, paths=paths, readiness=state, language=app_module.project_language(pid),
         call=app_module.handoff_writer_factory(pid), started=started,
-        folder=package.archive_folder(pid)))
+        folder=package.archive_folder(pid), fresh=bool(body and body.fresh)))
     return started
 
 

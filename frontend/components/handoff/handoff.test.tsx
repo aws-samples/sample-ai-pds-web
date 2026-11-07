@@ -47,6 +47,21 @@ function readiness(props: Partial<Parameters<typeof ReadinessPanel>[0]> = {}) {
 }
 
 describe("ReadinessPanel", () => {
+  it("regenerates as an edit by default and offers writing anew beside it", async () => {
+    const onGenerateFresh = vi.fn();
+    const h = readiness({ hasPackage: true, onGenerateFresh });
+    expect(screen.getByText(/이전 판을 고쳐 씁니다/)).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "다시 생성" }));
+    expect(h.onGenerate).toHaveBeenCalled();
+    await userEvent.click(screen.getByRole("button", { name: "처음부터 새로 쓰기" }));
+    expect(onGenerateFresh).toHaveBeenCalled();
+  });
+
+  it("has nothing to write anew before the first package", () => {
+    readiness({ onGenerateFresh: vi.fn() });
+    expect(screen.queryByRole("button", { name: "처음부터 새로 쓰기" })).not.toBeInTheDocument();
+  });
+
   it("says the project skipped Envision and lists the empty sections", async () => {
     const h = readiness();
     expect(screen.getByText(/use case에서 출발\(Path B\)/)).toBeInTheDocument();
@@ -374,6 +389,11 @@ describe("PackagePanel", () => {
   const handlers = () => ({ onRegenerate: vi.fn(), onDownload: vi.fn(), onSupplement: vi.fn(),
                              onStatus: vi.fn() });
 
+  it("says when the package was edited from the last version", () => {
+    render(<PackagePanel pkg={{ ...READY, manifest: { ...READY.manifest!, edited: true } }} generating={false} {...handlers()} />);
+    expect(screen.getByText(/이전 판을 고쳐 씀/)).toBeInTheDocument();
+  });
+
   it("opens on the vision document, with findings and what changed since it was built", async () => {
     render(<PackagePanel pkg={READY} generating={false} {...handlers()} />);
     expect(screen.getByRole("heading", { name: "샘플몰 — Vision" })).toBeInTheDocument();
@@ -442,9 +462,11 @@ describe("handoff api", () => {
           files: [], steps: [], findings: [], truncated: [] }, { status: 202 });
     }));
     expect((await startPackage("p1")).status).toBe("generating");
-    expect(body).toEqual({ resume: false });
+    expect(body).toEqual({ resume: false, fresh: false });
     await startPackage("p1", true);
-    expect(body).toEqual({ resume: true });
+    expect(body).toEqual({ resume: true, fresh: false });
+    await startPackage("p1", false, true);
+    expect(body).toEqual({ resume: false, fresh: true });
   });
 
   it("puts the whole supplement form", async () => {

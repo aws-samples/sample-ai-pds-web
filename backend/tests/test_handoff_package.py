@@ -72,6 +72,8 @@ _OPEN = _vision("""| ID | 질문 | 답할 사람 | 시점 | 답이 나올 때까
 
 
 def _step_of(prompt: str) -> str:
+    if "whose numbers do not all appear in vision.md" in prompt:
+        return "fill"
     if "Rewrite only those lines" in prompt:
         return "rewrite"
     if "Write the options" in prompt:
@@ -82,7 +84,8 @@ def _step_of(prompt: str) -> str:
 
 
 def _writer(calls: list | None = None, *, fail_at: str | None = None, error=None,
-            doc: str = _OPEN, options: str = '{"questions": []}', reply: dict | None = None):
+            doc: str = _OPEN, options: str = '{"questions": []}', reply: dict | None = None,
+            fill_reply: str = '{"items": []}'):
     """A fake model that returns each step's result. Fails at the `fail_at` step."""
     async def call(prompt, progress=None):
         step = _step_of(prompt)
@@ -94,6 +97,8 @@ def _writer(calls: list | None = None, *, fail_at: str | None = None, error=None
             return options
         if step == "rewrite":
             return '{"lines": []}'
+        if step == "fill":
+            return fill_reply
         fence = f"```json\n{json.dumps(reply, ensure_ascii=False)}\n```\n" if reply is not None else ""
         return fence + "머리말은 버려진다.\n" + doc
     return call
@@ -111,11 +116,11 @@ def _run(coro):
     return asyncio.run(coro)
 
 
-async def _generate(s3, files, call, *, resume=False, paths=B):
+async def _generate(s3, files, call, *, resume=False, paths=B, fresh=False):
     state = assess(paths, {})
     started = await package.start(s3, state, resume=resume)
     return await package.run(s3, read=_workspace_reader(files), paths=paths, readiness=state,
-                             language="ko", call=call, started=started)
+                             language="ko", call=call, started=started, fresh=fresh)
 
 
 def _flat(text: str) -> str:
@@ -1219,3 +1224,72 @@ def test_a_failed_rewrite_keeps_the_document_as_written():
     assert manifest.status == "ready"
     assert "(R2)" in _run(s3.get(package.PACKAGE_PREFIX + package.VISION))
     assert sorted(f.term for f in manifest.findings if f.kind in ("internal", "vague")) == ["R2", "쉽게"]
+
+
+# ---- a rebuild edits the last version; go-to-market targets left out go back in ----
+
+def test_a_rebuild_edits_the_last_version_and_can_be_asked_to_write_anew():
+    """Observed: regenerating anew kept 6–8% of the lines with nothing changed; editing the last version kept 98–100%."""
+    s3 = FakeS3Store()
+    files = {p: f"# {p}\n" for p in B}
+    first: list = []
+    assert _run(_generate(s3, files, _writer(first))).edited is False
+    assert "## The previous version" not in dict(first)["vision"]
+    again: list = []
+    done = _run(_generate(s3, files, _writer(again)))
+    vision = dict(again)["vision"]
+    assert done.edited is True and "## The previous version" in vision
+    assert "Nothing in the material changed" in vision
+    # The last version goes without the Open Questions table — code renders it from its record.
+    previous = vision.split("<<<PREVIOUS vision.md>>>", 1)[1]
+    assert "### Open Questions" in previous and "상담 이력의 보존 기간은?" not in previous
+    anew: list = []
+    assert _run(_generate(s3, files, _writer(anew), fresh=True)).edited is False
+    assert "## The previous version" not in dict(anew)["vision"]
+
+
+def test_an_answer_given_at_handoff_reaches_the_edit_as_a_ledger_line():
+    s3 = FakeS3Store()
+    files = {p: f"# {p}\n" for p in B}
+    _run(_generate(s3, files, _writer()))
+    question = "상담 이력의 보존 기간은?"
+    _run(supplement.save(s3, supplement.Supplement(open_answers={supplement.open_key(question): supplement.OpenAnswer(
+        question=question, text="3년", updated_at="2026-11-07T00:00:00Z")})))
+    calls: list = []
+    _run(_generate(s3, files, _writer(calls)))
+    vision = dict(calls)["vision"]
+    assert "<<<CHANGED decisions.md>>>" in vision and "+| 상담 이력의 보존 기간은? | 3년 |" in vision
+
+
+def test_a_go_to_market_target_the_vision_left_out_goes_back_in():
+    s3 = FakeS3Store()
+    files = {p: f"# {p}\n" for p in B} | {D + "discovery-document.md": (
+        "# Discovery\n\n# Part 3: Go-to-Market\n\n## 단계별 성공 기준\n\n| 시점 | 기준 |\n|---|---|\n"
+        "| 30일 | 완료율 유지 |\n")}
+    row = "| 오픈 30일 완료율 | — | 유지 | 30일 시점 점검 [discovery-document.md · 단계별 성공 기준] |"
+    after = next(n for n, line in enumerate(_OPEN.splitlines(), 1) if line.startswith("| 완료율"))
+    calls: list = []
+    _run(_generate(s3, files, _writer(calls, fill_reply=json.dumps(
+        {"items": [{"id": "G1", "action": "add", "after": after, "text": row}]}, ensure_ascii=False))))
+    assert "fill" in [step for step, _ in calls]
+    vision = s3.blobs[package.PACKAGE_PREFIX + package.VISION]
+    assert row in vision and vision.index("| 완료율") < vision.index(row)
+
+
+def test_a_failed_fill_keeps_the_document_as_written():
+    s3 = FakeS3Store()
+    files = {p: f"# {p}\n" for p in B} | {D + "discovery-document.md": (
+        "# D\n\n# Part 3: Go-to-Market\n\n## 기준\n\n- 30일 유지\n")}
+    done = _run(_generate(s3, files, _writer(fill_reply="할 수 없습니다")))
+    assert done.status == "ready"
+    assert s3.blobs[package.PACKAGE_PREFIX + package.VISION].startswith("# 샘플몰 안전ON — Vision")
+
+
+def test_resetting_clears_what_the_next_edit_would_read(env):
+    client, s3, writer = env
+    _seed(client, "pkg-reset-basis", {p: f"# {p}\n" for p in B})
+    client.post("/projects/pkg-reset-basis/handoff/package", json={"fresh": True})
+    assert _wait_settled(client, "pkg-reset-basis")["manifest"]["status"] == "ready"
+    assert "handoff/basis.json" in s3.blobs and any(k.startswith("handoff/material/") for k in s3.blobs)
+    client.delete("/projects/pkg-reset-basis/handoff")
+    assert not any(k.startswith(("handoff/basis.json", "handoff/material/")) for k in s3.blobs)

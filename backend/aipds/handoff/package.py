@@ -38,11 +38,16 @@
 # Each step records its status and the number of characters received in the manifest, so the screen can show progress, and each
 # finished document is saved as it completes, so a failure resumes from that step — or from the start if the originals or supplementary answers changed in the meantime.
 #
+# **A rebuild edits the last version.** Given the last vision.md and the material's diff since, the model keeps what still holds
+# (handoff/previous) — regenerating anew changed 90% of the lines with nothing changed. The PM can still ask for a version anew.
+#
 # **Check deterministically the shape the instructions set.** The guide's required sections, technical and vague words, the prompt's
 # field names and the originals' internal numbers, open decisions classified without grounds, PM decisions from the previous
 # version that disappeared without an answer. Instructions alone let these leak through. The checks do not block; they surface — a person judges which line is wrong.
 # Before that, the lines a rewrite can fix (technical, vague and internal words) go back to the model once, each with what its
 # term means in the material, and code keeps a rewritten line only if it holds its shape and citations (`_rewrite_flagged`).
+# Then the Discovery document's go-to-market targets the document left out go back once, for the model to add or skip
+# (handoff/fill).
 from __future__ import annotations
 
 import asyncio
@@ -57,10 +62,12 @@ from typing import Literal
 from pydantic import BaseModel
 
 from aipds.handoff import estimates as estimates_mod
+from aipds.handoff import fill as fill_mod
 from aipds.handoff import ledger as ledger_mod
 from aipds.handoff import open_rows
+from aipds.handoff import previous as previous_mod
 from aipds.handoff import supplement as supplement_mod
-from aipds.handoff.readiness import Prototype, Readiness
+from aipds.handoff.readiness import DISCOVERY_DOCUMENT, Prototype, Readiness
 from aipds.s3store import S3StoreLike
 
 _log = logging.getLogger("aipds.handoff")
@@ -183,6 +190,8 @@ class Manifest(BaseModel):
     truncated: list[str] = []
     #: The previous version's open decisions owned by the PM. Passed on to this version to carry over; the check flags any that disappear without an answer.
     carried: list[str] = []
+    #: vision.md was written as an edit of the last version (handoff/previous), not anew.
+    edited: bool = False
 
 
 class PackageView(BaseModel):
@@ -1358,9 +1367,10 @@ Caller = Callable[[str, Callable[[int, bool], None]], Awaitable[str]]
 
 async def run(s3: S3StoreLike, *, read: Reader, paths: Sequence[str], readiness: Readiness,
               language: str, call: Caller, started: Manifest,
-              folder: str = archive_folder("project")) -> Manifest:
+              folder: str = archive_folder("project"), fresh: bool = False) -> Manifest:
     """Reads the originals, writes and saves a document with the model for each step, and checks at the end.
 
+    vision.md is an edit of the last version when there is one to edit (handoff/previous); with `fresh`, it is written anew.
     The manifest remains even on failure — the failed step and its reason, and the steps finished before it, stay visible.
     """
     state = _State(s3, started)
@@ -1408,8 +1418,14 @@ async def run(s3: S3StoreLike, *, read: Reader, paths: Sequence[str], readiness:
                 document = await _write_options(call, progress, language=language,
                                                 vision=written[VISION], sources=sources)
             else:
+                last = None if fresh else await previous_mod.load(
+                    s3, vision=await _stored(s3, VISION), material=material)
+                _log.info("handoff vision: %s", previous_mod.describe(last))
                 prompt = build_prompt(language=language, readiness=readiness, record=record,
                                       sources=material, candidates=candidates)
+                if last is not None:
+                    prompt += previous_mod.prompt_section(last, VISION)
+                await state.save(state.manifest.model_copy(update={"edited": last is not None}))
                 text = await asyncio.wait_for(call(prompt, progress.update),
                                               timeout=CALL_TIMEOUT_S)
                 # The table and the marks are code's: the model's classification is checked, then rendered.
@@ -1418,6 +1434,8 @@ async def run(s3: S3StoreLike, *, read: Reader, paths: Sequence[str], readiness:
                 # Before the table goes in: its rows are code's, and the line numbers stay those of the model's body.
                 written_body = await _rewrite_flagged(call, progress, language=language,
                                                       doc=clean_output(body), sources=material)
+                written_body = await _fill_missing(call, progress, language=language, doc=written_body,
+                                                   document=material.get(DISCOVERY_DOCUMENT, ""))
                 document = open_rows.insert(written_body, open_rows.render(table, lab))
                 document, restored = estimates_mod.restore(document, material, language)
                 if restored:
@@ -1436,6 +1454,9 @@ async def run(s3: S3StoreLike, *, read: Reader, paths: Sequence[str], readiness:
             continue
         await ticker.stop()
         await s3.put(PACKAGE_PREFIX + file, document)
+        if file == VISION:
+            # Stored with the document it describes, so the next build's edit pairs the right two.
+            await previous_mod.save(s3, vision=document, material=material)
         written[file] = document
         await state.step(index, status="done", finished_at=_now(), chars=len(document),
                          thinking=False)
@@ -1453,6 +1474,30 @@ async def run(s3: S3StoreLike, *, read: Reader, paths: Sequence[str], readiness:
                          answered=[k for k, a in record.open_answers.items()
                                    if a.text and not a.unknown] + left),
     }))
+
+
+async def _stored(s3: S3StoreLike, name: str) -> str | None:
+    try:
+        return await s3.get(PACKAGE_PREFIX + name)
+    except FileNotFoundError:
+        return None
+
+
+async def _fill_missing(call: Caller, progress: "_Progress", *, language: str, doc: str, document: str) -> str:
+    """vision.md with the Discovery document's go-to-market targets it left out added where they belong (handoff/fill). Does not
+    call the model when nothing is missing; on any failure the document stays as written."""
+    todo = fill_mod.missing(fill_mod.items(document), doc)
+    if not todo or len(todo) > fill_mod.MAX_ITEMS:
+        return doc
+    prompt = fill_mod.build_prompt(language=language, vision=doc, todo=todo)
+    try:
+        text = await asyncio.wait_for(call(prompt, progress.update), timeout=CALL_TIMEOUT_S)
+        filled, added = fill_mod.apply(doc, todo, text)
+    except Exception:
+        _log.exception("handoff vision fill failed — keeping the document as written")
+        return doc
+    _log.info("handoff vision fill: %d of %d missing go-to-market lines added", added, len(todo))
+    return filled
 
 
 def _pm_share(who: str, lab: dict) -> bool:
