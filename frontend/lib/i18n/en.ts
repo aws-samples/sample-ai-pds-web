@@ -760,7 +760,7 @@ export const en: Record<keyof typeof ko, string> = {
   "handoff.pkg.findingFix.tech": "Technology is the development team's choice. Regenerate to fix.",
   "handoff.pkg.findingFix.vague": "Must become testable criteria; a harness guesses instead of asking when it meets a vague word. Regenerate to fix.",
   "handoff.pkg.findingFix.internal": "A generation field name or a source-internal number (H3, P1 …) leaked; readers cannot know what it means. Regenerate to fix.",
-  "handoff.pkg.findingFix.structure": "A section the AI-DLC guide assigns a use to is missing, so the stage that reads it (scope definition, requirements analysis …) has nothing to read. Regenerate to fix.",
+  "handoff.pkg.findingFix.structure": "A section the AI-DLC guide assigns a use to is missing, so the stage that reads it (requirements analysis, units generation …) has nothing to read. Regenerate to fix.",
   "handoff.pkg.findingFix.triage": "An open decision has no timing or source location, cites a file that was not in the sources, or is \"During build\" without how to build until it is answered. Wrong triage asks what need not be asked or misses what must be. Regenerate to fix.",
   "handoff.pkg.findingFix.citation": "A citation names a file the package does not contain, so the development side cannot find it. Regenerate to fix.",
   "handoff.pkg.findingFix.dropped": "A PM decision from the previous version vanished from these open decisions without an answer. That is expected if Discovery (its document, the spec of record or the decision ledger) already decides it; if not, regenerate.",
