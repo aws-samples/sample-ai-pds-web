@@ -69,7 +69,7 @@ async def _view(pid: str, s3, state: readiness.Readiness,
 async def _decisions(pid: str) -> list[supplement.Decision]:
     """Every answered Discovery question, read from the question files — where the tab lets the PM change a decision."""
     ws = await ensure_workspace(pid)
-    paths = [p for p in await _paths(pid) if p.startswith(_DISCOVERY) and p.endswith("-questions.md")]
+    paths = [p for p in await _paths(pid) if p.startswith(_DISCOVERY) and ledger.is_question_file(p)]
     texts = await asyncio.gather(*(ws.runner.read_file(p) for p in paths))
     return ledger.decisions(dict(zip(paths, texts)))
 
@@ -103,7 +103,7 @@ async def revise_answer(pid: str, body: ReviseBody):
     answer open rounds — those stay the question form's. A running turn is refused with 409 before the file is touched.
     """
     name = body.file
-    if not (name.startswith("aiplc-docs/discovery/") and name.endswith("-questions.md")):
+    if not (name.startswith("aiplc-docs/discovery/") and ledger.is_question_file(name)):
         raise HTTPException(status_code=400, detail="not a discovery question file")
     answer = body.answer.strip()
     if not answer:

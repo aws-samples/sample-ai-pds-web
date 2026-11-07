@@ -103,9 +103,11 @@ _EXCLUDED_NAMES = frozenset({"build-instructions.md", "design-context.md",
 #: product's design, and the questionnaire is only the questions; the results are in the validation results.
 ARCHIVE_EXCLUDED = frozenset({"build-instructions.md", "design-context.md",
                               "validation-questionnaire.md"})
-#: Question files. The decision ledger carries over the answered decisions as is; the rest is progress records such as approvals and mode choices —
-#: observed (ws-g instance package): 15 of the 26 originals were question files, which made it look like "it hands over every document".
-_QUESTION_SUFFIX = "-questions.md"
+#: Copies an agent keeps of a document before rewriting it (`validation-results.backup.2026-10-23T0050Z.md`). Not an original:
+#: observed (a workshop run), one went into the zip and the vision material next to the document it copies, and its outdated
+#: lines were cited as evidence. Question files are told apart by `ledger.is_question_file` — the decision ledger carries their
+#: answers, the rest being progress records (observed ws-g: 15 of the 26 originals were question files).
+_BACKUP = re.compile(r"\.(?:backup|bak|orig)(?:[._-][^/]*)?\.md$|\.md\.(?:bak|orig)$", re.IGNORECASE)
 #: Loaded earlier the further forward they are. The decision ledger comes right after the Discovery document — it is every answered
 #: decision, the material rule 7 marks from.
 _PRIORITY = (
@@ -223,14 +225,15 @@ def select_sources(paths: Sequence[str]) -> list[str]:
     decision ledger and the options step; vision.md sees them only through the ledger (`vision_material`)."""
     chosen = [p for p in paths
               if p.startswith("aiplc-docs/discovery/") and p.endswith(".md")
-              and p.rsplit("/", 1)[-1] not in _EXCLUDED_NAMES]
+              and p.rsplit("/", 1)[-1] not in _EXCLUDED_NAMES and not _BACKUP.search(p)]
     return sorted(chosen, key=_rank)
 
 
 def shipped(path: str) -> bool:
     """Whether an original goes into the zip — the Discovery document and its evidence (spec, validation, analysis). Chosen by
     rule, not by list: the set of originals differs by starting point."""
-    return (path.startswith("aiplc-docs/discovery/") and not path.endswith(_QUESTION_SUFFIX)
+    return (path.startswith("aiplc-docs/discovery/") and path.endswith(".md")
+            and not ledger_mod.is_question_file(path) and not _BACKUP.search(path)
             and path.rsplit("/", 1)[-1] not in ARCHIVE_EXCLUDED)
 
 

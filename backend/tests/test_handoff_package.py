@@ -1219,3 +1219,32 @@ def test_a_failed_rewrite_keeps_the_document_as_written():
     assert manifest.status == "ready"
     assert "(R2)" in _run(s3.get(package.PACKAGE_PREFIX + package.VISION))
     assert sorted(f.term for f in manifest.findings if f.kind in ("internal", "vague")) == ["R2", "쉽게"]
+
+
+# ---- numbered question rounds and backup copies ----
+
+@pytest.mark.parametrize("path, read, ships", [
+    (D + "prototype/spec-as-built-questions-2.md", True, False),     # a further round: the ledger's, not an original
+    (D + "envision/envision-approval-questions-3.md", True, False),
+    (D + "prototype/validation-results.backup.2026-10-23T0050Z.md", False, False),   # an agent's copy before rewriting
+    (D + "prototype/validation-results.bak.md", False, False),
+    (D + "prototype/validation-results.md", True, True),
+    (D + "go-to-market/backup-plan.md", True, True),                  # a real document about backups
+    (D + "prototype/questions-overview.md", True, True),
+])
+def test_numbered_question_rounds_and_backup_copies_stay_out_of_the_zip(path, read, ships):
+    """Observed (a workshop run): `spec-as-built-questions-2.md` and `validation-results.backup….md` went into the zip and the
+    vision material as originals, and the numbered round's answers missed the decision ledger."""
+    assert (path in package.select_sources([path])) is read
+    assert package.shipped(path) is ships
+
+
+def test_a_numbered_round_is_in_the_ledger_and_the_decision_list():
+    numbered = D + "use-case-intake/use-case-intake-questions-2.md"
+    contents = {numbered: QUESTIONS}
+    text = ledger.build(contents, supplement.Supplement(), "ko")
+    assert "use-case-intake/use-case-intake-questions-2.md Q1" in text
+    assert {d.file for d in ledger.decisions(contents)} == {numbered}
+    # A citation of the round resolves to its rows.
+    assert open_rows._refs("[decisions.md · use-case-intake/use-case-intake-questions-2.md Q1, Q3]") == [
+        ("use-case-intake/use-case-intake-questions-2.md", 1), ("use-case-intake/use-case-intake-questions-2.md", 3)]

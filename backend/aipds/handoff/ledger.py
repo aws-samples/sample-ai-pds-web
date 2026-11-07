@@ -80,13 +80,21 @@ def labels(language: str) -> dict:
 
 
 _SINGLE = re.compile(r"^([A-J])\s*(?::\s*(.*))?$", re.DOTALL)
+#: A question file: `{phase}-questions.md`, and the further rounds an agent numbers on (`spec-as-built-questions-2.md`) —
+#: observed (a workshop run): two numbered files went into the zip as originals, and their answers missed the ledger.
+_QUESTION_FILE = re.compile(r"-questions(?:-\d+)?\.md$")
+
+
+def is_question_file(path: str) -> bool:
+    """Whether a workspace path is a question file — the one test the handoff uses (ledger, zip, decision list, revise)."""
+    return bool(_QUESTION_FILE.search(path))
 
 
 def build(contents: Mapping[str, str], record: supplement_mod.Supplement, language: str) -> str:
     """Question files (workspace path → content) and handoff tab records → `decisions.md`."""
     lab = _TEXT.get(language, _TEXT["ko"])
     by_stage: dict[str, list[tuple[str, str, str]]] = {}
-    for path in sorted(p for p in contents if p.endswith("-questions.md")):
+    for path in sorted(p for p in contents if is_question_file(p)):
         parsed = parse_question_file(path.rsplit("/", 1)[-1], contents[path])
         cite = path.removeprefix("aiplc-docs/discovery/")
         for q in parsed.questions:
@@ -117,7 +125,7 @@ def decisions(contents: Mapping[str, str]) -> list[supplement_mod.Decision]:
     """Every answered question in the question files (workspace path → content), in file and question order. All of them —
     an answer that matches the AI's marked option is the PM's decision like any other."""
     out: list[supplement_mod.Decision] = []
-    for path in sorted(p for p in contents if p.endswith("-questions.md")):
+    for path in sorted(p for p in contents if is_question_file(p)):
         parsed = parse_question_file(path.rsplit("/", 1)[-1], contents[path])
         for q in parsed.questions:
             answer = (q.answer or "").strip()
