@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import re
 
-from aipds.proto import layout
+from aipds.proto import design_sync, layout
 
 #: A path-like `.md` token. Placeholder characters (`{}*<>`) must be captured in the same
 #: token so it can be discarded whole below -- excluding them would cut
@@ -38,6 +38,12 @@ _PLACEHOLDER = re.compile(r"[{}*<>]")
 #: section of discovery-config/CLAUDE.md). That was the sentence observed in ws-b:
 #: "변경 이력(`change-history.md`)이 없으므로" ("since there is no change history").
 _ABSENCE_IS_MEANINGFUL = frozenset({layout.CHANGE_HISTORY})
+
+#: Files a document may name that are not Discovery artifacts and never live under `aiplc-docs/`. `DESIGN.md` is the admin
+#: brand profile the web writes into a prototype's build root (proto/design_sync) — observed (a workshop run): the Discovery
+#: document recorded "브랜드 프로필(DESIGN.md) 적용", and the handoff tab listed it as a broken reference although no Discovery
+#: artifact was missing. Design is not the vision's material either; the package carries the guide only as reference.
+_NOT_AN_ARTIFACT = frozenset({design_sync.DESIGN_FILENAME})
 
 _DOCS_PREFIX = "aiplc-docs/"
 
@@ -64,7 +70,7 @@ def missing_references(text: str, artifact_paths: list[str]) -> list[str]:
         if _PLACEHOLDER.search(ref) or ref.startswith("/"):
             continue  # A template path, or the tail of an absolute path/URL -- not an artifact reference
         name = _normalize(ref)
-        if not name or name.rsplit("/", 1)[-1] in _ABSENCE_IS_MEANINGFUL:
+        if not name or name.rsplit("/", 1)[-1] in _ABSENCE_IS_MEANINGFUL | _NOT_AN_ARTIFACT:
             continue
         if any(k == name or k.endswith("/" + name) for k in known):
             continue

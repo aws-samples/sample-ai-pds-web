@@ -71,3 +71,13 @@ def test_urls_and_absolute_paths_are_not_references():
 def test_each_missing_reference_is_reported_once_in_order():
     text = "`b.md`, `a.md`, 다시 `b.md`"
     assert missing_references(text, DOCS) == ["b.md", "a.md"]
+
+
+def test_the_brand_profile_a_prototype_used_is_not_a_missing_artifact():
+    """Observed (a workshop run): the Discovery document recorded the brand applied to the prototype ("브랜드 프로필(DESIGN.md)
+    적용"), and the handoff tab listed DESIGN.md as broken. It is the web's file in the prototype's build root, not a Discovery
+    artifact — and design is not the vision's material."""
+    doc = ("- **Design approach**: 롯데그룹 브랜드 프로필(DESIGN.md) 적용.\n"
+           "- 디자인 프로필(DESIGN.md·aipds-theme.css)의 정본 여부를 확인한다.\n"
+           "전체 결과: `prototype/validation-results.md`\n")
+    assert missing_references(doc, ["aiplc-docs/discovery/discovery-document.md"]) == ["prototype/validation-results.md"]
