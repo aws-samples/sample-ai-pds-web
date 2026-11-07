@@ -194,6 +194,8 @@ export interface Manifest {
   steps: Step[];
   findings: Finding[];
   truncated: string[];
+  /** vision.md was written as an edit of the last version (server handoff/previous). Absent in older manifests. */
+  edited?: boolean;
 }
 
 export interface PackageView {
@@ -234,10 +236,10 @@ export async function reviseAnswer(pid: string, file: string, number: number, an
 
 /** Start generation. With `resume`, the finished steps of the last attempt are kept and only the
  *  rest is done — if the source changed in the meantime, the server starts from scratch. */
-export async function startPackage(pid: string, resume = false): Promise<Manifest> {
+export async function startPackage(pid: string, resume = false, fresh = false): Promise<Manifest> {
   return (await apiFetch<Manifest>(`${base(pid)}/package`, {
     method: "POST",
-    body: JSON.stringify({ resume }),
+    body: JSON.stringify({ resume, fresh }),
   }))!;
 }
 

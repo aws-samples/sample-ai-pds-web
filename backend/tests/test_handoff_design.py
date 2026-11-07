@@ -1,4 +1,4 @@
-# backend/tests/test_handoff_design.py — the brand a prototype applied reaches the handoff package (design/)
+# backend/tests/test_handoff_design.py — the brand guide a prototype applied reaches the handoff package as reference (design/)
 from __future__ import annotations
 
 import asyncio
@@ -19,10 +19,11 @@ def _entries(build_dir, s3=None, slug="prototype"):
     return asyncio.run(design_entries(build_dir=build_dir, s3=s3 or FakeS3Store(), slug=slug))
 
 
-def test_a_branded_build_tree_gives_its_guide_and_its_tokens(tmp_path):
+def test_a_branded_build_tree_gives_its_guide_but_not_its_theme_file(tmp_path):
+    """The theme file is CSS variables wired into the prototype's own stack — a technical artifact, like the build instructions."""
     (tmp_path / "DESIGN.md").write_text(PROSE, encoding="utf-8")
     (tmp_path / "aipds-theme.css").write_text(THEME, encoding="utf-8")
-    assert _entries(tmp_path) == {"DESIGN.md": PROSE.encode(), "aipds-theme.css": THEME.encode()}
+    assert _entries(tmp_path) == {"DESIGN.md": PROSE.encode()}
 
 
 def test_a_design_md_without_the_web_s_theme_file_is_the_agent_s_own_notes(tmp_path):
@@ -52,8 +53,7 @@ def test_without_a_local_tree_the_current_generation_in_s3_is_read(tmp_path):
         await s3.put_bytes(base + "000003/DESIGN.md", PROSE.encode())
         await s3.put_bytes(base + "000003/aipds-theme.css", THEME.encode())
     asyncio.run(seed())
-    assert _entries(tmp_path / "missing", s3, "triage") == {
-        "DESIGN.md": PROSE.encode(), "aipds-theme.css": THEME.encode()}
+    assert _entries(tmp_path / "missing", s3, "triage") == {"DESIGN.md": PROSE.encode()}
 
 
 def test_branded_prototypes_share_one_folder_unless_their_brand_differs():
@@ -66,12 +66,11 @@ def test_branded_prototypes_share_one_folder_unless_their_brand_differs():
         "design/a/DESIGN.md": b"a", "design/a/aipds-theme.css": b"t", "design/b/DESIGN.md": b"z"}
 
 
-def test_the_readme_and_start_prompt_point_at_design_only_when_it_is_there():
+def test_the_readme_names_design_as_reference_and_the_start_prompt_leaves_it_to_the_team():
+    """A brand guide is a company standard: which one to follow is the team's to set in its technical environment document."""
     for language in ("ko", "en"):
         assert "design/" not in package.readme(language)
-        assert "design/" in package.readme(language, design=True)
-        assert "{design}" not in package.readme(language) + package.readme(language, design=True)
+        with_design = package.readme(language, design=True)
+        assert "design/" in with_design and "technical environment" in with_design
+        assert "{design}" not in package.readme(language) + with_design
         assert "design/" not in package.start_prompt(language, "p-handoff")
-        prompt = package.start_prompt(language, "p-handoff", design=True)
-        # Both requests carry it — with and without a technical environment document.
-        assert prompt.count("./p-handoff/design/") == 2
