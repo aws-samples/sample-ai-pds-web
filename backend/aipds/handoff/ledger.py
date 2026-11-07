@@ -14,6 +14,7 @@
 # the same input must produce the same table so a person can check it against the source.
 from __future__ import annotations
 
+import difflib
 import re
 from collections.abc import Mapping
 
@@ -21,6 +22,7 @@ from aipds.handoff import readiness as readiness_mod
 from aipds.handoff import supplement as supplement_mod
 from aipds.models import Question
 from aipds.parsers.questions import parse_question_file
+from aipds.question_files import is_question_file, round_of
 
 LEDGER = "decisions.md"
 
@@ -32,7 +34,9 @@ _TEXT = {
         "title": "# 결정 장부",
         "lead": ("Discovery의 질문 파일에서 PM이 답한 결정과 인계 직전에 PM이 보탠 답을 그대로 "
                  "옮겼습니다. 모두 PM이 정한 것입니다. 결정의 내용과 이유는 `discovery-document.md`에 "
-                 "있고, 이 표는 각 결정이 어느 질문에서 나왔는지와 그 답을 보여 줍니다."),
+                 "있고, 이 표는 각 결정이 어느 질문에서 나왔는지와 그 답을 보여 줍니다. 같은 승인을 다시 받은 회차"
+                 "(`…-questions-2.md`)는 차례대로 놓았고, 뒤 회차가 다시 물은 질문의 답은 뒤 회차의 답이 대신합니다."),
+        "asked_again": " — 이후 회차에서 다시 물었습니다({file})",
         "columns": ("근거", "질문", "답"),
         "handoff": "인계 시 보완(PM)", "handoff_title": "## 인계 시 보완(PM)",
         "handoff_columns": ("질문", "답", "답한 시각"),
@@ -54,7 +58,9 @@ _TEXT = {
         "lead": ("Decisions the PM answered in the Discovery question files, and answers the PM "
                  "added right before handoff, copied as they are. The PM made every one of them. What "
                  "was decided and why is in `discovery-document.md`; this table shows which question each "
-                 "decision answers, and the answer."),
+                 "decision answers, and the answer. Rounds of the same approval asked again (`…-questions-2.md`) "
+                 "follow each other; where a later round asked a question again, its answer stands."),
+        "asked_again": " — asked again in a later round ({file})",
         "columns": ("Source", "Question", "Answer"),
         "handoff": "Added at handoff (PM)", "handoff_title": "## Added at handoff (PM)",
         "handoff_columns": ("Question", "Answer", "Answered at"),
@@ -80,21 +86,70 @@ def labels(language: str) -> dict:
 
 
 _SINGLE = re.compile(r"^([A-J])\s*(?::\s*(.*))?$", re.DOTALL)
+def _question_files(contents: Mapping[str, str]) -> list[str]:
+    """The question files among the contents — by content (aipds/question_files) — with the rounds of one gate together and in
+    order: an agent opens `…-questions-2.md` when a gate is asked again after changes, and by name it sorts before round 1."""
+    return sorted((p for p in contents if is_question_file(p, contents[p])), key=lambda p: (*round_of(p), p))
+
+
+#: How alike two questions' first sentences must be to be the same question asked again. A later round rewords it ("수정을 반영한
+#: … 승인하시겠습니까?"), and asks new questions besides — observed (a workshop run), round 2 of an Envision approval asked the
+#: approval again and one new question, while round 1's scope decisions stood as answered.
+_SAME_QUESTION = 0.8
+
+
+def _first_sentence(text: str) -> str:
+    flat = " ".join(text.replace("**", "").replace("`", "").split())
+    return re.split(r"(?<=[?？.!])\s", flat, maxsplit=1)[0]
+
+
+def _same_question(earlier: str, later: str) -> bool:
+    a, b = _first_sentence(earlier), _first_sentence(later)
+    return bool(a) and (a in b or difflib.SequenceMatcher(None, a, b).ratio() >= _SAME_QUESTION)
+
+
+def _asked_again(contents: Mapping[str, str], paths: list[str]) -> dict[tuple[str, int], str]:
+    """(question file, number) → the later round of the same gate that asked that question again. Only the questions a later
+    round asks again are replaced by it: the others stand as answered, and marking them would cast doubt on a decision made."""
+    rounds: dict[str, list[tuple[int, str]]] = {}
+    for path in paths:
+        gate, number = round_of(path)
+        rounds.setdefault(gate, []).append((number, path))
+    parsed = {p: parse_question_file(p.rsplit("/", 1)[-1], contents[p]).questions for p in paths}
+    out: dict[tuple[str, int], str] = {}
+    for files in rounds.values():
+        files.sort()
+        for i, (_, earlier) in enumerate(files):
+            for q in parsed[earlier]:
+                for _, later in reversed(files[i + 1:]):
+                    if any(_same_question(q.text, r.text) for r in parsed[later]):
+                        out[(earlier, q.number)] = later
+                        break
+    return out
+
+
+def _cite(path: str) -> str:
+    return path.removeprefix("aiplc-docs/discovery/")
 
 
 def build(contents: Mapping[str, str], record: supplement_mod.Supplement, language: str) -> str:
     """Question files (workspace path → content) and handoff tab records → `decisions.md`."""
     lab = _TEXT.get(language, _TEXT["ko"])
     by_stage: dict[str, list[tuple[str, str, str]]] = {}
-    for path in sorted(p for p in contents if p.endswith("-questions.md")):
+    paths = _question_files(contents)
+    later = _asked_again(contents, paths)
+    for path in paths:
         parsed = parse_question_file(path.rsplit("/", 1)[-1], contents[path])
-        cite = path.removeprefix("aiplc-docs/discovery/")
+        cite = _cite(path)
         for q in parsed.questions:
             if not (q.answer or "").strip():
                 continue
             chosen = readiness_mod.chosen_letters(q)
+            answer = _answer(q, chosen)
+            if (path, q.number) in later:
+                answer += lab["asked_again"].replace("{file}", _cite(later[(path, q.number)]))
             by_stage.setdefault(readiness_mod.stage_of(path), []).append(
-                (f"{cite} Q{q.number}", q.ask or q.text, _answer(q, chosen)))
+                (f"{cite} Q{q.number}", q.ask or q.text, answer))
 
     head = "| " + " | ".join(lab["columns"]) + " |\n|" + "---|" * len(lab["columns"])
     parts = [lab["title"], lab["lead"]]
@@ -117,7 +172,9 @@ def decisions(contents: Mapping[str, str]) -> list[supplement_mod.Decision]:
     """Every answered question in the question files (workspace path → content), in file and question order. All of them —
     an answer that matches the AI's marked option is the PM's decision like any other."""
     out: list[supplement_mod.Decision] = []
-    for path in sorted(p for p in contents if p.endswith("-questions.md")):
+    paths = _question_files(contents)
+    later = _asked_again(contents, paths)
+    for path in paths:
         parsed = parse_question_file(path.rsplit("/", 1)[-1], contents[path])
         for q in parsed.questions:
             answer = (q.answer or "").strip()
@@ -130,7 +187,7 @@ def decisions(contents: Mapping[str, str]) -> list[supplement_mod.Decision]:
                 stage=readiness_mod.stage_of(path),
                 choices=[_option_text(o.text) for o in q.options if o.letter in chosen and not o.is_other] or [answer],
                 remark=(match.group(2) or "").strip() if match and chosen else "",
-                options=q.options, multi_select=q.multi_select))
+                options=q.options, multi_select=q.multi_select, later_round=later.get((path, q.number), "")))
     return out
 
 

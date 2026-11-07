@@ -1,5 +1,6 @@
 # backend/aipds/workspace.py
 from __future__ import annotations
+from aipds.question_files import named_question_file
 from aipds.models import QuestionFile, ProjectState, AuditEntry
 from aipds.parsers.questions import parse_question_file, serialize_answers
 from aipds.parsers.state import parse_state_file
@@ -45,7 +46,9 @@ class Workspace:
         return parse_audit_file(md)
 
     async def list_question_files(self) -> list[str]:
-        return await self.runner.list_files("aiplc-docs/**/*-questions.md")
+        # By name, numbered rounds (`…-questions-2.md`) included — the same rule everywhere a path is all there is
+        # (aipds/question_files).
+        return [p for p in await self.runner.list_files("aiplc-docs/**/*.md") if named_question_file(p)]
 
     async def list_artifacts(self) -> list[str]:
         # "Artifact" = every file under aiplc-docs/: the dashboard's 산출물 panel

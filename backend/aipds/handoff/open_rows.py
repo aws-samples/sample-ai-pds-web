@@ -366,7 +366,7 @@ def _classify(q: Mapping, lab: Mapping[str, str]) -> tuple[str, str, str]:
     return who, when, until
 
 
-_QUESTION_FILE = re.compile(r"[\w./-]+-questions\.md")
+_QUESTION_FILE = re.compile(r"[\w./-]+-questions(?:-\d+)?\.md")
 _QUESTION_NO = re.compile(r"Q(\d+)")
 
 

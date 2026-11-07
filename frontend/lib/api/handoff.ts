@@ -91,6 +91,8 @@ export interface Decision {
   remark: string;
   options: QuestionOption[];
   multi_select: boolean;
+  /** The later round of the same gate that asked this question again (`…-questions-2.md`), if any — its answer stands. */
+  later_round?: string;
 }
 
 export interface OpenAnswer extends SupplementAnswer {

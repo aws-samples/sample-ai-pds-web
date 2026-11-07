@@ -126,7 +126,13 @@ export function SupplementForm({
             <span className="mr-1.5 text-slate-400">{t("handoff.supp.decisions.remark")}</span>{d.remark}
           </p>
         )}
-        {onRevise && (
+        {/* A later round asked this again: its answer stands, so this one is shown for the record and not changed here. */}
+        {d.later_round && (
+          <p className="mt-0.5 text-xs text-slate-500">
+            {t("handoff.supp.decisions.askedAgain").replace("{file}", d.later_round.replace("aiplc-docs/discovery/", ""))}
+          </p>
+        )}
+        {onRevise && !d.later_round && (
           <button type="button" aria-expanded={revising === key}
                   onClick={() => { setRevising(revising === key ? null : key); setNext(d.answer); }}
                   className="mt-2 px-2.5 py-1 rounded-lg border border-slate-300 text-xs text-slate-600">

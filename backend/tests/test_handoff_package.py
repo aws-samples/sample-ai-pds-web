@@ -152,8 +152,11 @@ def test_the_archive_keeps_the_document_and_its_evidence_but_not_process_files()
              D + "prototype/validation-questionnaire.md", D + "discovery-document.md",
              D + "envision/pain-point-questions.md", D + "prototype/build-decision-questions.md",
              D + "prototype/validation-results.md", D + "solution-analysis/identified-solutions.md",
-             "aiplc-docs/audit.md"]
-    assert package.archive_originals(paths) == [
+             "aiplc-docs/audit.md", D + "prototype/odd-name.md"]
+    texts = {p: "# 문서\n" for p in package.archive_candidates(paths)}
+    # A question file named otherwise is told by its answer slots.
+    texts[D + "prototype/odd-name.md"] = "## Question 1\n무엇?\n\n[Answer]: A\n"
+    assert list(package.archive_originals(texts)) == [
         D + "discovery-document.md", D + "prototype/validation-results.md",
         D + "solution-analysis/identified-solutions.md"]
 
@@ -1224,6 +1227,63 @@ def test_a_failed_rewrite_keeps_the_document_as_written():
     assert manifest.status == "ready"
     assert "(R2)" in _run(s3.get(package.PACKAGE_PREFIX + package.VISION))
     assert sorted(f.term for f in manifest.findings if f.kind in ("internal", "vague")) == ["R2", "쉽게"]
+
+
+# ---- numbered question rounds and backup copies ----
+
+@pytest.mark.parametrize("path, read, ships", [
+    (D + "prototype/spec-as-built-questions-2.md", True, False),     # a further round: the ledger's, not an original
+    (D + "envision/envision-approval-questions-3.md", True, False),
+    (D + "prototype/validation-results.backup.2026-10-23T0050Z.md", False, False),   # an agent's copy before rewriting
+    (D + "prototype/validation-results.bak.md", False, False),
+    (D + "prototype/validation-results.md", True, True),
+    (D + "go-to-market/backup-plan.md", True, True),                  # a real document about backups
+    (D + "prototype/questions-overview.md", True, True),
+])
+def test_numbered_question_rounds_and_backup_copies_stay_out_of_the_zip(path, read, ships):
+    """Observed (a workshop run): `spec-as-built-questions-2.md` and `validation-results.backup….md` went into the zip and the
+    vision material as originals, and the numbered round's answers missed the decision ledger."""
+    assert (path in package.select_sources([path])) is read
+    assert package.shipped(path) is ships
+
+
+def test_a_numbered_round_is_in_the_ledger_and_the_decision_list():
+    numbered = D + "use-case-intake/use-case-intake-questions-2.md"
+    contents = {numbered: QUESTIONS}
+    text = ledger.build(contents, supplement.Supplement(), "ko")
+    assert "use-case-intake/use-case-intake-questions-2.md Q1" in text
+    assert {d.file for d in ledger.decisions(contents)} == {numbered}
+    # A citation of the round resolves to its rows.
+    assert open_rows._refs("[decisions.md · use-case-intake/use-case-intake-questions-2.md Q1, Q3]") == [
+        ("use-case-intake/use-case-intake-questions-2.md", 1), ("use-case-intake/use-case-intake-questions-2.md", 3)]
+
+
+def test_question_files_at_the_docs_root_are_read_for_the_ledger_but_other_root_files_are_not():
+    paths = ["aiplc-docs/envision-approval-questions.md", "aiplc-docs/envision-approval-questions-2.md",
+             "aiplc-docs/audit.md", "aiplc-docs/aiplc-state.md", "aiplc-docs/notes.md"]
+    assert sorted(package.select_sources(paths)) == [
+        "aiplc-docs/envision-approval-questions-2.md", "aiplc-docs/envision-approval-questions.md"]
+    assert not any(package.shipped(p) for p in paths)
+
+
+@pytest.mark.parametrize("name, backup", [
+    ("validation-results.backup.2026-10-23T0050Z.md", True), ("validation-results.bak.md", True),
+    ("validation-results.backup-2.md", True), ("validation-results.orig.md", True), ("Spec.BAK.md", True),
+    ("validation-results.md", False), ("backup-plan.md", False), ("bakery-survey.md", False),
+    ("rollback.backups.md", False), ("origin-story.md", False),
+])
+def test_backup_copies_are_told_by_the_parts_of_their_name(name, backup):
+    assert package._is_backup(D + "prototype/" + name) is backup
+
+
+def test_telling_a_backup_takes_linear_time_on_a_hostile_name():
+    """CodeQL py/polynomial-redos: the regular expression this replaced backtracked polynomially on `.bak-` repeated, and the
+    revise route passes a path from the request body to it."""
+    hostile = D + ".bak-" * 50_000 + "x"
+    started = time.monotonic()
+    assert package._is_backup(hostile) is True
+    assert package.select_sources([hostile]) == [] and package.shipped(hostile) is False
+    assert time.monotonic() - started < 1.0
 
 
 # ---- a rebuild edits the last version; go-to-market targets left out go back in ----

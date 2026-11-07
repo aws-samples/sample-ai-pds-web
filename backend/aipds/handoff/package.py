@@ -68,6 +68,7 @@ from aipds.handoff import open_rows
 from aipds.handoff import previous as previous_mod
 from aipds.handoff import supplement as supplement_mod
 from aipds.handoff.readiness import DISCOVERY_DOCUMENT, Prototype, Readiness
+from aipds.question_files import is_question_file, named_question_file
 from aipds.s3store import S3StoreLike
 
 _log = logging.getLogger("aipds.handoff")
@@ -110,9 +111,25 @@ _EXCLUDED_NAMES = frozenset({"build-instructions.md", "design-context.md",
 #: product's design, and the questionnaire is only the questions; the results are in the validation results.
 ARCHIVE_EXCLUDED = frozenset({"build-instructions.md", "design-context.md",
                               "validation-questionnaire.md"})
-#: Question files. The decision ledger carries over the answered decisions as is; the rest is progress records such as approvals and mode choices —
-#: observed (ws-g instance package): 15 of the 26 originals were question files, which made it look like "it hands over every document".
-_QUESTION_SUFFIX = "-questions.md"
+#: Copies an agent keeps of a document before rewriting it (`validation-results.backup.2026-10-23T0050Z.md`). Not an original:
+#: observed (a workshop run), one went into the zip and the vision material next to the document it copies, and its outdated
+#: lines were cited as evidence. Question files are told apart by their content (aipds/question_files) — the decision ledger
+#: carries their answers, the rest being progress records (observed ws-g: 15 of the 26 originals were question files).
+_BACKUP_WORDS = ("backup", "bak", "orig")
+
+
+def _is_backup(path: str) -> bool:
+    """Whether a path names a backup copy: a dot-separated part of the file name, after the first, that is a backup word or
+    starts with one and a separator (`x.backup.2026-10-23T0050Z.md`, `x.bak.md`, `x.backup-2.md`), or `x.md.bak`.
+
+    Not a regular expression: the path can come from a request (the revise route), and the pattern this replaced backtracked
+    polynomially on names like `.bak-.bak-.bak-…` (CodeQL py/polynomial-redos). Splitting the name is linear."""
+    name = path.rsplit("/", 1)[-1].lower()
+    if name.endswith((".md.bak", ".md.orig")):
+        return True
+    parts = name.split(".")
+    return any(part == word or part.startswith((word + "-", word + "_"))
+               for part in parts[1:-1] for word in _BACKUP_WORDS)
 #: Loaded earlier the further forward they are. The decision ledger comes right after the Discovery document — it is every answered
 #: decision, the material rule 7 marks from.
 _PRIORITY = (
@@ -228,30 +245,44 @@ def _rank(path: str) -> tuple[int, str]:
 
 
 def select_sources(paths: Sequence[str]) -> list[str]:
-    """Originals read for a build, in loading order. Documents and question files under Discovery — the question files feed the
-    decision ledger and the options step; vision.md sees them only through the ledger (`vision_material`)."""
+    """Originals read for a build, in loading order: the documents and question files under Discovery, and the question files an
+    agent put at the docs root (the generic guide's `aiplc-docs/{phase}-questions.md` — observed, an Envision approval and its
+    second round). The question files feed the decision ledger and the options step; vision.md sees them only through the ledger
+    (`vision_material`)."""
     chosen = [p for p in paths
-              if p.startswith("aiplc-docs/discovery/") and p.endswith(".md")
-              and p.rsplit("/", 1)[-1] not in _EXCLUDED_NAMES]
+              if p.startswith("aiplc-docs/") and p.endswith(".md")
+              and (p.startswith("aiplc-docs/discovery/") or named_question_file(p))
+              and p.rsplit("/", 1)[-1] not in _EXCLUDED_NAMES and not _is_backup(p)]
     return sorted(chosen, key=_rank)
 
 
-def shipped(path: str) -> bool:
+def shipped(path: str, text: str | None = None) -> bool:
     """Whether an original goes into the zip — the Discovery document and its evidence (spec, validation, analysis). Chosen by
-    rule, not by list: the set of originals differs by starting point."""
-    return (path.startswith("aiplc-docs/discovery/") and not path.endswith(_QUESTION_SUFFIX)
-            and path.rsplit("/", 1)[-1] not in ARCHIVE_EXCLUDED)
+    rule, not by list: the set of originals differs by starting point. With its text, a question file is told by its content
+    (aipds/question_files); without, by its name."""
+    if not (path.startswith("aiplc-docs/discovery/") and path.endswith(".md")) or _is_backup(path):
+        return False
+    if path.rsplit("/", 1)[-1] in ARCHIVE_EXCLUDED:
+        return False
+    return not (is_question_file(path, text) if text is not None else named_question_file(path))
 
 
-def archive_originals(paths: Sequence[str]) -> list[str]:
-    """Originals placed as is under `discovery/` in the zip."""
-    return [p for p in paths if shipped(p)]
+def archive_candidates(paths: Sequence[str]) -> list[str]:
+    """Paths that may go into the zip under `discovery/` — read them, then keep what `shipped(path, text)` keeps
+    (`archive_originals`)."""
+    return [p for p in paths if p.startswith("aiplc-docs/discovery/") and p.endswith(".md") and not _is_backup(p)
+            and p.rsplit("/", 1)[-1] not in ARCHIVE_EXCLUDED]
+
+
+def archive_originals(texts: dict[str, str]) -> dict[str, str]:
+    """The originals placed as is under `discovery/` in the zip, from the candidates' texts."""
+    return {p: t for p, t in texts.items() if shipped(p, t)}
 
 
 def vision_material(sources: dict[str, str], ledger: str) -> dict[str, str]:
     """vision.md's material: the originals the zip holds plus the decision ledger, in loading order. The ledger's key is its
     name in the package, so a citation of it (`decisions.md · go-to-market/gtm-questions.md Q13`) resolves like any other."""
-    material = {path: text for path, text in sources.items() if shipped(path)}
+    material = {path: text for path, text in sources.items() if shipped(path, text)}
     material[LEDGER] = ledger
     return {path: material[path] for path in sorted(material, key=_rank)}
 

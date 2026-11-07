@@ -75,3 +75,10 @@ def test_only_a_different_answer_to_an_answered_discovery_question_is_accepted(m
     # Question 6 of the fixture has no answer: an open round is the question form's to answer, not this endpoint's.
     assert _revise("rev-2", number=6, answer="A").status_code == 409
     assert registry.get("rev-2").runner.sent == []
+
+
+def test_a_discovery_document_is_not_a_question_file_to_revise(monkeypatch):
+    _seed(monkeypatch, "rev-doc")
+    r = client.post("/projects/rev-doc/handoff/revise",
+                    json={"file": D + "discovery-document.md", "number": 1, "answer": "B"})
+    assert r.status_code == 400
