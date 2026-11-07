@@ -1259,3 +1259,23 @@ def test_question_files_at_the_docs_root_are_read_for_the_ledger_but_other_root_
     assert sorted(package.select_sources(paths)) == [
         "aiplc-docs/envision-approval-questions-2.md", "aiplc-docs/envision-approval-questions.md"]
     assert not any(package.shipped(p) for p in paths)
+
+
+@pytest.mark.parametrize("name, backup", [
+    ("validation-results.backup.2026-10-23T0050Z.md", True), ("validation-results.bak.md", True),
+    ("validation-results.backup-2.md", True), ("validation-results.orig.md", True), ("Spec.BAK.md", True),
+    ("validation-results.md", False), ("backup-plan.md", False), ("bakery-survey.md", False),
+    ("rollback.backups.md", False), ("origin-story.md", False),
+])
+def test_backup_copies_are_told_by_the_parts_of_their_name(name, backup):
+    assert package._is_backup(D + "prototype/" + name) is backup
+
+
+def test_telling_a_backup_takes_linear_time_on_a_hostile_name():
+    """CodeQL py/polynomial-redos: the regular expression this replaced backtracked polynomially on `.bak-` repeated, and the
+    revise route passes a path from the request body to it."""
+    hostile = D + ".bak-" * 50_000 + "x"
+    started = time.monotonic()
+    assert package._is_backup(hostile) is True
+    assert package.select_sources([hostile]) == [] and package.shipped(hostile) is False
+    assert time.monotonic() - started < 1.0

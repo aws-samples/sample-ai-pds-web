@@ -108,7 +108,21 @@ ARCHIVE_EXCLUDED = frozenset({"build-instructions.md", "design-context.md",
 #: observed (a workshop run), one went into the zip and the vision material next to the document it copies, and its outdated
 #: lines were cited as evidence. Question files are told apart by their content (aipds/question_files) — the decision ledger
 #: carries their answers, the rest being progress records (observed ws-g: 15 of the 26 originals were question files).
-_BACKUP = re.compile(r"\.(?:backup|bak|orig)(?:[._-][^/]*)?\.md$|\.md\.(?:bak|orig)$", re.IGNORECASE)
+_BACKUP_WORDS = ("backup", "bak", "orig")
+
+
+def _is_backup(path: str) -> bool:
+    """Whether a path names a backup copy: a dot-separated part of the file name, after the first, that is a backup word or
+    starts with one and a separator (`x.backup.2026-10-23T0050Z.md`, `x.bak.md`, `x.backup-2.md`), or `x.md.bak`.
+
+    Not a regular expression: the path can come from a request (the revise route), and the pattern this replaced backtracked
+    polynomially on names like `.bak-.bak-.bak-…` (CodeQL py/polynomial-redos). Splitting the name is linear."""
+    name = path.rsplit("/", 1)[-1].lower()
+    if name.endswith((".md.bak", ".md.orig")):
+        return True
+    parts = name.split(".")
+    return any(part == word or part.startswith((word + "-", word + "_"))
+               for part in parts[1:-1] for word in _BACKUP_WORDS)
 #: Loaded earlier the further forward they are. The decision ledger comes right after the Discovery document — it is every answered
 #: decision, the material rule 7 marks from.
 _PRIORITY = (
@@ -229,7 +243,7 @@ def select_sources(paths: Sequence[str]) -> list[str]:
     chosen = [p for p in paths
               if p.startswith("aiplc-docs/") and p.endswith(".md")
               and (p.startswith("aiplc-docs/discovery/") or named_question_file(p))
-              and p.rsplit("/", 1)[-1] not in _EXCLUDED_NAMES and not _BACKUP.search(p)]
+              and p.rsplit("/", 1)[-1] not in _EXCLUDED_NAMES and not _is_backup(p)]
     return sorted(chosen, key=_rank)
 
 
@@ -237,7 +251,7 @@ def shipped(path: str, text: str | None = None) -> bool:
     """Whether an original goes into the zip — the Discovery document and its evidence (spec, validation, analysis). Chosen by
     rule, not by list: the set of originals differs by starting point. With its text, a question file is told by its content
     (aipds/question_files); without, by its name."""
-    if not (path.startswith("aiplc-docs/discovery/") and path.endswith(".md")) or _BACKUP.search(path):
+    if not (path.startswith("aiplc-docs/discovery/") and path.endswith(".md")) or _is_backup(path):
         return False
     if path.rsplit("/", 1)[-1] in ARCHIVE_EXCLUDED:
         return False
@@ -247,7 +261,7 @@ def shipped(path: str, text: str | None = None) -> bool:
 def archive_candidates(paths: Sequence[str]) -> list[str]:
     """Paths that may go into the zip under `discovery/` — read them, then keep what `shipped(path, text)` keeps
     (`archive_originals`)."""
-    return [p for p in paths if p.startswith("aiplc-docs/discovery/") and p.endswith(".md") and not _BACKUP.search(p)
+    return [p for p in paths if p.startswith("aiplc-docs/discovery/") and p.endswith(".md") and not _is_backup(p)
             and p.rsplit("/", 1)[-1] not in ARCHIVE_EXCLUDED]
 
 
