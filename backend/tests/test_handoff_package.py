@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import io
 import json
+import re
 import time
 import zipfile
 
@@ -343,7 +344,7 @@ def test_steps_write_the_open_decisions_then_the_ledger_and_readme():
     assert set(done.sources) == set(package.select_sources(B))
     assert s3.blobs[package.PACKAGE_PREFIX + "vision.md"].startswith("# 샘플몰 안전ON — Vision")
     prompt = s3.blobs[package.PACKAGE_PREFIX + "start-prompt.md"]
-    assert "/aidlc ./project-handoff/vision.md에 정리된 제품을 만들어 주세요." in prompt and "$aidlc" in prompt
+    assert f"/aidlc {package.AIDLC_PLAN} ./project-handoff/vision.md에 정리된 제품을 만들어 주세요." in prompt and "$aidlc" in prompt
     assert "./project-handoff/discovery/에 있으니 discovery-document.md부터" in prompt
     assert s3.blobs[package.PACKAGE_PREFIX + "decisions.md"].startswith("# 결정 장부")
     readme = s3.blobs[package.PACKAGE_PREFIX + "README.md"]
@@ -812,7 +813,7 @@ def test_route_generates_views_and_downloads(env):
     # paths are right, and extracting into the project root does not let the package README overwrite the project's README.
     assert {n.split("/", 1)[0] for n in zf.namelist()} == {"pkg-b-handoff"}
     prompt = zf.read("pkg-b-handoff/start-prompt.md").decode()
-    assert "/aidlc ./pkg-b-handoff/vision.md에 정리된 제품을 만들어 주세요." in prompt
+    assert f"/aidlc {package.AIDLC_PLAN} ./pkg-b-handoff/vision.md에 정리된 제품을 만들어 주세요." in prompt
     assert "./pkg-b-handoff/decisions.md" in prompt
     # The start prompt shown on screen points to the same folder.
     assert "./pkg-b-handoff/vision.md" in body["files"]["start-prompt.md"]
@@ -1064,6 +1065,23 @@ def test_the_start_prompt_and_readme_ask_for_who_confirmed_an_external_fact_and_
     assert ko.count("누가 언제 확인했는지까지") == 2 and en.count("who confirmed it and when") == 2
     assert "누가\n  언제 확인했는지" in package._README["ko"]
     assert "who confirmed it and when" in package._README["en"]
+
+
+def test_both_requests_skip_the_stages_the_package_already_answers():
+    """Observed (one project): on the stock plan, Intent Capture asked the PM to confirm, one by one, what vision.md
+    already states. Each request carries the plan right after `/aidlc` — the engine reads its flags from there — the
+    note says how to bring a stage back, and the before-build questions are asked where the run now starts."""
+    for language, starts_at in (("ko", "요구사항 분석 단계에서"), ("en", "in Requirements Analysis")):
+        text = package.start_prompt(language, "x-handoff")
+        requests = re.findall(r"```text\n(.+?)\n```", text, re.DOTALL)
+        assert len(requests) == 2
+        assert all(r.startswith(f"/aidlc {package.AIDLC_PLAN} ") and "./x-handoff/vision.md" in r for r in requests)
+        assert all(starts_at in r for r in requests)
+        assert text.count(package.AIDLC_PLAN) == 3 and "/aidlc --add" in text
+    # Rough Mockups needs Scope Definition's backlog and Refined Mockups needs its wireframes: dropping one of the chain
+    # without the rest starves a stage the engine then refuses.
+    skipped = package.AIDLC_PLAN.split("--skip ")[1].split(",")
+    assert skipped == ["intent-capture", "feasibility", "scope-definition", "rough-mockups", "refined-mockups"]
 
 
 # ---- decisions are the PM's; estimates stay estimates ----

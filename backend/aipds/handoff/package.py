@@ -382,8 +382,10 @@ def build_prompt(*, language: str, readiness: Readiness, record: supplement_mod.
     blocks = "\n\n".join(f"<<<FILE {path}>>>\n{text}\n<<<END {path}>>>"
                          for path, text in sources.items())
     return f"""Write the vision document that AI-DLC (an AI-driven development workflow) takes as its
-main input, from the product-discovery artifacts below. AI-DLC plans from it: Intent Capture,
-Scope Definition and Requirements Analysis read it, and its open questions are asked early. The
+main input, from the product-discovery artifacts below. AI-DLC skips the stages this document
+already answers (intent, feasibility, scope, rough mockups) and starts at Requirements Analysis,
+which reads it as primary input and asks only what it leaves open — so what it says is taken as
+decided, and its open questions are asked there, before any design. The
 development team will also have `discovery-document.md`, the evidence files and `{LEDGER}` (the
 decision ledger: every question answered during discovery, its answer, and who decided it), so cite
 them instead of copying long passages. Write in {lang_name}; keep the section headings below in English
@@ -1138,8 +1140,9 @@ _README = {
     "ko": """# 개발 인계 패키지
 
 Discovery에서 정한 "무엇을, 누구를 위해, 왜 만드는가"를 AI-DLC가 받는 입력으로 옮겼습니다.
-AI-DLC를 쓴다면 `start-prompt.md`의 요청을 그대로 붙여 넣으면 됩니다. 다른 코딩 어시스턴트나 개발
-하네스에도 `vision.md`부터 읽히면 됩니다.
+AI-DLC를 쓴다면 `start-prompt.md`의 요청을 그대로 붙여 넣으면 됩니다. 요청은 이 패키지가 이미 답한
+단계를 건너뛰고 요구사항 분석부터 시작합니다(`start-prompt.md`에 이유와 되살리는 방법이 있습니다). 다른
+코딩 어시스턴트나 개발 하네스에도 `vision.md`부터 읽히면 됩니다.
 
 ## 읽는 순서
 
@@ -1173,8 +1176,9 @@ AI-DLC를 쓴다면 `start-prompt.md`의 요청을 그대로 붙여 넣으면 �
     "en": """# Development handoff package
 
 What Discovery decided to build, for whom and why, in the form AI-DLC takes as its input. With AI-DLC,
-paste the request in `start-prompt.md` as it is. Any other coding assistant or harness can start from
-`vision.md`.
+paste the request in `start-prompt.md` as it is. It skips the stages this package already answers and
+starts at Requirements Analysis (`start-prompt.md` says why, and how to bring one back). Any other coding
+assistant or harness can start from `vision.md`.
 
 ## Reading order
 
@@ -1230,6 +1234,18 @@ def archive_folder(pid: str) -> str:
 #: package must yield the same sentences for a person to paste them as is. Paths are relative to the project root and `{root}` is
 #: `archive_folder`. The technical environment
 #: document the team writes is assumed to live outside the package, at the project root.
+#:
+#: **The request also sets the stage plan (`AIDLC_PLAN`).** Observed (one project, AI-DLC 2.11.3): run on the stock plan, Intent
+#: Capture asked the PM to confirm, one question each, the problem, customer, metrics, trigger, stakeholders and exclusions
+#: vision.md already states — its rules let a document's claims in only through answered questions — and Feasibility, Scope
+#: Definition and Rough Mockups would ask after the constraints, MVP scope and screens the package carries. Requirements Analysis
+#: reads vision.md as primary input and asks only what it leaves open, so the work starts there. The skips follow the stage graph:
+#: Feasibility, Scope Definition and Rough Mockups require Intent Capture's statement, and Refined Mockups requires Rough Mockups'
+#: wireframes, so they go as one chain; the engine's strict check (`validate-grid --strict`) accepts it. A package always has a
+#: prototype spec (`readiness` blocks on `no_spec`), which stands in for the mockups. The plan is `mvp` because vision.md is
+#: written as a first release; other plans add stages (Market Research, Team Formation) that read the skipped ones.
+AIDLC_PLAN = "--scope mvp --skip intent-capture,feasibility,scope-definition,rough-mockups,refined-mockups"
+
 _START_PROMPT = {
     "ko": {
         "title": "# AI-DLC 시작 프롬프트",
@@ -1240,9 +1256,13 @@ _START_PROMPT = {
                        "만들어 주세요."),
         "rest": ("근거 자료는 ./{root}/discovery/에 있으니 discovery-document.md부터 읽고, PM이 정한 결정과 그 "
                  "답은 ./{root}/decisions.md에서 확인해 주세요. vision.md의 "
-                 "Open Questions 중 시점이 \"빌드 전\"인 항목은 추측으로 채우지 말고, 작업을 시작하기 전에 "
-                 "먼저 질문해 주세요. 답할 사람이 \"PM(외부 확인)\"인 항목은 누가 언제 확인했는지까지 함께 "
-                 "받고, 그것이 없으면 확정하지 말고 열린 질문으로 남겨 주세요."),
+                 "Open Questions 중 시점이 \"빌드 전\"인 항목은 추측으로 채우지 말고, 요구사항 분석 단계에서 "
+                 "설계에 들어가기 전에 먼저 질문해 주세요. 답할 사람이 \"PM(외부 확인)\"인 항목은 누가 언제 "
+                 "확인했는지까지 함께 받고, 그것이 없으면 확정하지 말고 열린 질문으로 남겨 주세요."),
+        "plan_note": ("요청 앞의 `{plan}`는 이 패키지가 이미 답한 단계(의도 파악, 타당성, 범위 정의, 화면 초안과 그 "
+                      "다듬기)를 건너뛰고 요구사항 분석부터 시작하게 합니다. 화면은 `discovery/prototype/`의 명세가 "
+                      "대신합니다. 건너뛴 단계가 필요하면 `--skip` 목록에서 빼고 시작하거나, 진행 중에 "
+                      "`/aidlc --add <단계>`로 되살립니다."),
         "codex": "Codex CLI에서는 `/aidlc` 대신 `$aidlc`를 씁니다.",
         "tech_note": ("개발팀이 기술 스택·도구·금지 사항을 AI-DLC의 technical environment 문서로 프로젝트 루트에 "
                       "써 두었다면(`./technical-environment.md`), 이 요청을 씁니다."),
@@ -1258,8 +1278,14 @@ _START_PROMPT = {
         "rest": ("The evidence is in ./{root}/discovery/, so start with discovery-document.md, and find the "
                  "decisions the PM made, with their answers, in ./{root}/decisions.md. "
                  "Do not fill in the Open Questions in vision.md marked \"Before build\" with guesses; ask "
-                 "them before you start. For those answered by \"PM (external check)\", take the answer "
-                 "together with who confirmed it and when; without that, keep the question open."),
+                 "them in Requirements Analysis, before any design. For those answered by \"PM (external "
+                 "check)\", take the answer together with who confirmed it and when; without that, keep the "
+                 "question open."),
+        "plan_note": ("The `{plan}` in front of the request skips the stages this package already answers "
+                      "(intent, feasibility, scope, rough mockups and their refinement) and starts at Requirements "
+                      "Analysis. The spec in `discovery/prototype/` stands in for the screens. If you need a skipped "
+                      "stage, drop it from the `--skip` list before you start, or bring it back during the run with "
+                      "`/aidlc --add <stage>`."),
         "codex": "Codex CLI uses `$aidlc` instead of `/aidlc`.",
         "tech_note": ("If the team has written its stack, tools and what is not allowed in AI-DLC's technical "
                       "environment document at the project root (`./technical-environment.md`), use this "
@@ -1272,10 +1298,11 @@ def start_prompt(language: str, folder: str) -> str:
     """Contents of `start-prompt.md`. The first code block is the default request — the screen's copy button picks it up.
     `folder` is `archive_folder(pid)`. It does not name `design/`: which brand standard to follow is the team's to set in its
     technical environment document (`_README_DESIGN`)."""
-    t = {k: v.replace("{root}", folder)
+    t = {k: v.replace("{root}", folder).replace("{plan}", AIDLC_PLAN)
          for k, v in _START_PROMPT.get(language, _START_PROMPT["ko"]).items()}
-    return (f"{t['title']}\n\n{t['lead']}\n\n```text\n/aidlc {t['first']} {t['rest']}\n```\n\n"
-            f"{t['codex']}\n\n{t['tech_note']}\n\n```text\n/aidlc {t['first_tech']} {t['rest']}\n```\n")
+    return (f"{t['title']}\n\n{t['lead']}\n\n```text\n/aidlc {AIDLC_PLAN} {t['first']} {t['rest']}\n```\n\n"
+            f"{t['plan_note']}\n\n{t['codex']}\n\n{t['tech_note']}\n\n"
+            f"```text\n/aidlc {AIDLC_PLAN} {t['first_tech']} {t['rest']}\n```\n")
 
 
 #: The README line for `design/`, there only when a prototype was branded — a line pointing at nothing would send the team
