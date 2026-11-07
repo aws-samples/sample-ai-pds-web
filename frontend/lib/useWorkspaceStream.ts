@@ -126,7 +126,8 @@ export function isDocPath(path: string): boolean {
     path !== "aiplc-docs/audit.md" &&
     !path.endsWith("/aiplc-state.md") &&
     path !== "aiplc-docs/aiplc-state.md" &&
-    !path.endsWith("-questions.md")
+    // Numbered rounds of one gate (`…-questions-2.md`) are question files too — the backend's named_question_file.
+    !/-questions(-\d+)?\.md$/.test(path)
   );
 }
 

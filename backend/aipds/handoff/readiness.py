@@ -109,10 +109,22 @@ _STAGE_DIRS: tuple[tuple[str, Stage], ...] = (
 )
 
 
+#: A question file at the docs root has no stage directory; its name starts with the phase (`envision-approval-questions.md`).
+_STAGE_NAMES: tuple[tuple[str, Stage], ...] = (
+    ("envision", "envision"), ("solution", "solution_analysis"), ("use-case", "use_case_intake"),
+    ("prioritization", "prioritization"), ("prototype", "prototype"), ("product-strategy", "product_strategy"),
+    ("strategy", "product_strategy"), ("go-to-market", "go_to_market"), ("gtm", "go_to_market"),
+)
+
+
 def stage_of(path: str) -> Stage:
     rest = path[len(_DISCOVERY):] if path.startswith(_DISCOVERY) else path
     for prefix, stage in _STAGE_DIRS:
         if rest.startswith(prefix):
+            return stage
+    name = path.rsplit("/", 1)[-1]
+    for prefix, stage in _STAGE_NAMES:
+        if name.startswith(prefix):
             return stage
     return "other"
 

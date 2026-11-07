@@ -52,6 +52,7 @@ import json
 import logging
 from pathlib import Path
 
+from aipds.question_files import named_question_file
 from aipds.models import AgentEvent
 from aipds.parsers.state import parse_state_file
 from aipds.proto import layout
@@ -193,7 +194,6 @@ def prototype_events(workspace: Path,
 #: (useWorkspaceStream.ts): the answer screen is the QuestionForm in the right panel, so showing
 #: the markdown as a document too would put two versions of the same questions on one screen, and the two can never match.
 _RECORD_KEEPING = ("audit.md", "aiplc-state.md")
-_QUESTION_SUFFIX = "-questions.md"
 
 
 def is_document(rel: str) -> bool:
@@ -207,7 +207,8 @@ def is_document(rel: str) -> bool:
     if not rel.startswith(f"{DOCS_ROOT}/") or not rel.endswith(".md"):
         return False
     name = rel.rsplit("/", 1)[-1]
-    return name not in _RECORD_KEEPING and not name.endswith(_QUESTION_SUFFIX)
+    # Numbered rounds (`…-questions-2.md`) are question files too (aipds/question_files) — the same rule as `isDocPath`.
+    return name not in _RECORD_KEEPING and not named_question_file(name)
 
 
 def document_events(workspace: Path,

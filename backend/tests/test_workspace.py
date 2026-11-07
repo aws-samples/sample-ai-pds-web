@@ -54,13 +54,17 @@ async def test_list_question_files_finds_top_level_and_nested():
     await r.write_file("aiplc-docs/discovery-mode-selection-questions.md", "x")
     # nested (ws-m: discovery/product-strategy/strategy-questions.md)
     await r.write_file("aiplc-docs/discovery/product-strategy/strategy-questions.md", "y")
+    # a numbered round of the same gate, asked again after changes
+    await r.write_file("aiplc-docs/discovery/prototype/spec-as-built-questions-2.md", "w")
     # a non-question file that must NOT be listed
     await r.write_file("aiplc-docs/audit.md", "z")
+    await r.write_file("aiplc-docs/discovery/questions-overview.md", "v")
     ws = Workspace(r)
     found = sorted(await ws.list_question_files())
     assert found == [
         "aiplc-docs/discovery-mode-selection-questions.md",
         "aiplc-docs/discovery/product-strategy/strategy-questions.md",
+        "aiplc-docs/discovery/prototype/spec-as-built-questions-2.md",
     ]
 
 

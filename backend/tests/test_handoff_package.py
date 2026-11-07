@@ -147,8 +147,11 @@ def test_the_archive_keeps_the_document_and_its_evidence_but_not_process_files()
              D + "prototype/validation-questionnaire.md", D + "discovery-document.md",
              D + "envision/pain-point-questions.md", D + "prototype/build-decision-questions.md",
              D + "prototype/validation-results.md", D + "solution-analysis/identified-solutions.md",
-             "aiplc-docs/audit.md"]
-    assert package.archive_originals(paths) == [
+             "aiplc-docs/audit.md", D + "prototype/odd-name.md"]
+    texts = {p: "# 문서\n" for p in package.archive_candidates(paths)}
+    # A question file named otherwise is told by its answer slots.
+    texts[D + "prototype/odd-name.md"] = "## Question 1\n무엇?\n\n[Answer]: A\n"
+    assert list(package.archive_originals(texts)) == [
         D + "discovery-document.md", D + "prototype/validation-results.md",
         D + "solution-analysis/identified-solutions.md"]
 
@@ -1248,3 +1251,11 @@ def test_a_numbered_round_is_in_the_ledger_and_the_decision_list():
     # A citation of the round resolves to its rows.
     assert open_rows._refs("[decisions.md · use-case-intake/use-case-intake-questions-2.md Q1, Q3]") == [
         ("use-case-intake/use-case-intake-questions-2.md", 1), ("use-case-intake/use-case-intake-questions-2.md", 3)]
+
+
+def test_question_files_at_the_docs_root_are_read_for_the_ledger_but_other_root_files_are_not():
+    paths = ["aiplc-docs/envision-approval-questions.md", "aiplc-docs/envision-approval-questions-2.md",
+             "aiplc-docs/audit.md", "aiplc-docs/aiplc-state.md", "aiplc-docs/notes.md"]
+    assert sorted(package.select_sources(paths)) == [
+        "aiplc-docs/envision-approval-questions-2.md", "aiplc-docs/envision-approval-questions.md"]
+    assert not any(package.shipped(p) for p in paths)

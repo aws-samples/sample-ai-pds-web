@@ -685,6 +685,7 @@ export const en: Record<keyof typeof ko, string> = {
   "handoff.supp.decisions.count": "{n}",
   "handoff.supp.decisions.chosen": "Chosen",
   "handoff.supp.decisions.remark": "Your note",
+  "handoff.supp.decisions.askedAgain": "Asked again in a later round ({file}) — that answer stands for this one",
   "handoff.supp.decisions.revise": "Change the answer",
   "handoff.supp.decisions.reviseHint": "Pick another answer and it is recorded in the question file; then, in the workspace, the AI updates the documents that rely on it. Whatever the new answer alone does not settle is asked again, and the changed documents are approved again.",
   "handoff.supp.decisions.reviseSubmit": "Change and go to the workspace",

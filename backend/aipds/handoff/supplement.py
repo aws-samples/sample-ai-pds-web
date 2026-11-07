@@ -162,6 +162,8 @@ class Decision(BaseModel):
     remark: str = ""
     options: list[QuestionOption] = []
     multi_select: bool = False
+    #: The later round of the same gate that asked this question again (`…-questions-2.md`), if any — its answer stands.
+    later_round: str = ""
 
 
 class OpenQuestionView(BaseModel):

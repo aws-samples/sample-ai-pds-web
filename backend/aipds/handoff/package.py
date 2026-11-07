@@ -61,6 +61,7 @@ from aipds.handoff import ledger as ledger_mod
 from aipds.handoff import open_rows
 from aipds.handoff import supplement as supplement_mod
 from aipds.handoff.readiness import Prototype, Readiness
+from aipds.question_files import is_question_file, named_question_file
 from aipds.s3store import S3StoreLike
 
 _log = logging.getLogger("aipds.handoff")
@@ -105,8 +106,8 @@ ARCHIVE_EXCLUDED = frozenset({"build-instructions.md", "design-context.md",
                               "validation-questionnaire.md"})
 #: Copies an agent keeps of a document before rewriting it (`validation-results.backup.2026-10-23T0050Z.md`). Not an original:
 #: observed (a workshop run), one went into the zip and the vision material next to the document it copies, and its outdated
-#: lines were cited as evidence. Question files are told apart by `ledger.is_question_file` — the decision ledger carries their
-#: answers, the rest being progress records (observed ws-g: 15 of the 26 originals were question files).
+#: lines were cited as evidence. Question files are told apart by their content (aipds/question_files) — the decision ledger
+#: carries their answers, the rest being progress records (observed ws-g: 15 of the 26 originals were question files).
 _BACKUP = re.compile(r"\.(?:backup|bak|orig)(?:[._-][^/]*)?\.md$|\.md\.(?:bak|orig)$", re.IGNORECASE)
 #: Loaded earlier the further forward they are. The decision ledger comes right after the Discovery document — it is every answered
 #: decision, the material rule 7 marks from.
@@ -221,31 +222,44 @@ def _rank(path: str) -> tuple[int, str]:
 
 
 def select_sources(paths: Sequence[str]) -> list[str]:
-    """Originals read for a build, in loading order. Documents and question files under Discovery — the question files feed the
-    decision ledger and the options step; vision.md sees them only through the ledger (`vision_material`)."""
+    """Originals read for a build, in loading order: the documents and question files under Discovery, and the question files an
+    agent put at the docs root (the generic guide's `aiplc-docs/{phase}-questions.md` — observed, an Envision approval and its
+    second round). The question files feed the decision ledger and the options step; vision.md sees them only through the ledger
+    (`vision_material`)."""
     chosen = [p for p in paths
-              if p.startswith("aiplc-docs/discovery/") and p.endswith(".md")
+              if p.startswith("aiplc-docs/") and p.endswith(".md")
+              and (p.startswith("aiplc-docs/discovery/") or named_question_file(p))
               and p.rsplit("/", 1)[-1] not in _EXCLUDED_NAMES and not _BACKUP.search(p)]
     return sorted(chosen, key=_rank)
 
 
-def shipped(path: str) -> bool:
+def shipped(path: str, text: str | None = None) -> bool:
     """Whether an original goes into the zip — the Discovery document and its evidence (spec, validation, analysis). Chosen by
-    rule, not by list: the set of originals differs by starting point."""
-    return (path.startswith("aiplc-docs/discovery/") and path.endswith(".md")
-            and not ledger_mod.is_question_file(path) and not _BACKUP.search(path)
-            and path.rsplit("/", 1)[-1] not in ARCHIVE_EXCLUDED)
+    rule, not by list: the set of originals differs by starting point. With its text, a question file is told by its content
+    (aipds/question_files); without, by its name."""
+    if not (path.startswith("aiplc-docs/discovery/") and path.endswith(".md")) or _BACKUP.search(path):
+        return False
+    if path.rsplit("/", 1)[-1] in ARCHIVE_EXCLUDED:
+        return False
+    return not (is_question_file(path, text) if text is not None else named_question_file(path))
 
 
-def archive_originals(paths: Sequence[str]) -> list[str]:
-    """Originals placed as is under `discovery/` in the zip."""
-    return [p for p in paths if shipped(p)]
+def archive_candidates(paths: Sequence[str]) -> list[str]:
+    """Paths that may go into the zip under `discovery/` — read them, then keep what `shipped(path, text)` keeps
+    (`archive_originals`)."""
+    return [p for p in paths if p.startswith("aiplc-docs/discovery/") and p.endswith(".md") and not _BACKUP.search(p)
+            and p.rsplit("/", 1)[-1] not in ARCHIVE_EXCLUDED]
+
+
+def archive_originals(texts: dict[str, str]) -> dict[str, str]:
+    """The originals placed as is under `discovery/` in the zip, from the candidates' texts."""
+    return {p: t for p, t in texts.items() if shipped(p, t)}
 
 
 def vision_material(sources: dict[str, str], ledger: str) -> dict[str, str]:
     """vision.md's material: the originals the zip holds plus the decision ledger, in loading order. The ledger's key is its
     name in the package, so a citation of it (`decisions.md · go-to-market/gtm-questions.md Q13`) resolves like any other."""
-    material = {path: text for path, text in sources.items() if shipped(path)}
+    material = {path: text for path, text in sources.items() if shipped(path, text)}
     material[LEDGER] = ledger
     return {path: material[path] for path in sorted(material, key=_rank)}
 

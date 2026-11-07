@@ -294,6 +294,9 @@ def test_the_record_keeping_files_are_not_documents(tmp_path):
     for rel in ("aiplc-docs/audit.md",
                 "aiplc-docs/aiplc-state.md",
                 "aiplc-docs/discovery/envision/pain-point-questions.md",
+                # A gate asked again after changes — a numbered round is a question file too.
+                "aiplc-docs/discovery/prototype/spec-as-built-questions-2.md",
+                "aiplc-docs/envision-approval-questions-2.md",
                 "aiplc-docs/discovery/notes.txt",
                 "outside/other.md"):
         _doc(tmp_path, rel)

@@ -730,6 +730,7 @@ export const ko = {
   "handoff.supp.decisions.count": "{n}건",
   "handoff.supp.decisions.chosen": "고른 답",
   "handoff.supp.decisions.remark": "덧붙인 말",
+  "handoff.supp.decisions.askedAgain": "이후 회차에서 다시 물었습니다({file}) — 그 답이 이 답을 대신합니다",
   "handoff.supp.decisions.revise": "답 바꾸기",
   "handoff.supp.decisions.reviseHint": "다른 답을 고르면 질문 파일에 그 답을 기록하고, 워크스페이스에서 AI가 이 답에 기대는 문서를 고칩니다. 새 답만으로 정할 수 없는 것은 다시 묻고, 고친 문서는 다시 승인받습니다.",
   "handoff.supp.decisions.reviseSubmit": "바꾸고 워크스페이스로",

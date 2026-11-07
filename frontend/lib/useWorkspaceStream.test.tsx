@@ -1058,3 +1058,14 @@ describe("useWorkspaceStream — a turn another screen started", () => {
     expect(users).toHaveLength(1);
   });
 });
+
+describe("isDocPath", () => {
+  it("leaves question files out, numbered rounds of a gate included", async () => {
+    const { isDocPath } = await import("./useWorkspaceStream");
+    expect(isDocPath("aiplc-docs/discovery/discovery-document.md")).toBe(true);
+    expect(isDocPath("aiplc-docs/discovery/questions-overview.md")).toBe(true);
+    expect(isDocPath("aiplc-docs/discovery/envision/pain-point-questions.md")).toBe(false);
+    expect(isDocPath("aiplc-docs/discovery/prototype/spec-as-built-questions-2.md")).toBe(false);
+    expect(isDocPath("aiplc-docs/envision-approval-questions-2.md")).toBe(false);
+  });
+});

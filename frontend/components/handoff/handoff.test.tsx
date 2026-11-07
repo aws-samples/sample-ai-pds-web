@@ -198,6 +198,14 @@ describe("SupplementForm", () => {
     expect(onRevise).toHaveBeenCalledWith(expect.objectContaining({ file: STRATEGY, number: 1 }), "B");
   });
 
+  it("shows a decision a later round asked again for the record, without a change action", () => {
+    const later = `${D}prototype/spec-as-built-questions-2.md`;
+    render(<SupplementForm view={{ ...VIEW, decisions: [{ ...DECISIONS[0], later_round: later }] }} busy={false}
+                           message={null} onSave={() => {}} onSaveAndGenerate={() => {}} onBack={() => {}} onRevise={() => {}} />);
+    expect(screen.getByText(/이후 회차에서 다시 물었습니다\(prototype\/spec-as-built-questions-2\.md\)/)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "답 바꾸기" })).not.toBeInTheDocument();
+  });
+
   it("offers no change action without a way to change", () => {
     render(<SupplementForm view={{ ...VIEW, decisions: DECISIONS }} busy={false} message={null}
                            onSave={() => {}} onSaveAndGenerate={() => {}} onBack={() => {}} />);

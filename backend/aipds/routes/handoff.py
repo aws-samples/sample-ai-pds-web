@@ -20,6 +20,7 @@ from aipds.handoff import ledger, package, readiness, supplement
 from aipds.parsers.questions import parse_question_file
 from aipds.proto.layout import discover as discover_prototypes
 from aipds.proto.source import design_entries
+from aipds.question_files import is_question_file
 from aipds.routes.deps import ensure_workspace
 from aipds.routes.turns import ensure_idle, start_turn
 
@@ -67,11 +68,11 @@ async def _view(pid: str, s3, state: readiness.Readiness,
 
 
 async def _decisions(pid: str) -> list[supplement.Decision]:
-    """Every answered Discovery question, read from the question files — where the tab lets the PM change a decision."""
+    """Every answered Discovery question, read from the question files the ledger reads — where the tab lets the PM change a
+    decision."""
     ws = await ensure_workspace(pid)
-    paths = [p for p in await _paths(pid) if p.startswith(_DISCOVERY) and ledger.is_question_file(p)]
-    texts = await asyncio.gather(*(ws.runner.read_file(p) for p in paths))
-    return ledger.decisions(dict(zip(paths, texts)))
+    texts = await package.read_sources(ws.runner.read_file, package.select_sources(await _paths(pid)))
+    return ledger.decisions(texts)
 
 
 @router.get("/projects/{pid}/handoff/supplement", response_model=supplement.SupplementView)
@@ -103,7 +104,7 @@ async def revise_answer(pid: str, body: ReviseBody):
     answer open rounds — those stay the question form's. A running turn is refused with 409 before the file is touched.
     """
     name = body.file
-    if not (name.startswith("aiplc-docs/discovery/") and ledger.is_question_file(name)):
+    if name not in package.select_sources([name]):
         raise HTTPException(status_code=400, detail="not a discovery question file")
     answer = body.answer.strip()
     if not answer:
@@ -111,9 +112,13 @@ async def revise_answer(pid: str, body: ReviseBody):
     ws = await ensure_workspace(pid)
     ensure_idle(ws)
     try:
-        before = parse_question_file(name.rsplit("/", 1)[-1], await ws.runner.read_file(name))
+        text = await ws.runner.read_file(name)
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail="question file not found")
+    # The path rule admits Discovery documents too; a question file is told by its content (aipds/question_files).
+    if not is_question_file(name, text):
+        raise HTTPException(status_code=400, detail="not a discovery question file")
+    before = parse_question_file(name.rsplit("/", 1)[-1], text)
     old = next((q.answer for q in before.questions if q.number == body.number), None)
     if not (old or "").strip():
         raise HTTPException(status_code=409, detail="question not answered")
@@ -250,7 +255,8 @@ async def download_handoff_package(pid: str):
     built = await package.read_package(s3, manifest)
     design = await _design(pid, paths)
     _fresh_fixed_files(pid, built, design=bool(design))
-    raw = await package.read_sources(ws.runner.read_file, package.archive_originals(paths))
+    raw = package.archive_originals(
+        await package.read_sources(ws.runner.read_file, package.archive_candidates(paths)))
     uploads = await s3.list(_UPLOADS)
     buf = io.BytesIO()
     # Every entry goes under a single folder with the same name as the zip — the paths in
