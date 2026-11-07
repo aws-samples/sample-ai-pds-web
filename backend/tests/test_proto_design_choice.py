@@ -105,3 +105,32 @@ async def test_a_broken_store_is_none():
             raise RuntimeError("s3 unreachable")
 
     assert await brand_opted_in(_Boom(), "prototype") is None
+
+
+async def test_a_non_brand_answer_keeps_the_brand_out_but_does_not_take_it_away(tmp_path):
+    """Observed (a workshop run): the PM answered "clean and modern", then asked during the build for the company brand. The
+    build applied it; the next hosting read the old answer, wrote the stub over the theme and deleted DESIGN.md."""
+    from aipds.design_profile import DesignProfile
+    from aipds.proto import design_sync
+
+    profile = DesignProfile(filename="DESIGN.md", uploaded_at="t", uploaded_by="admin",
+                            markdown="", tokens={"primary": "#da291c"}, prose="# 브랜드\n빨강은 한 화면에 하나.\n")
+    s3 = FakeS3Store()
+    s3.blobs[layout.design_context_key("prototype")] = _KO_TEMPLATE.format(answer="A")
+
+    # Not branded yet: the answer keeps the brand out.
+    assert await effective_profile(profile, s3, "prototype", tmp_path) is None
+    (tmp_path / design_sync.THEME_FILENAME).write_text(design_sync.stub_css(), encoding="utf-8")
+    assert await effective_profile(profile, s3, "prototype", tmp_path) is None
+
+    # The build applied the brand: re-hosting keeps it, refreshed, instead of stubbing it.
+    design_sync.sync_design(tmp_path, profile, "ko")
+    assert await effective_profile(profile, s3, "prototype", tmp_path) is profile
+    design_sync.sync_design(tmp_path, await effective_profile(profile, s3, "prototype", tmp_path), "ko")
+    assert "#da291c" in (tmp_path / design_sync.THEME_FILENAME).read_text(encoding="utf-8")
+    assert (tmp_path / design_sync.DESIGN_FILENAME).exists()
+
+    # Removing the profile in admin still takes the brand away from every prototype.
+    design_sync.sync_design(tmp_path, await effective_profile(None, s3, "prototype", tmp_path), "ko")
+    assert design_sync.stub_css() in (tmp_path / design_sync.THEME_FILENAME).read_text(encoding="utf-8")
+    assert not (tmp_path / design_sync.DESIGN_FILENAME).exists()

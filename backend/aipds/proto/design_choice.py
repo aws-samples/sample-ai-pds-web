@@ -19,9 +19,11 @@ from __future__ import annotations
 
 import logging
 import re
+from pathlib import Path
 
 from aipds.parsers.questions import parse_question_file
 from aipds.proto import layout
+from aipds.proto.design_sync import theme_required
 
 _log = logging.getLogger(__name__)
 
@@ -81,8 +83,16 @@ async def brand_opted_in(s3, prototype_id: str) -> bool | None:
         return None
 
 
-async def effective_profile(profile, s3, prototype_id: str):
-    """The profile to apply to this prototype: None when the user chose a non-brand look.
+async def effective_profile(profile, s3, prototype_id: str, build_dir: Path | None = None):
+    """The profile to apply to this prototype: None when the user chose a non-brand look and the prototype does not carry the
+    brand yet.
+
+    **The answer keeps the brand out; it does not take it away.** A prototype whose build tree already carries the brand (a
+    root theme with values) keeps it, refreshed from the profile, whatever Question 1 says. Observed (a workshop run): the PM
+    answered "clean and modern", then asked during the build for the company brand; the build applied it and recorded "[사용자
+    요청으로 추가·변경] 디자인 토큰(DESIGN.md) 적용". The next hosting read the old answer, wrote the stub over the theme and
+    deleted DESIGN.md — the screens the PM had asked for lost their colours and fonts. Removing the profile in admin is still
+    the way a brand leaves every prototype (design_sync.sync_design with None).
 
     Both call sites (build session start, hosting) go through this one function so they cannot
     disagree on whether a prototype is branded — the same two-call-site discipline as
@@ -91,6 +101,10 @@ async def effective_profile(profile, s3, prototype_id: str):
     if profile is None:
         return None
     if await brand_opted_in(s3, prototype_id) is False:
+        if build_dir is not None and theme_required(build_dir):
+            _log.info("brand profile kept for %s: the design-context answer chose a non-brand "
+                      "look, but the prototype already carries the brand", prototype_id)
+            return profile
         _log.info("brand profile skipped for %s: the design-context answer chose a "
                   "non-brand look", prototype_id)
         return None

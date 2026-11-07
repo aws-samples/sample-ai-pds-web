@@ -87,7 +87,10 @@ There is **one** profile for the whole deployment (you cannot set a different on
 
 Each prototype's **design-context answer still comes first.** Only prototypes whose answer was
 "Match my organization's brand" get the brand; a default, existing-product or minimal look keeps it out.
-When the answer cannot be read (free-text Other, or a path without that question file) the brand applies as before.`,
+When the answer cannot be read (free-text Other, or a path without that question file) the brand applies as before.
+A prototype that already carries the brand (for example, applied during the build at the PM's request) keeps it on
+re-hosting, refreshed from the latest profile, even if the answer was a default look. To take the brand off every
+prototype, delete the profile here.`,
     },
     {
       kind: "md",

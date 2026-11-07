@@ -502,7 +502,7 @@ class PrototypeSession:
             profile = (await self._design_profiles.load()
                        if self._design_profiles is not None else None)
             # The user's Step 2 answer decides whether the brand applies at all.
-            profile = await effective_profile(profile, self._s3, self.slug)
+            profile = await effective_profile(profile, self._s3, self.slug, build_dir)
             sync_design(build_dir, profile, self._language)
         except Exception:
             _log.exception("design sync at session start failed: %s/%s",
