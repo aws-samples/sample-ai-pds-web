@@ -660,7 +660,7 @@ export const en: Record<keyof typeof ko, string> = {
   "handoff.contains.open": "start-prompt.md: the first request that starts AI-DLC — paste it as it is",
   "handoff.contains.ledger": "decisions.md: the decision ledger. Every decision the PM made in Discovery and right before handoff, with its question — copied as is, no model",
   "handoff.contains.originals": "The evidence among the Discovery originals and uploaded source material, as they are — the decision ledger replaces the stage question files, and the build instructions, design context and questionnaire are left out · README.md: reading order and rules",
-  "handoff.contains.design": "design/: if a prototype applied the brand, its brand guide (DESIGN.md) and colours and fonts (aipds-theme.css) — the copy the prototype actually used",
+  "handoff.contains.design": "design/: if a prototype applied the brand, its brand guide (DESIGN.md) — not a product requirement but a company standard for the team to consult when writing its technical environment document",
   "handoff.contains.noSource": "Prototype source code is not included. Coding assistants would build on top of the mock-up.",
   "handoff.section.problem": "Problem and evidence",
   "handoff.section.audience": "Target users",

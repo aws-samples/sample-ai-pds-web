@@ -826,9 +826,9 @@ def test_route_generates_views_and_downloads(env):
     assert "design/" not in zf.read("pkg-b-handoff/README.md").decode() and "design/" not in prompt
 
 
-def test_the_brand_a_prototype_applied_goes_into_the_zip(env, tmp_path):
+def test_the_brand_guide_a_prototype_applied_goes_into_the_zip_as_reference(env, tmp_path):
     """The brand reached the prototype only through its build workspace (proto/design_sync), and the zip carried no prototype
-    source — so the team rebuilt the screens without it."""
+    source. The guide goes in as reference for the team's technical environment document; the theme file does not."""
     client, s3, _ = env
     _seed(client, "pkg-brand", {p: f"# {p}\n" for p in B})
     tree = tmp_path / "pkg-brand" / "customer-inquiry-triage"
@@ -838,13 +838,13 @@ def test_the_brand_a_prototype_applied_goes_into_the_zip(env, tmp_path):
     client.post("/projects/pkg-brand/handoff/package")
     body = _wait_settled(client, "pkg-brand")
     assert body["manifest"]["status"] == "ready"
-    assert "design/" in body["files"]["README.md"] and "design/" in body["files"]["start-prompt.md"]
+    assert "design/" in body["files"]["README.md"] and "design/" not in body["files"]["start-prompt.md"]
 
     zf = zipfile.ZipFile(io.BytesIO(client.get("/projects/pkg-brand/handoff/package/archive").content))
     root = "pkg-brand-handoff/"
     assert zf.read(root + "design/DESIGN.md").decode() == "# 브랜드\n여백을 넉넉히.\n"
-    assert zf.read(root + "design/aipds-theme.css").decode() == ":root { --primary: #0a5; }\n"
-    assert "./pkg-brand-handoff/design/" in zf.read(root + "start-prompt.md").decode()
+    assert root + "design/aipds-theme.css" not in zf.namelist()
+    assert "design/" not in zf.read(root + "start-prompt.md").decode()
     assert "`design/`" in zf.read(root + "README.md").decode()
     # Still no prototype source.
     assert not any(n.startswith(root + "prototype") for n in zf.namelist())
