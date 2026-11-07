@@ -194,8 +194,12 @@ def _remove_section(build_dir: Path, rel: str) -> None:
 
 
 def sync_design(build_dir: Path, profile: DesignProfile | None,
-                language: str) -> None:
-    """Bring the workspace in line with the profile. Called on every build and every hosting."""
+                language: str, *, available: bool = False) -> None:
+    """Bring the workspace in line with the profile. Called on every build and every hosting.
+
+    `available`: a profile exists in this deployment but is not applied to this prototype (the PM's choice). The build agent is
+    then told so, instead of nothing — without it, a request for the brand in chat could only be met by inventing its values.
+    """
     if profile is None:
         # If there never was one, create nothing (the whole feature is opt-in).
         # Overwrite with the stub only when one existed and was then removed.
@@ -210,7 +214,10 @@ def sync_design(build_dir: Path, profile: DesignProfile | None,
         if stat_beneath(build_dir, THEME_FILENAME) is not None:
             _write_theme_everywhere(build_dir, stub_css())
             unlink_beneath(build_dir, DESIGN_FILENAME)
-        _remove_section(build_dir, _CLAUDE_FILENAME)
+        if available and build_dir.is_dir():
+            _upsert_section(build_dir, _CLAUDE_FILENAME, prompts.design_off(language))
+        else:
+            _remove_section(build_dir, _CLAUDE_FILENAME)
         return
 
     build_dir.mkdir(parents=True, exist_ok=True)

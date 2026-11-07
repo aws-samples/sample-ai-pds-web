@@ -16,6 +16,7 @@ import {
   getHost,
   absoluteShareUrl,
   resetPrototype,
+  setBrand,
 } from "@/lib/api/prototypes";
 import type { HostState, PrototypeState } from "@/lib/api/prototypes";
 import { ApiError } from "@/lib/api/client";
@@ -273,6 +274,11 @@ export default function PrototypesPage({ params }: { params: Promise<{ projectId
                   setSurveySlug((cur) => (cur === info.slug ? null : info.slug))
                 }
                 onReset={handleReset}
+                brandAvailable={list.data?.brand_profile ?? false}
+                onBrandChange={readOnly ? undefined : (apply) => {
+                  void setBrand(projectId, info.slug, apply).then(() => list.reload())
+                    .catch(() => setHostError({ slug: info.slug, message: t("proto.brandFailed") }));
+                }}
                 archiveUrl={prototypeArchiveUrl(projectId, info.slug)}
                 shareUrl={info.access_url
                   ? absoluteShareUrl(info.access_url) : undefined}

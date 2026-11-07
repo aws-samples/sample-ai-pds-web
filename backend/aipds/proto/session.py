@@ -499,11 +499,11 @@ class PrototypeSession:
         # the two call sites diverge on this discipline, only one of them becomes
         # vulnerable to brand errors.
         try:
-            profile = (await self._design_profiles.load()
-                       if self._design_profiles is not None else None)
-            # The user's Step 2 answer decides whether the brand applies at all.
-            profile = await effective_profile(profile, self._s3, self.slug, build_dir)
-            sync_design(build_dir, profile, self._language)
+            available = (await self._design_profiles.load()
+                         if self._design_profiles is not None else None)
+            # The PM's card setting, else the Step 2 answer, decides whether the brand applies (design_choice).
+            profile = await effective_profile(available, self._s3, self.slug, build_dir)
+            sync_design(build_dir, profile, self._language, available=available is not None)
         except Exception:
             _log.exception("design sync at session start failed: %s/%s",
                            self.project_id, self.slug)

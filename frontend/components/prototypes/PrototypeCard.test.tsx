@@ -16,6 +16,8 @@ function info(overrides: Partial<PrototypeInfo>): PrototypeInfo {
     access_url: null,
     response_count: 0,
     has_survey: false,
+    brand: false,
+    brand_set: null,
     ...overrides,
   };
 }
@@ -484,6 +486,8 @@ const BUILT_Q: PrototypeInfo = {
   access_url: null,
   response_count: 0,
   has_survey: false,
+  brand: false,
+  brand_set: null,
 };
 
 describe("호스팅 시작 중 진행 표시", () => {
@@ -562,3 +566,29 @@ describe("PrototypeCard — 설문 표시", () => {
   });
 });
 
+
+
+describe("PrototypeCard — brand", () => {
+  it("offers the brand switch only when the deployment has a profile, and says when it takes effect", async () => {
+    const onBrandChange = vi.fn();
+    const { rerender } = render(<PrototypeCard info={info({})} busy={false} {...noop} onBrandChange={onBrandChange} />);
+    expect(screen.queryByRole("checkbox", { name: /회사 브랜드 적용/ })).not.toBeInTheDocument();
+
+    rerender(<PrototypeCard info={info({})} busy={false} {...noop} brandAvailable onBrandChange={onBrandChange} />);
+    const box = screen.getByRole("checkbox", { name: /회사 브랜드 적용/ });
+    expect(box).not.toBeChecked();
+    expect(screen.getByText(/디자인 컨텍스트 답을 따름/)).toBeInTheDocument();
+    await userEvent.click(box);
+    expect(onBrandChange).toHaveBeenCalledWith(true);
+
+    rerender(<PrototypeCard info={info({ brand: true, brand_set: true })} busy={false} {...noop} brandAvailable
+                            onBrandChange={onBrandChange} />);
+    expect(screen.getByRole("checkbox", { name: /회사 브랜드 적용/ })).toBeChecked();
+    expect(screen.queryByText(/디자인 컨텍스트 답을 따름/)).not.toBeInTheDocument();
+  });
+
+  it("shows a read-only member the setting without letting them change it", () => {
+    render(<PrototypeCard info={info({ brand: true })} busy={false} {...noop} brandAvailable readOnly onBrandChange={vi.fn()} />);
+    expect(screen.getByRole("checkbox", { name: /회사 브랜드 적용/ })).toBeDisabled();
+  });
+});

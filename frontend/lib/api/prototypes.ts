@@ -68,6 +68,12 @@ export interface PrototypeInfo {
    *  single pass in which the server already queries the survey tree (`survey_summary` in
    *  backend survey/store.py). */
   has_survey: boolean;
+  /** Whether the next build session or hosting applies the company brand — the same gate the server uses
+   *  (proto/design_choice): the PM's card setting, else a brand the prototype already carries, else the design-context
+   *  answer. Always false when the deployment has no brand profile. */
+  brand: boolean;
+  /** The PM's card setting: true / false, or null when not set (the design-context answer decides). */
+  brand_set: boolean | null;
 }
 
 // Mirrors backend/aipds/proto/host.py's HostState Literal exactly.
@@ -114,10 +120,19 @@ export interface PrototypeListing {
    *  able to explain a 429 before the user clicks. */
   active_builds: number;
   max_builds: number;
+  /** Whether the deployment has an admin brand profile — the card offers the brand switch only then. */
+  brand_profile: boolean;
 }
 
 export async function listPrototypes(pid: string): Promise<PrototypeListing> {
   return request<PrototypeListing>(`/projects/${encodeURIComponent(pid)}/prototypes`);
+}
+
+/** The PM's brand setting for one prototype. It takes effect at the next build session or hosting. */
+export async function setBrand(
+  pid: string, slug: string, apply: boolean | null,
+): Promise<{ brand: boolean; brand_set: boolean | null }> {
+  return request(sessionPath(pid, slug, "/brand"), { method: "PUT", body: JSON.stringify({ apply }) });
 }
 
 /** Plain URL, not a Blob fetch: the browser handles Content-Disposition and

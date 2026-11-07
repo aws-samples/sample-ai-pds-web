@@ -247,6 +247,10 @@ export const ko = {
   "proto.reset": "초기화",
   "proto.survey": "설문",
   "proto.surveyNone": "설문 없음",
+  "proto.brandApply": "회사 브랜드 적용",
+  "proto.brandFromAnswer": "디자인 컨텍스트 답을 따름 · 바꾸면 다음 빌드 세션이나 호스팅부터 반영",
+  "proto.brandNext": "다음 빌드 세션이나 호스팅부터 반영",
+  "proto.brandFailed": "브랜드 설정을 바꾸지 못했습니다. 다시 시도해 주세요.",
   "proto.surveyResponses": "설문 · 응답 {n}건",
   "proto.download": "다운로드",
   // 설문 패널·대시보드

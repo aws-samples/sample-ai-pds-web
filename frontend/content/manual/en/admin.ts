@@ -89,8 +89,10 @@ Each prototype's **design-context answer still comes first.** Only prototypes wh
 "Match my organization's brand" get the brand; a default, existing-product or minimal look keeps it out.
 When the answer cannot be read (free-text Other, or a path without that question file) the brand applies as before.
 A prototype that already carries the brand (for example, applied during the build at the PM's request) keeps it on
-re-hosting, refreshed from the latest profile, even if the answer was a default look. To take the brand off every
-prototype, delete the profile here.`,
+re-hosting, refreshed from the latest profile, even if the answer was a default look.
+The PM can turn the brand on or off per prototype with **Apply the company brand** on its card; that setting comes
+before the design-context answer and applies from the next build session or hosting.
+To take the brand off every prototype, delete the profile here.`,
     },
     {
       kind: "md",

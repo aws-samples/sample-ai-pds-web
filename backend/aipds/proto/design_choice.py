@@ -17,6 +17,7 @@
 # whose answer cannot be read.
 from __future__ import annotations
 
+import json
 import logging
 import re
 from pathlib import Path
@@ -24,6 +25,7 @@ from pathlib import Path
 from aipds.parsers.questions import parse_question_file
 from aipds.proto import layout
 from aipds.proto.design_sync import theme_required
+from aipds.proto.store import brand_key
 
 _log = logging.getLogger(__name__)
 
@@ -83,6 +85,20 @@ async def brand_opted_in(s3, prototype_id: str) -> bool | None:
         return None
 
 
+async def brand_setting(s3, prototype_id: str) -> bool | None:
+    """The PM's setting on the prototype card — True (apply the brand), False (do not), None (not set). Fail-soft: a missing or
+    unreadable record is None, so the design-context answer decides as before."""
+    try:
+        data = json.loads(await s3.get(brand_key(prototype_id)))
+    except FileNotFoundError:
+        return None
+    except Exception:
+        _log.exception("brand setting read failed for %s; treated as not set", prototype_id)
+        return None
+    apply = data.get("apply") if isinstance(data, dict) else None
+    return apply if isinstance(apply, bool) else None
+
+
 async def effective_profile(profile, s3, prototype_id: str, build_dir: Path | None = None):
     """The profile to apply to this prototype: None when the user chose a non-brand look and the prototype does not carry the
     brand yet.
@@ -100,6 +116,11 @@ async def effective_profile(profile, s3, prototype_id: str, build_dir: Path | No
     """
     if profile is None:
         return None
+    # The PM's latest decision comes first: the design-context answer was taken before the build, and a PM who changes their
+    # mind during it (observed, the brand asked for in chat) has the card setting to say so.
+    setting = await brand_setting(s3, prototype_id)
+    if setting is not None:
+        return profile if setting else None
     if await brand_opted_in(s3, prototype_id) is False:
         if build_dir is not None and theme_required(build_dir):
             _log.info("brand profile kept for %s: the design-context answer chose a non-brand "
