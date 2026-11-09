@@ -26,9 +26,12 @@ export function stamp(iso: string): string {
 }
 
 export function PackagePanel({
-  pkg, generating, onRegenerate, onDownload, onSupplement, onStatus, readOnly = false,
+  pkg, generating, onRegenerate, onDownload, onSupplement, onStatus, openDecisions = null, readOnly = false,
 }: {
   pkg: PackageView;
+  /** Before-build PM decisions this package's vision.md still holds open (the supplement view's `open_questions`, answered
+   *  or not — an answer saved after the build is not in the package yet). null while unknown. */
+  openDecisions?: number | null;
   generating: boolean;
   onRegenerate: () => void;
   onDownload: () => void;
@@ -104,6 +107,19 @@ export function PackagePanel({
             </button>
           </div>
           <pre className="mt-2 whitespace-pre-wrap break-words text-[12px] text-slate-800 font-mono">{request}</pre>
+        </div>
+      )}
+      {/* The start request sends these to Requirements Analysis, so the PM meets them again there. Said, not blocked —
+          "unknown" is a valid answer and the package may go out with them open. */}
+      {!!openDecisions && (
+        <div className="flex items-start gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 mb-3 text-[13px] text-amber-900">
+          <div className="flex-1">
+            <b className="block">{t("handoff.pkg.openCarried").replace("{n}", String(openDecisions))}</b>
+            <span className="block mt-0.5">{t("handoff.pkg.openCarriedHint")}</span>
+          </div>
+          <button type="button" onClick={onSupplement} className="text-[13px] text-violet-700 hover:underline whitespace-nowrap">
+            {t("handoff.check.answerSupplement")}
+          </button>
         </div>
       )}
       {pkg.stale.length > 0 && (

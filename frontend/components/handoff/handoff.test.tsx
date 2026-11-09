@@ -450,6 +450,24 @@ describe("PackagePanel", () => {
     expect(screen.getByRole("button", { name: "복사됨" })).toBeInTheDocument();
   });
 
+  it("says how many before-build PM decisions go out open, and where AI-DLC asks them", async () => {
+    const h = handlers();
+    render(<PackagePanel pkg={READY} generating={false} {...h} openDecisions={9} />);
+    expect(screen.getByText("빌드 전에 정할 PM 결정 9개가 열린 채로 인계됩니다")).toBeInTheDocument();
+    expect(screen.getByText(/요구사항 분석 단계에서/)).toBeInTheDocument();
+    // The aside offers the same path, so the notice's button is the first of the two.
+    await userEvent.click(screen.getAllByRole("button", { name: "보완 질문 답하기 →" })[0]);
+    expect(h.onSupplement).toHaveBeenCalled();
+  });
+
+  it("has no open-decision notice when none is open or the count is unknown", () => {
+    const { unmount } = render(<PackagePanel pkg={READY} generating={false} {...handlers()} openDecisions={0} />);
+    expect(screen.queryByText(/열린 채로 인계됩니다/)).not.toBeInTheDocument();
+    unmount();
+    render(<PackagePanel pkg={READY} generating={false} {...handlers()} />);
+    expect(screen.queryByText(/열린 채로 인계됩니다/)).not.toBeInTheDocument();
+  });
+
   it("has no edit control — only regenerate and download", () => {
     render(<PackagePanel pkg={READY} generating={false} {...handlers()} />);
     const names = screen.getAllByRole("button").map((b) => b.textContent);
