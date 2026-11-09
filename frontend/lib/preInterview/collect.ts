@@ -68,10 +68,6 @@ export interface Collection {
   /** Values that must agree across files but do not. Non-empty blocks building. */
   mismatches: { field: "topic" | "customer" | "team"; values: string[] }[];
   topic: string;
-  /** Company facts the sender wrote once in FORM_CONFIG (form v4+). Distinct non-empty values;
-   *  more than one only if the form was sent twice with different wording. Never blocks. */
-  business: string[];
-  customers: string[];
 }
 
 export interface InputFile {
@@ -172,7 +168,7 @@ function readItem(raw: unknown): Item | null {
 interface Parsed {
   response: Omit<Response, "n">;
   key: string;
-  form: { topic: string; customer: string; team: string; business: string; customers: string };
+  form: { topic: string; customer: string; team: string };
 }
 
 function parse(file: InputFile): Parsed | FileProblem {
@@ -201,10 +197,7 @@ function parse(file: InputFile): Parsed | FileProblem {
   return {
     response: { fileName: file.name, type, role, savedAt, items },
     key,
-    form: {
-      topic: oneLine(str(form.topic)), customer: oneLine(str(form.customer)), team: oneLine(str(form.team)),
-      business: oneLine(str(form.business)), customers: oneLine(str(form.customers)),
-    },
+    form: { topic: oneLine(str(form.topic)), customer: oneLine(str(form.customer)), team: oneLine(str(form.team)) },
   };
 }
 
@@ -251,8 +244,6 @@ export function collect(files: InputFile[]): Collection {
     dropped,
     mismatches,
     topic: kept[0]?.form.topic ?? "",
-    business: [...new Set(kept.map((p) => p.form.business).filter(Boolean))],
-    customers: [...new Set(kept.map((p) => p.form.customers).filter(Boolean))],
   };
 }
 
@@ -409,12 +400,6 @@ export function buildMarkdown(c: Collection, lang: Locale): string {
   const out = [`# ${MD.title[lang]}`, ""];
   if (c.topic) out.push(`${MD.topic[lang]}: **${c.topic}**`, "");
   out.push(fill(MD.intro[lang], { n: rs.length }), "");
-  if (c.business.length || c.customers.length) {
-    out.push(`## ${MD.context[lang]}`, "", MD.contextNote[lang], "");
-    if (c.business.length) out.push(`- ${MD.business[lang]}: ${c.business.join(" / ")}`);
-    if (c.customers.length) out.push(`- ${MD.customers[lang]}: ${c.customers.join(" / ")}`);
-    out.push("");
-  }
 
   out.push(`## ${MD.respondents[lang]}`, "",
     `| ${MD.response[lang]} | ${MD.role[lang]} | ${MD.type[lang]} |`, "|---|---|---|",
@@ -453,11 +438,6 @@ export function buildPrompt(c: Collection, lang: Locale): string {
   const rs = c.responses;
   const lines = [PROMPT.lead[lang], "", PROMPT.sourceHead[lang], fill(PROMPT.source[lang], { n: rs.length })];
   if (c.topic) lines.push(fill(PROMPT.topic[lang], { topic: c.topic }));
-  const facts = [
-    c.business.length ? `${MD.business[lang]}: ${c.business.join(" / ")}` : "",
-    c.customers.length ? `${MD.customers[lang]}: ${c.customers.join(" / ")}` : "",
-  ].filter(Boolean);
-  if (facts.length) lines.push(fill(PROMPT.context[lang], { facts: facts.join("; ") }));
   if (isMixed(rs)) {
     const dist = typeDistribution(rs, lang, PROMPT.typeItem[lang]).join(", ");
     lines.push(fill(PROMPT.mixedType[lang], { dist }));

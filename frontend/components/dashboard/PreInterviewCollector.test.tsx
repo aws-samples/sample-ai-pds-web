@@ -29,6 +29,13 @@ describe("PreInterviewCollector", () => {
     expect(screen.getByText(/A\(직접 서술\)로 답합니다/)).toBeInTheDocument();
   });
 
+  it("links the blank form for download", () => {
+    render(<PreInterviewCollector language="ko" />);
+    const link = screen.getByRole("link", { name: "사전 질문지 내려받기 (.html)" });
+    expect(link).toHaveAttribute("href", "/pre-interview/ai-pds-pre-interview-form.html");
+    expect(link).toHaveAttribute("download");
+  });
+
   it("refuses to build when files are about different topics", async () => {
     render(<PreInterviewCollector language="ko" />);
     await userEvent.upload(picker(), [fixture("problem-a"), fixture("problem-b", (d) => { d.form.topic = "다른 주제"; })]);

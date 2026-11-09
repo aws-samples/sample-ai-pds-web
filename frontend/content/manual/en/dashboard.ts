@@ -42,19 +42,13 @@ skips Envision. Because the workflow adapts to the work, skipping a step can lea
 short of 100%, and going back makes the percentage drop. Both are normal. **Judge whether you are
 finished by the approval state in the Document Review tab.**`,
     },
-    { kind: "heading", id: "pre-interview", text: "Pre-workshop form" },
+    { kind: "heading", id: "pre-interview", text: "Collecting pre-workshop forms" },
     {
       kind: "md",
-      md: `The dashboard's **Pre-workshop form** card has two steps.
-
-**1. Get the form** — enter the topic to look at together (required) and the company overview (business and
-industry, main customers), download the form (.html), and send the same file to everyone working on this.
-Company facts are written once here and not asked of each respondent. Fixing the form type gives everyone
-the same questions; letting respondents choose shows how differently they frame the work.
-
-**2. Collect answers** — choose all the answer files (.json) team members sent back at once. It produces two things — a
+      md: `If team members each filled in the pre-workshop form before the workshop, choose all their answer
+files (.json) at once in the dashboard's **Collect pre-workshop forms** card. It produces two things — a
 **collected file (.md)** with every answer copied as written, question by question, and the **prompt** to
-send with it. Nothing is summarized or edited, and the files are read in this browser only.
+send with it. Nothing is summarized or edited, and the files are read in this browser only. The blank form to send to the team is in the same card, under **Download the form**.
 
 - When the same person saved again after editing, only the latest file is used.
 - Files about a different topic, customer, or team cannot be mixed. Different chosen types (work

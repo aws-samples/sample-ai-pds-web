@@ -7,7 +7,6 @@
 <!--
   보내기 전에 (AWS 담당자용)
   1) 아래 FORM_CONFIG 값만 채웁니다. 비워 둔 값은 화면에 나오지 않습니다.
-     AI-PDS 대시보드의 "질문지 받기"에서 값을 넣으면 채워진 파일을 내려받을 수 있습니다.
   2) type으로 입력지 종류를 고릅니다.
        'improve' 업무 개선: 팀이나 담당자의 업무를 넓게 보고 과제를 찾을 때
        'build'   만들고 싶은 것: 고객에게 만들고 싶은 서비스나 도구가 이미 있을 때
@@ -20,10 +19,7 @@
      topic에 이번에 함께 볼 문제·구상·일을 한 줄로 적어 주세요. 그래야 모두 같은 대상을 두고 답합니다.
      이 입력지는 한 분의 대표 답보다, 같은 대상을 두고 여러 분이 각자 쓴 답을 나란히 볼 때 쓸모가 큽니다.
      답이 갈리는 질문이 워크숍에서 토론과 합의를 거쳐야 하는 지점입니다.
-     (AI-PDS 대시보드의 "답변 모으기"가 여러 파일의 답을 질문별로 나란히 모읍니다.)
-     business와 customers에는 회사에 관한 사실(하는 일·업종, 주요 고객)을 한 번만 적습니다.
-     사실은 응답자마다 따로 물어도 얻는 것이 없고, 같은 사실을 다른 말로 적는 잡음만 늘어납니다.
-     회사 이름은 적지 않아도 됩니다.
+     (read_form.py가 여러 파일의 답을 질문별로 나란히 보여 줍니다.)
      고객 화면에는 "답이 갈려도 된다"처럼 결과를 암시하는 말을 쓰지 않습니다.
   4) 고객이 보낸 JSON은 이 파일의 "답변 파일 불러오기"로 열어 볼 수 있습니다.
   5) 사전 인터뷰와 이 입력지 가운데 고객이 편한 방식을 고릅니다. 입력지를 고른 팀은
@@ -36,16 +32,14 @@
        - 워크숍에 함께 들어오시면 좋을 분
      원인이나 꼭 필요한 것처럼 판단이 들어가는 질문은 각자의 생각으로 받습니다.
      무엇으로 정할지는 묻지 않고, 워크숍에서 팀이 함께 정합니다.
-  원본은 저장소의 frontend/public/pre-interview/ai-pds-pre-interview-form.html입니다.
-  본문의 "type:" 주석과 "/type" 주석은 종류별 파일을 만드는 도구가 쓰므로 지우지 마세요.
+  이 파일이 원본입니다. 종류별 파일은 tools/make_pre_interview_forms.py로 만듭니다.
+  본문의 "type:" 주석과 "/type" 주석은 그 스크립트가 쓰므로 지우지 마세요.
 -->
 <script>
 window.FORM_CONFIG = {
   type:      '',   // 'improve' | 'build' | 'problem' | '' (고객이 고름)
   customer:  '',   // 고객사 이름. 예: 'OO전자'
   team:      '',   // 팀 이름. 예: '영업기획팀'
-  business:  '',   // 하는 일·업종 한 줄. 예: '산업용 부품을 주문받아 생산해 기업 고객에게 판매'
-  customers: '',   // 주요 고객 한 줄. 예: '전자 부품 조립 업체, 대부분 기존 거래처'
   due:       '',   // 회신 기한. 예: '11월 12일(수)'
   contact:   '',   // 받는 사람. 예: '홍길동 SA'
   email:     '',   // 받는 메일 주소
@@ -84,9 +78,6 @@ window.FORM_CONFIG = {
   .toc{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px 24px;margin:18px 0 0;padding:0;list-style:none}
   .toc a{color:var(--blue);text-decoration:none}
   .toc a:hover{text-decoration:underline}
-  .context{border:1px solid var(--line);border-radius:12px;padding:10px 18px;margin:-6px 0 16px;background:#fff}
-  .context p{margin:4px 0}
-  .context .cl{display:inline-block;min-width:96px;font-size:13px;font-weight:700;color:var(--muted)}
   .topic{background:var(--teal-bg);border:1px solid #b5ded8;border-radius:12px;padding:14px 18px;margin:16px 0}
   .topic .tl{display:block;font-size:12.5px;font-weight:700;color:var(--teal);letter-spacing:.04em}
   .topic .tt{display:block;font-size:17px;font-weight:600;margin-top:2px}
@@ -213,10 +204,6 @@ window.FORM_CONFIG = {
   <p class="lead">AI-PDS 워크숍을 귀 팀의 실제 상황에 맞춰 준비하려고, 사전 인터뷰 대신 몇 가지를 글로 여쭙니다. 모든 항목은 선택 사항이고, 최근에 있었던 일을 구체적으로 적어 주실수록 워크숍에서 바로 깊이 들어갈 수 있습니다.</p>
   <p class="lead" id="typeLead" hidden></p>
   <div class="topic" id="topicBox" hidden><span class="tl" id="topicLabel">이번에 함께 보는 주제</span><span class="tt" id="topicText"></span></div>
-  <div class="context" id="contextBox" hidden>
-    <p id="businessLine" hidden><span class="cl">하는 일·업종</span><span id="businessText"></span></p>
-    <p id="customersLine" hidden><span class="cl">주요 고객</span><span id="customersText"></span></p>
-  </div>
   <p class="lead"><b>이 프로젝트를 함께하는 동료가 있다면, 의견을 모으지 말고 각자의 생각을 적어 주세요.</b></p>
   <p class="lead" id="altLine">글로 적기보다 말로 설명하시는 편이 편하시면 알려 주세요. 약 1시간의 사전 인터뷰로 진행하겠습니다.</p>
   <ol class="steps">
@@ -309,8 +296,8 @@ window.FORM_CONFIG = {
         <li><label><input type="radio" name="H{n}.timec" value="며칠 이상"> 며칠 이상</label></li>
         <li><label><input type="radio" name="H{n}.timec" value="잘 모르겠음"> 잘 모르겠음</label></li>
       </ul>
-      <div class="ans-label">숫자로 아시면 <span class="h">(대략, 누구 기준인지 함께)</span></div>
-      <textarea class="ans sm" name="H{n}.time" rows="1" aria-label="H{n} 걸리는 시간 숫자" data-label="걸리는 시간 숫자" placeholder="예: 담당자 한 명 기준 한 번에 3시간"></textarea>
+      <div class="ans-label">숫자로 아시면 <span class="h">(대략)</span></div>
+      <textarea class="ans sm" name="H{n}.time" rows="1" aria-label="H{n} 걸리는 시간 숫자" data-label="걸리는 시간 숫자"></textarea>
       <div class="ans-label">지금은 어떻게 하고 계신가요?</div>
       <ul class="opts" role="group" aria-label="H{n} 지금 하는 방법" data-type="checkbox" data-label="지금 하는 방법">
         <li><label><input type="checkbox" name="H{n}.now" value="엑셀·수작업"> 엑셀·수작업</label></li>
@@ -340,7 +327,7 @@ window.FORM_CONFIG = {
     <div class="qh"><span class="qid">N1</span><span class="qt">이것을 주로 쓰게 될 분은 누구인가요? 어떤 상황에서 쓰게 되나요?</span></div>
     <textarea class="ans sm" name="N1.text1" rows="2" aria-label="N1 쓰실 분과 상황" data-label="쓰실 분과 쓰는 상황" placeholder="예: 매장을 순회하는 지역 담당자가 매장 점검을 마친 직후에"></textarea>
     <div class="ans-label">대략 몇 명 정도인가요?</div>
-    <textarea class="ans sm" name="N1.text2" rows="1" aria-label="N1 대략적인 인원" data-label="쓰실 분 인원" placeholder="예: 우리 팀 3명, 나중에는 영업 12명"></textarea>
+    <textarea class="ans sm" name="N1.text2" rows="1" aria-label="N1 대략적인 인원" data-label="쓰실 분 인원"></textarea>
   </div>
   <div class="q item" data-id="N2" data-group="만들고 싶은 것">
     <div class="qh"><span class="qid">N2</span><span class="qt">그분들은 지금 무엇 때문에 불편하거나 시간이 많이 드나요? 최근에 있었던 일 하나로 적어 주시면 더 정확합니다.</span></div>
@@ -412,14 +399,14 @@ window.FORM_CONFIG = {
       <li><label><input type="radio" name="K3.timec" value="며칠 이상"> 며칠 이상</label></li>
       <li><label><input type="radio" name="K3.timec" value="잘 모르겠음"> 잘 모르겠음</label></li>
     </ul>
-    <div class="ans-label">시간이나 비용을 숫자로 아시면 <span class="h">(대략, 누구 기준인지 함께)</span></div>
-    <textarea class="ans sm" name="K3.text1" rows="1" aria-label="K3 드는 시간이나 비용" data-label="한 번 생기면 드는 시간이나 비용" placeholder="예: 팀 전체 기준 주 20건, 건당 2시간"></textarea>
+    <div class="ans-label">시간이나 비용을 숫자로 아시면 <span class="h">(대략)</span></div>
+    <textarea class="ans sm" name="K3.text1" rows="1" aria-label="K3 드는 시간이나 비용" data-label="한 번 생기면 드는 시간이나 비용"></textarea>
   </div>
   <div class="q item" data-id="K4" data-group="풀고 싶은 문제">
     <div class="qh"><span class="qid">K4</span><span class="qt">누가 이 문제를 겪고, 누가 곤란해지나요?</span></div>
     <textarea class="ans sm" name="K4.text1" rows="2" aria-label="K4 겪는 사람과 곤란해지는 사람" data-label="겪는 사람과 곤란해지는 사람"></textarea>
     <div class="ans-label">대략 몇 명 정도인가요?</div>
-    <textarea class="ans sm" name="K4.text2" rows="1" aria-label="K4 대략적인 인원" data-label="겪는 사람 인원" placeholder="예: 우리 팀 3명, 영업 12명"></textarea>
+    <textarea class="ans sm" name="K4.text2" rows="1" aria-label="K4 대략적인 인원" data-label="겪는 사람 인원"></textarea>
   </div>
   <div class="q item" data-id="K5" data-group="풀고 싶은 문제">
     <div class="qh"><span class="qid">K5</span><span class="qt">지금은 이 문제를 어떻게 넘기고 계신가요?</span></div>
@@ -625,15 +612,6 @@ window.FORM_CONFIG = {
   }
   // ---- a topic set by AWS: everyone answers about the same thing (textContent only) ----
   function applyTopic() {
-    // Company facts written once by whoever sends the form: background for every respondent.
-    var shown = false;
-    each([['business', 'businessLine', 'businessText'], ['customers', 'customersLine', 'customersText']], function (c) {
-      if (!cfg(c[0])) { return; }
-      $(c[2]).textContent = cfg(c[0]);
-      $(c[1]).hidden = false;
-      shown = true;
-    });
-    $('contextBox').hidden = !shown;
     if (!TOPIC) { return; }
     $('topicText').textContent = TOPIC;
     $('topicBox').hidden = false;
@@ -795,8 +773,7 @@ window.FORM_CONFIG = {
       schema: SCHEMA,
       document: 'AI-PDS 워크숍 사전 입력지',
       form: { type: type, type_name: type ? TYPES[type].name : '', type_fixed: !!FIXED,
-              customer: cfg('customer'), team: cfg('team'), due: cfg('due'), workshop: cfg('workshop'), topic: TOPIC,
-              business: cfg('business'), customers: cfg('customers') },
+              customer: cfg('customer'), team: cfg('team'), due: cfg('due'), workshop: cfg('workshop'), topic: TOPIC },
       saved_at: new Date().toISOString(),
       source_note: '고객이 직접 작성한 서면 답변입니다. 사전 인터뷰를 대신하며, 인터뷰 녹취가 아닙니다.',
       respondent: {

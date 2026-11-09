@@ -1,6 +1,5 @@
 "use client";
-// The dashboard card for the pre-workshop form: download the form with its settings filled in
-// (PreInterviewFormStep), then turn the answer files into an attachment and a prompt.
+// The dashboard card that turns pre-workshop form answers into an attachment and a prompt.
 //
 // **It only hands out files.** Nothing is uploaded or sent from here: the team downloads the
 // collected Markdown and the prompt, then attaches and sends them from the workspace the usual
@@ -12,12 +11,14 @@
 // rule as lib/startMessage.ts.
 import { useState } from "react";
 import { useLocale, useT } from "@/lib/i18n/provider";
-import { PreInterviewFormStep } from "./PreInterviewFormStep";
 import type { Locale } from "@/lib/i18n";
 import {
   MAX_FILES, MAX_FILE_BYTES, buildMarkdown, buildPrompt, canBuild, collect, outputNames,
   type Collection, type FileProblem, type InputFile,
 } from "@/lib/preInterview/collect";
+
+/** The form itself, served from public/. */
+const FORM_URL = "/pre-interview/ai-pds-pre-interview-form.html";
 
 const PROBLEM_KEY = {
   tooLarge: "preInterview.problem.tooLarge",
@@ -102,103 +103,105 @@ export function PreInterviewCollector({ language }: { language: Locale | null })
   return (
     <section className="mb-8 rounded-xl border border-slate-200 bg-white p-5"
              aria-labelledby="pre-interview-heading">
-      <h2 id="pre-interview-heading" className="font-bold">{t("preInterview.title")}</h2>
-      <p className="mt-1 max-w-3xl text-sm text-slate-600">{t("preInterview.body")}</p>
-
-      <div className="mt-5 grid gap-8 lg:grid-cols-2">
-        <PreInterviewFormStep />
-
-        <div>
-          <h3 className="font-semibold">{t("preInterview.step2")}</h3>
-          <p className="mt-1 text-sm text-slate-600">{t("preInterview.collectBody")}</p>
-          <label className="mt-3 inline-block cursor-pointer rounded-lg border border-slate-200 px-3 py-1.5 text-sm hover:bg-slate-50">
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div className="min-w-0 max-w-3xl">
+          <h2 id="pre-interview-heading" className="font-bold">{t("preInterview.title")}</h2>
+          <p className="mt-1 text-sm text-slate-600">{t("preInterview.body")}</p>
+        </div>
+        <div className="flex shrink-0 flex-wrap gap-2">
+          {/* The blank form; whoever sends it fills FORM_CONFIG (topic and so on) as its header says. */}
+          <a href={FORM_URL} download
+             className="rounded-lg border border-slate-200 px-3 py-1.5 text-sm hover:bg-slate-50">
+            {t("preInterview.formDownload")}
+          </a>
+          <label className="cursor-pointer rounded-lg border border-slate-200 px-3 py-1.5 text-sm hover:bg-slate-50">
             {t("preInterview.pick")}
             <input type="file" accept=".json,application/json" multiple className="sr-only"
                    onChange={(e) => { void onPick(e.target.files); e.target.value = ""; }} />
           </label>
-
-          {tooMany && (
-            <p role="alert" className="mt-4 text-sm text-rose-600">
-              {t("preInterview.tooMany").replace("{n}", String(MAX_FILES))}
-            </p>
-          )}
-
-          {result && (
-            <div className="mt-4 space-y-3 text-sm">
-              {result.responses.length > 0 && (
-                <div>
-                  <p className="font-medium">
-                    {t("preInterview.count").replace("{n}", String(result.responses.length))}
-                  </p>
-                  <ul className="mt-1 space-y-0.5 text-slate-600">
-                    {result.responses.map((r) => (
-                      <li key={r.n}>
-                        {t("preInterview.responseLine")
-                          .replace("{n}", String(r.n))
-                          .replace("{role}", r.role || t("preInterview.noRole"))
-                          .replace("{type}", t(TYPE_KEY[r.type]))}
-                        <span className="text-slate-400"> · {r.fileName}</span>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              )}
-
-              {result.dropped.map((d) => (
-                <p key={d.name} className="text-amber-700">
-                  {t("preInterview.dropped").replace("{name}", d.name).replace("{kept}", d.keptName)}
-                </p>
-              ))}
-
-              {result.rejected.map((r) => (
-                <p key={r.name} className="text-rose-600">{r.name}: {t(PROBLEM_KEY[r.problem])}</p>
-              ))}
-
-              {result.mismatches.map((m) => (
-                <p key={m.field} role="alert" className="text-rose-600">
-                  {t("preInterview.mismatch")
-                    .replace("{field}", t(FIELD_KEY[m.field]))
-                    .replace("{values}", m.values.map((v) => v || t("preInterview.empty")).join(" / "))}
-                </p>
-              ))}
-
-              {ready && (
-                <>
-                  <div className="flex flex-wrap gap-2">
-                    <button type="button"
-                            onClick={() => download(names.markdown, buildMarkdown(result, lang), "text/markdown;charset=utf-8")}
-                            className="rounded-lg bg-violet-600 px-3 py-1.5 font-medium text-white hover:bg-violet-700">
-                      {t("preInterview.downloadFile")}
-                    </button>
-                    <button type="button"
-                            onClick={() => download(names.prompt, buildPrompt(result, lang), "text/plain;charset=utf-8")}
-                            className="rounded-lg border border-slate-200 px-3 py-1.5 hover:bg-slate-50">
-                      {t("preInterview.downloadPrompt")}
-                    </button>
-                    <button type="button" onClick={() => void copyPrompt()}
-                            className="rounded-lg border border-slate-200 px-3 py-1.5 hover:bg-slate-50">
-                      {t("preInterview.copyPrompt")}
-                    </button>
-                    {copied && (
-                      <span role="status" className="self-center text-xs text-slate-500">
-                        {t(copied === "yes" ? "preInterview.copied" : "preInterview.copyFailed")}
-                      </span>
-                    )}
-                  </div>
-                  <div className="rounded-lg bg-slate-50 px-4 py-3 text-slate-700">
-                    <p className="font-medium">{t("preInterview.whenTitle")}</p>
-                    <ol className="mt-1 list-decimal space-y-0.5 pl-5">
-                      <li>{t("preInterview.when1")}</li>
-                      <li>{t("preInterview.when2")}</li>
-                      <li>{t("preInterview.when3")}</li>
-                    </ol>
-                  </div>
-                </>
-              )}
-            </div>
-          )}
         </div>
       </div>
+
+      {tooMany && (
+        <p role="alert" className="mt-4 text-sm text-rose-600">
+          {t("preInterview.tooMany").replace("{n}", String(MAX_FILES))}
+        </p>
+      )}
+
+      {result && (
+        <div className="mt-4 space-y-3 text-sm">
+          {result.responses.length > 0 && (
+            <div>
+              <p className="font-medium">
+                {t("preInterview.count").replace("{n}", String(result.responses.length))}
+              </p>
+              <ul className="mt-1 space-y-0.5 text-slate-600">
+                {result.responses.map((r) => (
+                  <li key={r.n}>
+                    {t("preInterview.responseLine")
+                      .replace("{n}", String(r.n))
+                      .replace("{role}", r.role || t("preInterview.noRole"))
+                      .replace("{type}", t(TYPE_KEY[r.type]))}
+                    <span className="text-slate-400"> · {r.fileName}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          {result.dropped.map((d) => (
+            <p key={d.name} className="text-amber-700">
+              {t("preInterview.dropped").replace("{name}", d.name).replace("{kept}", d.keptName)}
+            </p>
+          ))}
+
+          {result.rejected.map((r) => (
+            <p key={r.name} className="text-rose-600">{r.name}: {t(PROBLEM_KEY[r.problem])}</p>
+          ))}
+
+          {result.mismatches.map((m) => (
+            <p key={m.field} role="alert" className="text-rose-600">
+              {t("preInterview.mismatch")
+                .replace("{field}", t(FIELD_KEY[m.field]))
+                .replace("{values}", m.values.map((v) => v || t("preInterview.empty")).join(" / "))}
+            </p>
+          ))}
+
+          {ready && (
+            <>
+              <div className="flex flex-wrap gap-2">
+                <button type="button"
+                        onClick={() => download(names.markdown, buildMarkdown(result, lang), "text/markdown;charset=utf-8")}
+                        className="rounded-lg bg-violet-600 px-3 py-1.5 font-medium text-white hover:bg-violet-700">
+                  {t("preInterview.downloadFile")}
+                </button>
+                <button type="button"
+                        onClick={() => download(names.prompt, buildPrompt(result, lang), "text/plain;charset=utf-8")}
+                        className="rounded-lg border border-slate-200 px-3 py-1.5 hover:bg-slate-50">
+                  {t("preInterview.downloadPrompt")}
+                </button>
+                <button type="button" onClick={() => void copyPrompt()}
+                        className="rounded-lg border border-slate-200 px-3 py-1.5 hover:bg-slate-50">
+                  {t("preInterview.copyPrompt")}
+                </button>
+                {copied && (
+                  <span role="status" className="self-center text-xs text-slate-500">
+                    {t(copied === "yes" ? "preInterview.copied" : "preInterview.copyFailed")}
+                  </span>
+                )}
+              </div>
+              <div className="rounded-lg bg-slate-50 px-4 py-3 text-slate-700">
+                <p className="font-medium">{t("preInterview.whenTitle")}</p>
+                <ol className="mt-1 list-decimal space-y-0.5 pl-5">
+                  <li>{t("preInterview.when1")}</li>
+                  <li>{t("preInterview.when2")}</li>
+                  <li>{t("preInterview.when3")}</li>
+                </ol>
+              </div>
+            </>
+          )}
+        </div>
+      )}
     </section>
   );
 }

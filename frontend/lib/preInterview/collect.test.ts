@@ -130,24 +130,6 @@ describe("buildMarkdown", () => {
   });
 });
 
-describe("company overview", () => {
-  const withFacts = (n: string) => edit(n, (d) => { d.form.business = "부품 주문 생산"; d.form.customers = "조립 업체"; }, `${n}.json`);
-
-  it("goes once at the top, marked as written by the sender", () => {
-    const c = collect([withFacts("problem-a"), withFacts("problem-b")]);
-    const md = buildMarkdown(c, "ko");
-    expect(md).toContain("## 회사 개요\n\n질문지를 보낸 쪽이 한 번 적은 내용입니다. 응답자의 답이 아닙니다.\n\n- 하는 일·업종: 부품 주문 생산\n- 주요 고객: 조립 업체");
-    expect(md.indexOf("## 회사 개요")).toBeLessThan(md.indexOf("## 응답자"));
-    expect(buildPrompt(c, "ko")).toContain("- 회사 개요(하는 일·업종: 부품 주문 생산; 주요 고객: 조립 업체)는 질문지를 보낸 쪽이 한 번 적은 사실이고");
-  });
-
-  it("is left out when the form carried none", () => {
-    const c = collect([fx("problem-a")]);
-    expect(buildMarkdown(c, "ko")).not.toContain("회사 개요");
-    expect(buildPrompt(c, "ko")).not.toContain("회사 개요");
-  });
-});
-
 describe("buildPrompt", () => {
   it("names the type split when types differ", () => {
     const p = buildPrompt(collect(["problem-a", "problem-b", "build-a"].map(fx)), "ko");
