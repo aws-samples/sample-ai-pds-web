@@ -1062,7 +1062,7 @@ def test_the_start_prompt_and_readme_ask_for_who_confirmed_an_external_fact_and_
     behind it, and turned the features it gated on by default. The rule goes where every harness reads it."""
     ko = package.start_prompt("ko", "x-handoff")
     en = package.start_prompt("en", "x-handoff")
-    assert ko.count("누가 언제 확인했는지까지") == 2 and en.count("who confirmed it and when") == 2
+    assert ko.count("누가 언제 확인했는지까지") == 4 and en.count("who confirmed it and when") == 4
     assert "누가\n  언제 확인했는지" in package._README["ko"]
     assert "who confirmed it and when" in package._README["en"]
 
@@ -1072,16 +1072,31 @@ def test_both_requests_skip_the_stages_the_package_already_answers():
     already states. Each request carries the plan right after `/aidlc` — the engine reads its flags from there — the
     note says how to bring a stage back, and the before-build questions are asked where the run now starts."""
     for language, starts_at in (("ko", "요구사항 분석 단계에서"), ("en", "in Requirements Analysis")):
-        text = package.start_prompt(language, "x-handoff")
-        requests = re.findall(r"```text\n(.+?)\n```", text, re.DOTALL)
+        v2 = package.start_prompt(language, "x-handoff").split("## AI-DLC v1")[0]
+        requests = re.findall(r"```text\n(.+?)\n```", v2, re.DOTALL)
         assert len(requests) == 2
         assert all(r.startswith(f"/aidlc {package.AIDLC_PLAN} ") and "./x-handoff/vision.md" in r for r in requests)
         assert all(starts_at in r for r in requests)
-        assert text.count(package.AIDLC_PLAN) == 3 and "/aidlc --add" in text
+        assert v2.count(package.AIDLC_PLAN) == 3 and "/aidlc --add" in v2
     # Rough Mockups needs Scope Definition's backlog and Refined Mockups needs its wireframes: dropping one of the chain
     # without the rest starves a stage the engine then refuses.
     skipped = package.AIDLC_PLAN.split("--skip ")[1].split(",")
     assert skipped == ["intent-capture", "feasibility", "scope-definition", "rough-mockups", "refined-mockups"]
+
+
+def test_v1_requests_start_with_its_phrase_and_carry_no_v2_plan():
+    """Some teams still run AI-DLC v1, which has no `/aidlc` command and none of the stages the v2 plan skips. Its section
+    comes after v2's — the screen's copy button finds each by its heading — with the same paths and the same rules for the
+    Open Questions."""
+    for language, starts_at in (("ko", "요구사항 분석 단계에서"), ("en", "in Requirements Analysis")):
+        text = package.start_prompt(language, "x-handoff")
+        assert text.index("## AI-DLC v2") < text.index("## AI-DLC v1")
+        v1 = text.split("## AI-DLC v1")[1]
+        requests = re.findall(r"```text\n(.+?)\n```", v1, re.DOTALL)
+        assert len(requests) == 2
+        assert all(r.startswith(f"{package.AIDLC_V1} ") and "./x-handoff/vision.md" in r for r in requests)
+        assert all(starts_at in r and "/aidlc" not in r and "--skip" not in r for r in requests)
+        assert "./technical-environment.md" in requests[1] and "./technical-environment.md" not in requests[0]
 
 
 # ---- decisions are the PM's; estimates stay estimates ----

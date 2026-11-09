@@ -851,6 +851,8 @@ export const ko = {
   "handoff.pkg.toStatus": "← 인계 준비 상태",
   "handoff.pkg.startPrompt": "AI-DLC 시작 프롬프트",
   "handoff.pkg.startPromptHint": "프로젝트 루트에서 압축을 풀면 zip과 같은 이름의 디렉터리가 생깁니다. 그다음 그대로 붙여 넣으세요",
+  "handoff.pkg.version": "AI-DLC 버전",
+  "handoff.pkg.v1Hint": "v1은 /aidlc 명령 없이 규칙 파일로 동작합니다. v1 README대로 규칙을 프로젝트에 설치한 뒤 붙여 넣으세요",
   "handoff.pkg.copy": "복사",
   "handoff.pkg.copied": "복사됨",
   "handoff.pkg.openCarried": "빌드 전에 정할 PM 결정 {n}개가 열린 채로 인계됩니다",

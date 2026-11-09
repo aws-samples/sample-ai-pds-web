@@ -11,7 +11,7 @@
 #                     — before/during build, who answers, and how to build in the meantime. Code builds that table from candidates and the
 #                     model's checked classification (handoff/open_rows), and code restores the estimate marks the originals gave
 #                     a value and the line dropped (handoff/estimates).
-#   start-prompt.md   The first request that starts AI-DLC (fixed text, `start_prompt`).
+#   start-prompt.md   The first request that starts AI-DLC, one for v2 and one for v1 (fixed text, `start_prompt`).
 #   decisions.md      Decision ledger — every decision the PM made in Discovery and at handoff, with its question (handoff/ledger, no model).
 #   README.md         Reading order and usage rules (fixed text).
 #
@@ -1140,9 +1140,9 @@ _README = {
     "ko": """# 개발 인계 패키지
 
 Discovery에서 정한 "무엇을, 누구를 위해, 왜 만드는가"를 AI-DLC가 받는 입력으로 옮겼습니다.
-AI-DLC를 쓴다면 `start-prompt.md`의 요청을 그대로 붙여 넣으면 됩니다. 요청은 이 패키지가 이미 답한
-단계를 건너뛰고 요구사항 분석부터 시작합니다(`start-prompt.md`에 이유와 되살리는 방법이 있습니다). 다른
-코딩 어시스턴트나 개발 하네스에도 `vision.md`부터 읽히면 됩니다.
+AI-DLC를 쓴다면 `start-prompt.md`에서 쓰는 버전(v2 또는 v1)의 요청을 그대로 붙여 넣으면 됩니다. 어느
+요청이든 이 패키지가 이미 답한 단계 없이 요구사항 분석부터 시작합니다(`start-prompt.md`에 이유와 되살리는
+방법이 있습니다). 다른 코딩 어시스턴트나 개발 하네스에도 `vision.md`부터 읽히면 됩니다.
 
 ## 읽는 순서
 
@@ -1176,9 +1176,9 @@ AI-DLC를 쓴다면 `start-prompt.md`의 요청을 그대로 붙여 넣으면 �
     "en": """# Development handoff package
 
 What Discovery decided to build, for whom and why, in the form AI-DLC takes as its input. With AI-DLC,
-paste the request in `start-prompt.md` as it is. It skips the stages this package already answers and
-starts at Requirements Analysis (`start-prompt.md` says why, and how to bring one back). Any other coding
-assistant or harness can start from `vision.md`.
+paste the request in `start-prompt.md` for the version you use (v2 or v1) as it is. Either one starts at
+Requirements Analysis, without the stages this package already answers (`start-prompt.md` says why, and how
+to bring one back). Any other coding assistant or harness can start from `vision.md`.
 
 ## Reading order
 
@@ -1245,12 +1245,18 @@ def archive_folder(pid: str) -> str:
 #: prototype spec (`readiness` blocks on `no_spec`), which stands in for the mockups. The plan is `mvp` because vision.md is
 #: written as a first release; other plans add stages (Market Research, Team Formation) that read the skipped ones.
 AIDLC_PLAN = "--scope mvp --skip intent-capture,feasibility,scope-definition,rough-mockups,refined-mockups"
+#: How a request starts on AI-DLC v1 (the `v1` branch, rules 1.x), which some teams still run. v1 has no `/aidlc` command and
+#: no plan flags: its rules are installed where the agent reads project rules, and a request starting with this phrase
+#: activates them (v1 README "Usage"). It needs no skips either — v1 has none of the stages `AIDLC_PLAN` skips, and goes from
+#: Workspace Detection to Requirements Analysis. vision.md is the same for both: v1's vision guide has the same five sections,
+#: and its Requirements Analysis reads what it is given rather than parsing headings.
+AIDLC_V1 = "Using AI-DLC,"
 
 _START_PROMPT = {
     "ko": {
         "title": "# AI-DLC 시작 프롬프트",
-        "lead": ("프로젝트 루트에서 이 패키지의 압축을 풀면 `{root}/` 디렉터리가 생깁니다. 그다음 AI-DLC에 아래 "
-                 "요청을 그대로 붙여 넣으세요. 디렉터리 이름이나 위치를 바꿨다면 요청의 경로도 같이 바꿉니다."),
+        "lead": ("프로젝트 루트에서 이 패키지의 압축을 풀면 `{root}/` 디렉터리가 생깁니다. 그다음 AI-DLC에 쓰는 "
+                 "버전의 요청을 그대로 붙여 넣으세요. 디렉터리 이름이나 위치를 바꿨다면 요청의 경로도 같이 바꿉니다."),
         "first": "./{root}/vision.md에 정리된 제품을 만들어 주세요.",
         "first_tech": ("./{root}/vision.md에 정리된 제품을 ./technical-environment.md의 기술 환경에 맞춰 "
                        "만들어 주세요."),
@@ -1266,12 +1272,18 @@ _START_PROMPT = {
         "codex": "Codex CLI에서는 `/aidlc` 대신 `$aidlc`를 씁니다.",
         "tech_note": ("개발팀이 기술 스택·도구·금지 사항을 AI-DLC의 technical environment 문서로 프로젝트 루트에 "
                       "써 두었다면(`./technical-environment.md`), 이 요청을 씁니다."),
+        "v1_lead": ("AI-DLC v1에는 `/aidlc` 명령이 없습니다. v1 README의 설치 방법대로 규칙 파일을 프로젝트에 넣은 "
+                    "뒤, \"{v1}\"로 시작하는 아래 요청을 붙여 넣으세요. v1에는 의도 파악, 타당성, 범위 정의, 화면 "
+                    "초안 단계가 없어서 건너뛸 단계 없이 요구사항 분석으로 이어집니다."),
+        "v1_first": "./{root}/vision.md에 정리된 제품을 만들어 주세요.",
+        "v1_first_tech": ("./{root}/vision.md에 정리된 제품을 ./technical-environment.md의 기술 환경에 맞춰 "
+                          "만들어 주세요."),
     },
     "en": {
         "title": "# AI-DLC start prompt",
         "lead": ("Unpacking this package at the project root creates the `{root}/` directory. Then paste the "
-                 "request below into AI-DLC as it is. If you rename or move the directory, change the paths "
-                 "in the request too."),
+                 "request for the AI-DLC version you use as it is. If you rename or move the directory, change "
+                 "the paths in the request too."),
         "first": "Build the product described in ./{root}/vision.md.",
         "first_tech": ("Build the product described in ./{root}/vision.md, within the technical environment "
                        "in ./technical-environment.md."),
@@ -1290,19 +1302,30 @@ _START_PROMPT = {
         "tech_note": ("If the team has written its stack, tools and what is not allowed in AI-DLC's technical "
                       "environment document at the project root (`./technical-environment.md`), use this "
                       "request instead:"),
+        "v1_lead": ("AI-DLC v1 has no `/aidlc` command. Install its rule files in the project as the v1 README "
+                    "says, then paste the request below, which starts with \"{v1}\". v1 has no intent, "
+                    "feasibility, scope or mockup stages, so there is nothing to skip and the run goes on to "
+                    "Requirements Analysis."),
+        "v1_first": "build the product described in ./{root}/vision.md.",
+        "v1_first_tech": ("build the product described in ./{root}/vision.md, within the technical environment "
+                          "in ./technical-environment.md."),
     },
 }
 
 
 def start_prompt(language: str, folder: str) -> str:
-    """Contents of `start-prompt.md`. The first code block is the default request — the screen's copy button picks it up.
-    `folder` is `archive_folder(pid)`. It does not name `design/`: which brand standard to follow is the team's to set in its
-    technical environment document (`_README_DESIGN`)."""
-    t = {k: v.replace("{root}", folder).replace("{plan}", AIDLC_PLAN)
+    """Contents of `start-prompt.md`: a `## AI-DLC v2` section, then `## AI-DLC v1` (`AIDLC_V1`). The first code block of
+    each is its default request — the screen's copy button picks it up by that heading. `folder` is `archive_folder(pid)`.
+    It does not name `design/`: which brand standard to follow is the team's to set in its technical environment document
+    (`_README_DESIGN`)."""
+    t = {k: v.replace("{root}", folder).replace("{plan}", AIDLC_PLAN).replace("{v1}", AIDLC_V1)
          for k, v in _START_PROMPT.get(language, _START_PROMPT["ko"]).items()}
-    return (f"{t['title']}\n\n{t['lead']}\n\n```text\n/aidlc {AIDLC_PLAN} {t['first']} {t['rest']}\n```\n\n"
+    return (f"{t['title']}\n\n{t['lead']}\n\n"
+            f"## AI-DLC v2\n\n```text\n/aidlc {AIDLC_PLAN} {t['first']} {t['rest']}\n```\n\n"
             f"{t['plan_note']}\n\n{t['codex']}\n\n{t['tech_note']}\n\n"
-            f"```text\n/aidlc {AIDLC_PLAN} {t['first_tech']} {t['rest']}\n```\n")
+            f"```text\n/aidlc {AIDLC_PLAN} {t['first_tech']} {t['rest']}\n```\n\n"
+            f"## AI-DLC v1\n\n{t['v1_lead']}\n\n```text\n{AIDLC_V1} {t['v1_first']} {t['rest']}\n```\n\n"
+            f"{t['tech_note']}\n\n```text\n{AIDLC_V1} {t['v1_first_tech']} {t['rest']}\n```\n")
 
 
 #: The README line for `design/`, there only when a prototype was branded — a line pointing at nothing would send the team

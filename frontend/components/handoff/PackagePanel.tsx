@@ -13,9 +13,18 @@ import { useT } from "@/lib/i18n/provider";
 /** Order of the file list. Same as the reading order (see README). */
 const ORDER = ["README.md", "start-prompt.md", "vision.md", "decisions.md"];
 
-/** The first code block of `start-prompt.md` — the base request pasted into AI-DLC (server package.start_prompt). */
-export function startRequest(markdown: string | undefined): string | null {
-  const m = markdown && /```[a-z]*\n([\s\S]*?)\n```/.exec(markdown);
+/** AI-DLC versions `start-prompt.md` has a section for, newest first (server package.start_prompt). */
+export const AIDLC_VERSIONS = ["v2", "v1"] as const;
+export type AidlcVersion = (typeof AIDLC_VERSIONS)[number];
+
+/** The first code block under `## AI-DLC <version>` in `start-prompt.md` — the base request pasted into that version.
+ *  A file without version sections (none is served today) gives its first code block as v2's. */
+export function startRequest(markdown: string | undefined, version: AidlcVersion = "v2"): string | null {
+  if (!markdown) return null;
+  const sections = markdown.split(/^## AI-DLC (v\d+)\s*$/m);
+  const at = sections.indexOf(version);
+  const body = at > 0 ? sections[at + 1] : sections.length === 1 && version === "v2" ? markdown : null;
+  const m = body && /```[a-z]*\n([\s\S]*?)\n```/.exec(body);
   return m ? m[1].trim() : null;
 }
 
@@ -45,7 +54,10 @@ export function PackagePanel({
   const names = ORDER.filter((n) => n in pkg.files);
   const [selected, setSelected] = useState("vision.md");
   const [copied, setCopied] = useState(false);
-  const request = startRequest(pkg.files["start-prompt.md"]);
+  const [version, setVersion] = useState<AidlcVersion>("v2");
+  const prompt = pkg.files["start-prompt.md"];
+  const versions = AIDLC_VERSIONS.filter((v) => startRequest(prompt, v));
+  const request = startRequest(prompt, version);
   const copy = async () => {
     if (!request) return;
     try {
@@ -101,11 +113,25 @@ export function PackagePanel({
             <b className="text-[13px] text-violet-900">{t("handoff.pkg.startPrompt")}</b>
             <span className="text-xs text-violet-700">{t("handoff.pkg.startPromptHint")}</span>
             <span className="flex-1" />
+            {/* Some teams still run AI-DLC v1, which starts differently (no `/aidlc` command). */}
+            {versions.length > 1 && (
+              <span role="group" aria-label={t("handoff.pkg.version")}
+                    className="inline-flex rounded-lg border border-violet-300 bg-white overflow-hidden">
+                {versions.map((v) => (
+                  <button key={v} type="button" aria-pressed={v === version}
+                          onClick={() => { setVersion(v); setCopied(false); }}
+                          className={`px-2 py-1 text-xs ${v === version ? "bg-violet-600 text-white font-bold" : "text-violet-700 hover:bg-violet-100"}`}>
+                    AI-DLC {v}
+                  </button>
+                ))}
+              </span>
+            )}
             <button type="button" onClick={() => void copy()}
                     className="px-2.5 py-1 rounded-lg border border-violet-300 bg-white text-xs text-violet-700 hover:bg-violet-100">
               {copied ? t("handoff.pkg.copied") : t("handoff.pkg.copy")}
             </button>
           </div>
+          {version === "v1" && <p className="mt-1.5 text-xs text-violet-700">{t("handoff.pkg.v1Hint")}</p>}
           <pre className="mt-2 whitespace-pre-wrap break-words text-[12px] text-slate-800 font-mono">{request}</pre>
         </div>
       )}
