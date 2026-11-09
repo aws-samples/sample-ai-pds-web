@@ -261,8 +261,10 @@ function quote(text: string): string[] {
   return text.split("\n").map((l) => (l.trim() ? `> ${l}` : ">"));
 }
 
+/** Escapes a table cell. Backslashes go first: escaping only "|" turns an input \\| into \\\\|, an escaped
+ *  backslash followed by a bare pipe, which splits the cell. */
 function cell(s: string): string {
-  return s.replace(/\|/g, "\\|");
+  return s.replace(/\\/g, "\\\\").replace(/\|/g, "\\|");
 }
 
 function typeName(type: FormType | "", lang: Locale): string {

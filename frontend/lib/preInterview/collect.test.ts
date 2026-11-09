@@ -118,6 +118,12 @@ describe("buildMarkdown", () => {
     expect(md).toContain("> \"또 안 맞아요\"");
   });
 
+  it("keeps a role with a pipe or backslash inside its table cell", () => {
+    const odd = edit("untyped", (d) => { d.respondent.role_other = "a\\|b | c"; });
+    const md = buildMarkdown(collect([odd]), "ko");
+    expect(md).toContain("| 응답 1 | 기타: a\\\\\\|b \\| c | 종류 미선택 |");
+  });
+
   it("formats an 'other' role with its text", () => {
     const md = buildMarkdown(collect([fx("untyped")]), "ko");
     expect(md).toContain("| 응답 1 | 기타: 외부 자문 | 종류 미선택 |");
