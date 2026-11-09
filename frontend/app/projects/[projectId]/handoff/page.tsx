@@ -211,6 +211,7 @@ export default function HandoffPage({ params }: { params: Promise<{ projectId: s
             onDownload={() => void download()}
             onSupplement={() => setMode("supplement")}
             onStatus={() => setMode("status")}
+            openDecisions={supplementView?.has_package ? supplementView.open_questions.length : null}
             readOnly={readOnly}
           />
         ) : (
