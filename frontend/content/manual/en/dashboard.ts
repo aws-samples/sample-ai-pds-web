@@ -42,6 +42,23 @@ skips Envision. Because the workflow adapts to the work, skipping a step can lea
 short of 100%, and going back makes the percentage drop. Both are normal. **Judge whether you are
 finished by the approval state in the Document Review tab.**`,
     },
+    { kind: "heading", id: "pre-interview", text: "Collecting pre-workshop forms" },
+    {
+      kind: "md",
+      md: `If team members each filled in the pre-workshop form before the workshop, choose all their answer
+files (.json) at once in the dashboard's **Collect pre-workshop forms** card. It produces two things — a
+**collected file (.md)** with every answer copied as written, question by question, and the **prompt** to
+send with it. Nothing is summarized or edited, and the files are read in this browser only. The blank form to send to the team is in the same card, under **Download the form**.
+
+- When the same person saved again after editing, only the latest file is used.
+- Files about a different topic, customer, or team cannot be mixed. Different chosen types (work
+  improvement / something to build / a problem to solve) are fine — that is a split in how the team frames
+  the work, so similar questions are grouped side by side.
+
+Use them after starting AI-PLC in the Workspace with **Path A** and answering **A (describe it in your own
+words)** when asked how you want to provide business context. In your next message, attach the collected
+file and paste the prompt.`,
+    },
     { kind: "heading", id: "recent", text: "Artifacts and recent activity" },
     {
       kind: "md",
