@@ -1,0 +1,911 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AI-PDS 워크숍 사전 입력지</title>
+<!--
+  보내기 전에 (AWS 담당자용)
+  1) 아래 FORM_CONFIG 값만 채웁니다. 비워 둔 값은 화면에 나오지 않습니다.
+     AI-PDS 대시보드의 "질문지 받기"에서 값을 넣으면 채워진 파일을 내려받을 수 있습니다.
+  2) type으로 입력지 종류를 고릅니다.
+       'improve' 업무 개선: 팀이나 담당자의 업무를 넓게 보고 과제를 찾을 때
+       'build'   만들고 싶은 것: 고객에게 만들고 싶은 서비스나 도구가 이미 있을 때
+       'problem' 풀고 싶은 문제: 해결하고 싶은 구체적인 문제가 하나 있을 때
+       ''        비워 두면 고객이 맨 위에서 종류를 고릅니다
+  3) 팀마다 파일을 하나씩 만들어 그 팀에서 이 일을 함께하는 분들께 모두 보냅니다.
+     고객사·팀명이 다르면 자동 저장도 따로 됩니다.
+     한 과제를 여러 분께 보낼 때는 topic을 꼭 채웁니다. type을 정해 두면 모두 같은 질문에 답하고,
+     비워 두면 각자 고른 종류 자체가 과제를 보는 관점의 차이로 드러납니다.
+     topic에 이번에 함께 볼 문제·구상·일을 한 줄로 적어 주세요. 그래야 모두 같은 대상을 두고 답합니다.
+     이 입력지는 한 분의 대표 답보다, 같은 대상을 두고 여러 분이 각자 쓴 답을 나란히 볼 때 쓸모가 큽니다.
+     답이 갈리는 질문이 워크숍에서 토론과 합의를 거쳐야 하는 지점입니다.
+     (AI-PDS 대시보드의 "답변 모으기"가 여러 파일의 답을 질문별로 나란히 모읍니다.)
+     business와 customers에는 회사에 관한 사실(하는 일·업종, 주요 고객)을 한 번만 적습니다.
+     사실은 응답자마다 따로 물어도 얻는 것이 없고, 같은 사실을 다른 말로 적는 잡음만 늘어납니다.
+     회사 이름은 적지 않아도 됩니다.
+     고객 화면에는 "답이 갈려도 된다"처럼 결과를 암시하는 말을 쓰지 않습니다.
+  4) 고객이 보낸 JSON은 이 파일의 "답변 파일 불러오기"로 열어 볼 수 있습니다.
+  5) 사전 인터뷰와 이 입력지 가운데 고객이 편한 방식을 고릅니다. 입력지를 고른 팀은
+     받은 뒤 인터뷰를 다시 하지 않습니다. 비어 있는 꼭 필요한 항목만 메일로 짧게 여쭙고,
+     나머지는 워크숍에서 채웁니다. 인터뷰를 고른 팀은 진행자 템플릿으로 진행합니다.
+  6) 입력지에는 고객이 과제를 설명하는 질문만 둡니다. 아래는 받은 뒤 메일로 확인합니다.
+       - 다른 팀의 참여나 승인이 필요한지
+       - 사내 보안이나 정책상 확인이 필요한 것(외부 데이터 수집, 사내 시스템과 AI 도구 연결,
+         개인정보, 사외 반출 제한 자료)과 확인할 부서
+       - 워크숍에 함께 들어오시면 좋을 분
+     원인이나 꼭 필요한 것처럼 판단이 들어가는 질문은 각자의 생각으로 받습니다.
+     무엇으로 정할지는 묻지 않고, 워크숍에서 팀이 함께 정합니다.
+  원본은 저장소의 frontend/public/pre-interview/ai-pds-pre-interview-form.html입니다.
+  본문의 "type:" 주석과 "/type" 주석은 종류별 파일을 만드는 도구가 쓰므로 지우지 마세요.
+-->
+<script>
+window.FORM_CONFIG = {
+  type:      '',   // 'improve' | 'build' | 'problem' | '' (고객이 고름)
+  customer:  '',   // 고객사 이름. 예: 'OO전자'
+  team:      '',   // 팀 이름. 예: '영업기획팀'
+  business:  '',   // 하는 일·업종 한 줄. 예: '산업용 부품을 주문받아 생산해 기업 고객에게 판매'
+  customers: '',   // 주요 고객 한 줄. 예: '전자 부품 조립 업체, 대부분 기존 거래처'
+  due:       '',   // 회신 기한. 예: '11월 12일(수)'
+  contact:   '',   // 받는 사람. 예: '홍길동 SA'
+  email:     '',   // 받는 메일 주소
+  workshop:  '',   // 워크숍 일정. 예: '11월 20일(목) 13:00'
+  topic:     ''    // 이번에 함께 볼 문제·구상·일 한 줄. 예: '월말 정산 때 거래처 금액이 맞지 않는 문제'
+};
+</script>
+<style>
+  :root{
+    --ink:#1d2433; --muted:#5b6475; --line:#d8dee8; --bg:#f6f8fb; --card:#ffffff;
+    --blue:#1f5fbf; --blue-bg:#eef4fc; --blue-line:#b9cff0;
+    --orange:#a85600; --orange-bg:#fff4e5; --orange-line:#f2c48a;
+    --teal:#0f766e; --teal-bg:#e8f6f4;
+  }
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo","Noto Sans KR","Malgun Gothic",sans-serif;
+       color:var(--ink);background:var(--bg);line-height:1.65;font-size:15.5px;word-break:keep-all;overflow-wrap:break-word}
+  [hidden]{display:none !important}
+  .bar{position:sticky;top:0;z-index:10;background:#fff;border-bottom:1px solid var(--line);
+       display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 24px}
+  .bar .t{font-weight:700;font-size:14px;color:var(--muted)}
+  .wrap{max-width:980px;margin:0 auto;padding:32px 24px 80px}
+  header.hero{background:#fff;border:1px solid var(--line);border-radius:16px;padding:32px 32px 26px;margin-bottom:28px}
+  .eyebrow{font-size:12.5px;letter-spacing:.08em;color:var(--blue);font-weight:700}
+  h1{font-size:28px;line-height:1.35;margin:8px 0 6px}
+  .meta-line{color:var(--muted);font-weight:600;margin:0 0 12px}
+  h2{font-size:21px;margin:0 0 6px}
+  h3{font-size:17px;margin:22px 0 8px}
+  p{margin:8px 0}
+  .lead{color:var(--muted);margin:0 0 4px}
+  .nowrap{white-space:nowrap}
+  section{background:#fff;border:1px solid var(--line);border-radius:16px;padding:28px 32px;margin-bottom:24px;scroll-margin-top:64px}
+  .sec-no{font-size:12.5px;font-weight:700;color:var(--blue);letter-spacing:.06em}
+  .sub{color:var(--muted);margin:0 0 16px}
+  .toc{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px 24px;margin:18px 0 0;padding:0;list-style:none}
+  .toc a{color:var(--blue);text-decoration:none}
+  .toc a:hover{text-decoration:underline}
+  .context{border:1px solid var(--line);border-radius:12px;padding:10px 18px;margin:-6px 0 16px;background:#fff}
+  .context p{margin:4px 0}
+  .context .cl{display:inline-block;min-width:96px;font-size:13px;font-weight:700;color:var(--muted)}
+  .topic{background:var(--teal-bg);border:1px solid #b5ded8;border-radius:12px;padding:14px 18px;margin:16px 0}
+  .topic .tl{display:block;font-size:12.5px;font-weight:700;color:var(--teal);letter-spacing:.04em}
+  .topic .tt{display:block;font-size:17px;font-weight:600;margin-top:2px}
+  .warn{background:var(--orange-bg);border:2px solid var(--orange);border-radius:12px;padding:16px 18px;margin:14px 0;color:var(--orange);font-size:16px}
+  .warn b{display:block;font-size:17px;margin-bottom:2px}
+  .warn a{color:var(--orange);font-weight:700}
+  .bar-warn{font-size:13.5px;font-weight:700;color:var(--orange);background:var(--orange-bg);border:1px solid var(--orange-line);border-radius:999px;padding:5px 12px;text-decoration:none;white-space:nowrap}
+  .note{background:var(--orange-bg);border:1px solid var(--orange-line);border-radius:12px;padding:14px 18px;margin:16px 0}
+  .info{background:var(--blue-bg);border:1px solid var(--blue-line);border-radius:12px;padding:14px 18px;margin:16px 0}
+  table{width:100%;border-collapse:collapse;margin:12px 0;font-size:14.5px}
+  th,td{border-bottom:1px solid var(--line);padding:10px 10px;text-align:left;vertical-align:top}
+  th{background:var(--bg);font-weight:700;color:var(--muted);font-size:13.5px}
+  .steps{counter-reset:s;list-style:none;padding:0;margin:14px 0}
+  .steps li{counter-increment:s;position:relative;padding:10px 0 10px 46px;border-bottom:1px dashed var(--line)}
+  .steps li:last-child{border-bottom:0}
+  .steps li::before{content:counter(s);position:absolute;left:0;top:10px;width:30px;height:30px;border-radius:50%;
+                    background:var(--blue);color:#fff;font-weight:700;display:flex;align-items:center;justify-content:center;font-size:14px}
+  .steps li > b{display:block}
+  .types{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin:14px 0 4px;padding:0;list-style:none}
+  .types label{display:block;height:100%;border:1px solid var(--line);border-radius:12px;padding:14px 16px;cursor:pointer;background:#fff}
+  .types label:hover{border-color:var(--blue-line)}
+  .types input{accent-color:var(--blue);width:16px;height:16px;margin:0 6px 0 0;vertical-align:-2px}
+  .types .tn{font-weight:700}
+  .types .td{display:block;color:var(--muted);font-size:14px;margin-top:4px}
+  .types label:has(input:checked){border-color:var(--blue);background:var(--blue-bg)}
+  .q{border:1px solid var(--line);border-radius:12px;padding:16px 18px;margin:14px 0;break-inside:avoid;background:#fff}
+  .q .qh{display:flex;gap:10px;align-items:flex-start}
+  .q .qid{flex:none;font-weight:700;color:#fff;background:var(--blue);border-radius:8px;padding:1px 9px;font-size:13.5px;margin-top:2px}
+  .q .qt{font-weight:600}
+  .opts{display:flex;flex-wrap:wrap;gap:6px 18px;margin:10px 0 0 42px;padding:0;list-style:none;font-size:14.5px}
+  .opts label{display:inline-flex;align-items:center;gap:6px;cursor:pointer}
+  .opts input[type=checkbox],.opts input[type=radio]{width:16px;height:16px;margin:0;accent-color:var(--blue);cursor:pointer}
+  .opts .etc{margin-left:6px;border:1px solid var(--line);border-radius:6px;padding:2px 8px;font:inherit;font-size:14px;width:180px;max-width:100%}
+  .ans{display:block;width:calc(100% - 42px);margin:8px 0 0 42px;border:1px solid var(--line);border-radius:8px;min-height:72px;
+       padding:8px 10px;font:inherit;font-size:15px;line-height:1.6;color:var(--ink);background:#fff;resize:vertical;overflow:hidden}
+  .ans.sm{min-height:46px}
+  .ans:focus,.opts .etc:focus{outline:2px solid var(--blue-line);outline-offset:1px;border-color:var(--blue)}
+  .ans::placeholder{color:#9aa3b2}
+  .ans-label{margin:14px 0 0 42px;font-size:14px;color:var(--ink);font-weight:600}
+  .ans-label .h{font-weight:400;color:var(--muted)}
+  details.why{margin:10px 0 0 42px;padding:0}
+  section > details.why{margin-left:0}
+  details.why summary{cursor:pointer;font-size:12.5px;font-weight:700;color:var(--muted);list-style:none;display:inline-block}
+  details.why summary::-webkit-details-marker{display:none}
+  details.why summary::before{content:"\25B8";display:inline-block;margin-right:5px;transition:transform .15s}
+  details.why[open] summary::before{transform:rotate(90deg)}
+  details.why[open]{background:var(--bg);border-left:3px solid var(--blue-line);border-radius:0 8px 8px 0;padding:8px 14px}
+  details.why .body{font-size:14px;margin-top:4px}
+  details.task{border:1px solid var(--line);border-radius:12px;padding:0;margin:14px 0;background:#fff}
+  details.task > summary{cursor:pointer;list-style:none;display:flex;gap:10px;align-items:center;padding:14px 18px}
+  details.task > summary::-webkit-details-marker{display:none}
+  details.task > summary::after{content:"\25B8";margin-left:auto;color:var(--muted);transition:transform .15s}
+  details.task[open] > summary::after{transform:rotate(90deg)}
+  details.task > summary .qid{flex:none;font-weight:700;color:#fff;background:var(--blue);border-radius:8px;padding:1px 9px;font-size:13.5px}
+  details.task > summary .qt{font-weight:600}
+  details.task > summary .opt{font-size:12.5px;color:var(--muted);font-weight:400}
+  details.task .tb{padding:0 18px 18px}
+  .tools{display:flex;flex-wrap:wrap;align-items:center;justify-content:flex-end;gap:6px}
+  .btn{font:inherit;font-size:13.5px;font-weight:600;border:1px solid var(--line);background:#fff;color:var(--ink);border-radius:999px;padding:6px 12px;cursor:pointer;text-decoration:none}
+  .btn:hover{border-color:var(--blue-line);color:var(--blue)}
+  .btn.primary{background:var(--blue);border-color:var(--blue);color:#fff}
+  .btn.primary:hover{color:#fff;filter:brightness(1.08)}
+  .btn.big{font-size:15px;padding:10px 20px}
+  .save-status{font-size:12.5px;color:var(--muted);margin-right:4px}
+  .send{display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin-top:14px}
+  .muted{color:var(--muted)}
+  ul.tight{margin:6px 0;padding-left:20px}
+  ul.tight li{margin:3px 0}
+  footer{color:var(--muted);font-size:13.5px;text-align:center;margin-top:28px}
+  @media (max-width:720px){
+    body{font-size:15px}
+    .bar{padding:8px 14px}
+    .bar .t{display:none}
+    .wrap{padding:18px 12px 60px}
+    header.hero,section{padding:20px 18px;border-radius:14px}
+    h1{font-size:22px}
+    h2{font-size:19px}
+    .toc,.types{grid-template-columns:1fr}
+    .opts,.ans,.ans-label,details.why{margin-left:0}
+    .ans{width:100%}
+    .tools{justify-content:flex-start}
+    details.task .tb{padding:0 12px 14px}
+    table.stack thead{display:none}
+    table.stack,table.stack tbody{display:block}
+    table.stack tr{display:block;border-bottom:1px solid var(--line);padding:8px 0}
+    table.stack td{display:block;border:0;padding:3px 4px;width:auto}
+    table.stack td.no{text-align:left;padding-top:8px}
+    table.stack td[data-l]::before{content:attr(data-l);display:block;font-size:12px;font-weight:700;color:var(--muted)}
+    section{scroll-margin-top:104px}
+    .btn{padding:5px 10px;font-size:13px}
+  }
+  @media print{
+    body{background:#fff;font-size:12.5px}
+    .bar,.send{display:none}
+    .wrap{max-width:none;padding:0}
+    header.hero,section{border:0;padding:8px 0;margin-bottom:12px}
+    .ans{min-height:60px;resize:none}
+    .ans.sm{min-height:40px}
+    details.why{display:none}
+    a{color:inherit;text-decoration:none}
+  }
+</style>
+</head>
+<body>
+<div class="bar">
+  <span class="t" id="barTitle">AI-PDS 워크숍 · 사전 입력지</span>
+  <div class="tools">
+    <a class="bar-warn" id="barWarn" href="#kind" hidden>종류를 먼저 골라 주세요</a>
+    <span class="save-status" id="saveStatus" aria-live="polite"></span>
+    <button type="button" class="btn primary" id="btnExport">답변 파일 저장</button>
+    <button type="button" class="btn" id="btnImport">답변 파일 불러오기</button>
+    <button type="button" class="btn" id="btnPrint">인쇄</button>
+    <button type="button" class="btn" id="btnClear">입력 지우기</button>
+    <input type="file" id="importFile" accept=".json,application/json" hidden>
+  </div>
+</div>
+
+<div class="wrap">
+
+<header class="hero">
+  <div class="eyebrow" id="eyebrow">AI-PDS 워크숍 · 사전 준비</div>
+  <h1>사전 입력지</h1>
+  <p class="meta-line" id="metaLine" hidden></p>
+  <p class="lead">AI-PDS 워크숍을 귀 팀의 실제 상황에 맞춰 준비하려고, 사전 인터뷰 대신 몇 가지를 글로 여쭙니다. 모든 항목은 선택 사항이고, 최근에 있었던 일을 구체적으로 적어 주실수록 워크숍에서 바로 깊이 들어갈 수 있습니다.</p>
+  <p class="lead" id="typeLead" hidden></p>
+  <div class="topic" id="topicBox" hidden><span class="tl" id="topicLabel">이번에 함께 보는 주제</span><span class="tt" id="topicText"></span></div>
+  <div class="context" id="contextBox" hidden>
+    <p id="businessLine" hidden><span class="cl">하는 일·업종</span><span id="businessText"></span></p>
+    <p id="customersLine" hidden><span class="cl">주요 고객</span><span id="customersText"></span></p>
+  </div>
+  <p class="lead"><b>이 프로젝트를 함께하는 동료가 있다면, 의견을 모으지 말고 각자의 생각을 적어 주세요.</b></p>
+  <p class="lead" id="altLine">글로 적기보다 말로 설명하시는 편이 편하시면 알려 주세요. 약 1시간의 사전 인터뷰로 진행하겠습니다.</p>
+  <ol class="steps">
+    <li><b>이 화면에서 적기</b>입력한 내용은 이 브라우저에 자동으로 저장되어, 중간에 닫으셔도 다시 여시면 이어서 쓰실 수 있습니다.</li>
+    <li><b>답변 파일로 저장해 메일로 보내기</b><span id="sendLine">다 쓰신 뒤 위쪽의 "답변 파일 저장"을 누르고, 저장된 파일(.json)을 메일에 첨부해 보내 주세요.</span> 동료분들도 각자 저장하신 파일을 따로 보내 주시면 됩니다.</li>
+    <li><b>함께 확인하신 뒤 워크숍</b><span id="workshopLine">보내 주신 답은 질문별로 모아 팀이 함께 확인한 뒤 AI-PDS 워크숍의 입력으로 씁니다. 적기 어려우셨던 부분은 워크숍에서 함께 채웁니다.</span></li>
+  </ol>
+  <div class="info">
+    <ul class="tight">
+      <li>이 입력지는 이름을 받지 않습니다. 보내 주신 답은 이름 없이 역할과 함께 팀 안에서 공유되고, AI-PDS 워크숍의 입력으로 쓰입니다.</li>
+      <li>개인정보(이름, 연락처, 고객 정보)와 외부에 공유할 수 없는 기밀은 적지 말아 주세요.</li>
+      <li>숫자는 대략으로 적어 주셔도 충분합니다. 모르시면 비워 두시면 됩니다.</li>
+      <li>칸 안의 회색 예시 글자는 저장되지 않습니다.</li>
+    </ul>
+  </div>
+  <ul class="toc" id="toc"></ul>
+</header>
+
+<!-- type:choose -->
+<section id="kind" data-toc="입력지 종류">
+  <div class="sec-no"></div>
+  <h2>어떤 내용을 적어 주실지 골라 주세요</h2>
+  <p class="sub">고르신 종류에 맞는 질문이 아래에 나옵니다. 나중에 바꾸셔도 적어 두신 내용은 지워지지 않습니다.</p>
+  <ul class="types" role="radiogroup" aria-label="입력지 종류">
+    <li><label><input type="radio" name="T0.type" value="improve"><span class="tn">업무 개선</span><span class="td">팀이나 담당자의 업무를 넓게 보고, 무엇부터 개선할지 찾고 싶을 때</span></label></li>
+    <li><label><input type="radio" name="T0.type" value="build"><span class="tn">만들고 싶은 것</span><span class="td">만들고 싶은 서비스나 도구가 이미 있을 때</span></label></li>
+    <li><label><input type="radio" name="T0.type" value="problem"><span class="tn">풀고 싶은 문제</span><span class="td">해결하고 싶은 구체적인 문제가 하나 있을 때</span></label></li>
+  </ul>
+  <div class="warn" id="typeWarn" hidden><b>아직 종류를 고르지 않으셨습니다.</b>세 가지 중 하나를 골라야 이번 워크숍의 핵심 질문이 아래에 나옵니다. 고르지 않으면 공통 질문만 보이고, 그 답만 저장됩니다.</div>
+</section>
+<!-- /type -->
+
+<section id="who" data-toc="작성하시는 분과 팀 업무">
+  <div class="sec-no"></div>
+  <h2>작성하시는 분과 팀 업무</h2>
+  <p class="sub">팀이 하는 일을 처음 듣는 사람에게 설명하듯 적어 주세요.</p>
+  <div class="q item" data-id="P1" data-group="작성하시는 분">
+    <div class="qh"><span class="qid">P1</span><span class="qt">이번에 다룰 일에서 맡고 계신 역할을 골라 주세요.</span></div>
+    <ul class="opts" role="group" aria-label="P1 역할" data-type="radio" data-label="역할">
+      <li><label><input type="radio" name="P1.role" value="그 일을 직접 하는 실무자"> 그 일을 직접 하는 실무자</label></li>
+      <li><label><input type="radio" name="P1.role" value="그 일의 결과를 받아 쓰는 분"> 그 일의 결과를 받아 쓰는 분</label></li>
+      <li><label><input type="radio" name="P1.role" value="PM · PO"> PM · PO</label></li>
+      <li><label><input type="radio" name="P1.role" value="경영진 · 리더"> 경영진 · 리더</label></li>
+      <li><label><input type="radio" name="P1.role" value="기타"> 기타</label><input type="text" class="etc" name="P1.role.etc" placeholder="직접 입력" aria-label="P1 기타 역할 직접 입력"></li>
+    </ul>
+  </div>
+  <div class="q item" data-id="B1" data-group="팀 업무">
+    <div class="qh"><span class="qid">B1</span><span class="qt">팀이 맡고 있는 일과, 그 결과를 누가 받아서 쓰는지 간단히 소개해 주세요.</span></div>
+    <textarea class="ans" name="B1.text1" rows="3" aria-label="B1 답변" placeholder="예: 매장별 판매 데이터를 모아 주간 보고를 만들고, 매장별 개선 과제를 관리합니다."></textarea>
+    <details class="why"><summary>왜 여쭙나요</summary><div class="body">워크숍에서 AI가 업무에 대해 묻는 질문에 답할 때 근거가 됩니다.</div></details>
+  </div>
+</section>
+
+<!-- type:improve -->
+<section id="pain" data-for="improve" data-toc="시간이 많이 드는 일">
+  <div class="sec-no"></div>
+  <h2>시간이 많이 드는 일</h2>
+  <p class="sub" data-topic="위에 적힌 일을 두고, 지난번에 하셨던 대로 적어 주세요. &quot;보통은&quot;보다 &quot;지난번에는&quot;으로 적어 주시면 더 정확합니다.">지난주나 지난달을 떠올려 보시고, 시간이 가장 많이 든 일 하나를 자세히 적어 주세요. "보통은"보다 "지난번에는"으로 적어 주시면 더 정확합니다. 무엇부터 다룰지는 워크숍에서 함께 정합니다.</p>
+  <div id="taskList"></div>
+  <div class="q item" data-id="H2" data-group="시간이 많이 드는 일">
+    <div class="qh"><span class="qid">H2</span><span class="qt">그 밖에 시간이 많이 드는 일이 있다면 한 줄씩 적어 주세요. 두 가지까지면 충분합니다. <span class="muted" style="font-weight:400">(선택)</span></span></div>
+    <textarea class="ans sm" name="H2.list" rows="2" aria-label="H2 그 밖에 시간이 많이 드는 일" data-label="그 밖에 시간이 많이 드는 일"></textarea>
+  </div>
+  <details class="why"><summary>왜 여쭙나요</summary><div class="body">워크숍은 이 내용을 페인 포인트로 넣고 시작합니다. 팀에서 자주 나오는 말은 고치지 않고 그대로 씁니다.</div></details>
+</section>
+
+<template id="tplTask">
+  <details class="task item" data-id="H{n}" data-group="시간이 많이 드는 일">
+    <summary><span class="qid">H{n}</span><span class="qt">{title}</span><span class="opt">{opt}</span></summary>
+    <div class="tb">
+      <div class="ans-label" data-topic="위 일을 내 말로 한두 문장으로 적으면">어떤 일인가요? <span class="h">(한두 문장)</span></div>
+      <textarea class="ans sm" name="H{n}.what" rows="2" aria-label="H{n} 어떤 일인가요" data-label="어떤 일인가요"></textarea>
+      <div class="ans-label">지난번에 그 일을 어떻게 하셨는지 순서대로</div>
+      <textarea class="ans" name="H{n}.steps" rows="3" aria-label="H{n} 지난번에 한 순서" data-label="지난번에 한 순서" placeholder="예: ① 매장 담당자 12명에게 엑셀을 메일로 받음 ② 하나로 합치며 형식을 맞춤 ③ 빠진 곳을 다시 요청 ④ 표와 그래프를 만들어 보고"></textarea>
+      <div class="ans-label">그중 손이 가장 많이 가는 단계와 그 이유</div>
+      <textarea class="ans sm" name="H{n}.hard" rows="2" aria-label="H{n} 손이 가장 많이 가는 단계" data-label="손이 가장 많이 가는 단계와 이유"></textarea>
+      <div class="ans-label">얼마나 자주 하시나요?</div>
+      <ul class="opts" role="group" aria-label="H{n} 빈도" data-type="radio" data-label="빈도">
+        <li><label><input type="radio" name="H{n}.freq" value="매일"> 매일</label></li>
+        <li><label><input type="radio" name="H{n}.freq" value="매주"> 매주</label></li>
+        <li><label><input type="radio" name="H{n}.freq" value="매월"> 매월</label></li>
+        <li><label><input type="radio" name="H{n}.freq" value="특정 시기에 몰림"> 특정 시기에 몰림</label></li>
+        <li><label><input type="radio" name="H{n}.freq" value="수시"> 수시</label></li>
+      </ul>
+      <div class="ans-label">한 번 할 때 걸리는 시간</div>
+      <ul class="opts" role="group" aria-label="H{n} 한 번에 걸리는 시간" data-type="radio" data-label="한 번에 걸리는 시간">
+        <li><label><input type="radio" name="H{n}.timec" value="1시간 이내"> 1시간 이내</label></li>
+        <li><label><input type="radio" name="H{n}.timec" value="1시간에서 반나절"> 1시간에서 반나절</label></li>
+        <li><label><input type="radio" name="H{n}.timec" value="하루 정도"> 하루 정도</label></li>
+        <li><label><input type="radio" name="H{n}.timec" value="며칠 이상"> 며칠 이상</label></li>
+        <li><label><input type="radio" name="H{n}.timec" value="잘 모르겠음"> 잘 모르겠음</label></li>
+      </ul>
+      <div class="ans-label">숫자로 아시면 <span class="h">(대략, 누구 기준인지 함께)</span></div>
+      <textarea class="ans sm" name="H{n}.time" rows="1" aria-label="H{n} 걸리는 시간 숫자" data-label="걸리는 시간 숫자" placeholder="예: 담당자 한 명 기준 한 번에 3시간"></textarea>
+      <div class="ans-label">지금은 어떻게 하고 계신가요?</div>
+      <ul class="opts" role="group" aria-label="H{n} 지금 하는 방법" data-type="checkbox" data-label="지금 하는 방법">
+        <li><label><input type="checkbox" name="H{n}.now" value="엑셀·수작업"> 엑셀·수작업</label></li>
+        <li><label><input type="checkbox" name="H{n}.now" value="다른 사람이나 팀에 요청"> 다른 사람이나 팀에 요청</label></li>
+        <li><label><input type="checkbox" name="H{n}.now" value="사내 시스템"> 사내 시스템</label></li>
+        <li><label><input type="checkbox" name="H{n}.now" value="외부 도구·서비스"> 외부 도구·서비스</label></li>
+        <li><label><input type="checkbox" name="H{n}.now" value="기타"> 기타</label><input type="text" class="etc" name="H{n}.now.etc" placeholder="직접 입력" aria-label="H{n} 기타 방법 직접 입력"></li>
+      </ul>
+      <div class="ans-label">조금 더 적어 주실 것 <span class="h">(쓰시는 시스템이나 도구 이름, 개선을 시도해 보셨다면 멈춘 이유)</span></div>
+      <textarea class="ans sm" name="H{n}.tried" rows="1" aria-label="H{n} 도구 이름과 개선 시도" data-label="쓰는 도구와 개선 시도"></textarea>
+      <div class="ans-label">늦어지거나 틀리면 누가 곤란해지나요?</div>
+      <textarea class="ans sm" name="H{n}.who" rows="1" aria-label="H{n} 곤란해지는 사람" data-label="늦어지거나 틀리면 곤란해지는 사람"></textarea>
+      <div class="ans-label">이 일에 대해 팀에서 자주 나오는 말 <span class="h">(다듬지 않고 그대로)</span></div>
+      <textarea class="ans sm" name="H{n}.quote" rows="1" aria-label="H{n} 팀에서 자주 나오는 말" data-label="팀에서 자주 나오는 말" placeholder="예: &quot;월요일 오전은 이것만 하다 끝나요&quot;"></textarea>
+    </div>
+  </details>
+</template>
+
+<!-- /type -->
+
+<!-- type:build -->
+<section id="idea" data-for="build" data-toc="만들고 싶은 것">
+  <div class="sec-no"></div>
+  <h2>만들고 싶은 것</h2>
+  <p class="sub">쓰실 분과 그분들이 지금 겪는 문제를 먼저 여쭙고, 만들고 싶으신 것은 그다음에 여쭙니다. 워크숍에서는 만들고 싶으신 것이 그 문제를 푸는지 함께 확인합니다.</p>
+  <div class="q item" data-id="N1" data-group="만들고 싶은 것">
+    <div class="qh"><span class="qid">N1</span><span class="qt">이것을 주로 쓰게 될 분은 누구인가요? 어떤 상황에서 쓰게 되나요?</span></div>
+    <textarea class="ans sm" name="N1.text1" rows="2" aria-label="N1 쓰실 분과 상황" data-label="쓰실 분과 쓰는 상황" placeholder="예: 매장을 순회하는 지역 담당자가 매장 점검을 마친 직후에"></textarea>
+    <div class="ans-label">대략 몇 명 정도인가요?</div>
+    <textarea class="ans sm" name="N1.text2" rows="1" aria-label="N1 대략적인 인원" data-label="쓰실 분 인원" placeholder="예: 우리 팀 3명, 나중에는 영업 12명"></textarea>
+  </div>
+  <div class="q item" data-id="N2" data-group="만들고 싶은 것">
+    <div class="qh"><span class="qid">N2</span><span class="qt">그분들은 지금 무엇 때문에 불편하거나 시간이 많이 드나요? 최근에 있었던 일 하나로 적어 주시면 더 정확합니다.</span></div>
+    <textarea class="ans" name="N2.text1" rows="3" aria-label="N2 답변"></textarea>
+  </div>
+  <div class="q item" data-id="N3" data-group="만들고 싶은 것">
+    <div class="qh"><span class="qid">N3</span><span class="qt">지금은 그 일을 어떻게 하고 있나요?</span></div>
+    <ul class="opts" role="group" aria-label="N3 선택지" data-type="checkbox" data-label="지금 하는 방법">
+      <li><label><input type="checkbox" name="N3.choice1" value="엑셀·수작업"> 엑셀·수작업</label></li>
+      <li><label><input type="checkbox" name="N3.choice1" value="다른 사람이나 팀에 요청"> 다른 사람이나 팀에 요청</label></li>
+      <li><label><input type="checkbox" name="N3.choice1" value="사내 시스템"> 사내 시스템</label></li>
+      <li><label><input type="checkbox" name="N3.choice1" value="외부 도구·서비스"> 외부 도구·서비스</label></li>
+      <li><label><input type="checkbox" name="N3.choice1" value="하지 못하고 있음"> 하지 못하고 있음</label></li>
+      <li><label><input type="checkbox" name="N3.choice1" value="기타"> 기타</label><input type="text" class="etc" name="N3.choice1.etc" placeholder="직접 입력" aria-label="N3 기타 직접 입력"></li>
+    </ul>
+    <div class="ans-label">조금 더 적어 주실 것 <span class="h">(쓰시는 시스템이나 도구 이름, 비슷한 것을 써 보거나 만들어 보셨다면 그 결과)</span></div>
+    <textarea class="ans sm" name="N3.text1" rows="1" aria-label="N3 더 적어 주실 것" data-label="지금 하는 방법과 써 본 것"></textarea>
+  </div>
+  <div class="q item" data-id="N4" data-group="만들고 싶은 것">
+    <div class="qh"><span class="qid">N4</span><span class="qt" data-topic="위 구상을 내 말로 한두 문장으로 적어 주세요.">만들고 싶으신 것을 한두 문장으로 적어 주세요.</span></div>
+    <textarea class="ans sm" name="N4.text1" rows="2" aria-label="N4 답변" placeholder="예: 점검 사진을 올리면 점검 보고서 초안을 만들어 주는 화면"></textarea>
+    <details class="why"><summary>왜 여쭙나요</summary><div class="body">워크숍에서는 이 구상을 검증 전 아이디어로 두고, 앞에 적으신 분들의 문제를 푸는지 함께 확인합니다.</div></details>
+  </div>
+  <div class="q item" data-id="N6" data-group="만들고 싶은 것">
+    <div class="qh"><span class="qid">N6</span><span class="qt">잘 되면 무엇이 달라지나요? 그걸 어떻게 알 수 있을까요?</span></div>
+    <textarea class="ans sm" name="N6.text1" rows="2" aria-label="N6 답변" placeholder="예: 보고서를 쓰는 시간이 줄어든다. 주간 점검 건수로 확인할 수 있다"></textarea>
+  </div>
+  <div class="q item" data-id="N7" data-group="만들고 싶은 것">
+    <div class="qh"><span class="qid">N7</span><span class="qt">꼭 있어야 하는 것과 처음에는 없어도 되는 것을 나눠 주세요.</span></div>
+    <div class="ans-label">꼭 있어야 하는 것</div>
+    <textarea class="ans sm" name="N7.must" rows="2" aria-label="N7 꼭 있어야 하는 것" data-label="꼭 있어야 하는 것"></textarea>
+    <div class="ans-label">처음에는 없어도 되는 것</div>
+    <textarea class="ans sm" name="N7.later" rows="2" aria-label="N7 처음에는 없어도 되는 것" data-label="처음에는 없어도 되는 것"></textarea>
+  </div>
+  <div class="q item" data-id="N9" data-group="만들고 싶은 것">
+    <div class="qh"><span class="qid">N9</span><span class="qt">아직 확인하지 못한 것이 있나요?</span></div>
+    <textarea class="ans sm" name="N9.text1" rows="2" aria-label="N9 답변" placeholder="예: 지역 담당자가 실제로 쓸지, 점검 사진을 써도 되는지"></textarea>
+  </div>
+</section>
+<!-- /type -->
+
+<!-- type:problem -->
+<section id="problem" data-for="problem" data-toc="풀고 싶은 문제">
+  <div class="sec-no"></div>
+  <h2>풀고 싶은 문제</h2>
+  <p class="sub">최근에 실제로 겪으신 일 하나를 떠올리며 적어 주세요. "보통은"보다 "지난번에는"으로 적어 주시면 더 정확합니다.</p>
+  <div class="q item" data-id="K1" data-group="풀고 싶은 문제">
+    <div class="qh"><span class="qid">K1</span><span class="qt" data-topic="위 문제를 내 말로 한두 문장으로 적어 주세요.">풀고 싶은 문제를 한두 문장으로 적어 주세요.</span></div>
+    <textarea class="ans sm" name="K1.text1" rows="2" aria-label="K1 답변"></textarea>
+  </div>
+  <div class="q item" data-id="K2" data-group="풀고 싶은 문제">
+    <div class="qh"><span class="qid">K2</span><span class="qt">최근에 이 문제를 겪으신 일 하나를 순서대로 적어 주세요. 언제, 무엇을 하다가, 어디서 막혔고, 결국 어떻게 하셨는지 적어 주시면 됩니다.</span></div>
+    <textarea class="ans" name="K2.text1" rows="4" aria-label="K2 답변" placeholder="예: 지난달 말 정산 때 거래처 세 곳의 금액이 맞지 않아, 메일을 다시 뒤져 원본을 찾고 담당자에게 전화로 확인했다"></textarea>
+  </div>
+  <div class="q item" data-id="K3" data-group="풀고 싶은 문제">
+    <div class="qh"><span class="qid">K3</span><span class="qt">이 문제는 얼마나 자주 생기나요?</span></div>
+    <ul class="opts" role="group" aria-label="K3 빈도" data-type="radio" data-label="빈도">
+      <li><label><input type="radio" name="K3.freq" value="매일"> 매일</label></li>
+      <li><label><input type="radio" name="K3.freq" value="매주"> 매주</label></li>
+      <li><label><input type="radio" name="K3.freq" value="매월"> 매월</label></li>
+      <li><label><input type="radio" name="K3.freq" value="특정 시기에 몰림"> 특정 시기에 몰림</label></li>
+      <li><label><input type="radio" name="K3.freq" value="수시"> 수시</label></li>
+    </ul>
+    <div class="ans-label">한 번 생기면 처리하는 데 드는 시간</div>
+    <ul class="opts" role="group" aria-label="K3 한 번에 드는 시간" data-type="radio" data-label="한 번에 드는 시간">
+      <li><label><input type="radio" name="K3.timec" value="1시간 이내"> 1시간 이내</label></li>
+      <li><label><input type="radio" name="K3.timec" value="1시간에서 반나절"> 1시간에서 반나절</label></li>
+      <li><label><input type="radio" name="K3.timec" value="하루 정도"> 하루 정도</label></li>
+      <li><label><input type="radio" name="K3.timec" value="며칠 이상"> 며칠 이상</label></li>
+      <li><label><input type="radio" name="K3.timec" value="잘 모르겠음"> 잘 모르겠음</label></li>
+    </ul>
+    <div class="ans-label">시간이나 비용을 숫자로 아시면 <span class="h">(대략, 누구 기준인지 함께)</span></div>
+    <textarea class="ans sm" name="K3.text1" rows="1" aria-label="K3 드는 시간이나 비용" data-label="한 번 생기면 드는 시간이나 비용" placeholder="예: 팀 전체 기준 주 20건, 건당 2시간"></textarea>
+  </div>
+  <div class="q item" data-id="K4" data-group="풀고 싶은 문제">
+    <div class="qh"><span class="qid">K4</span><span class="qt">누가 이 문제를 겪고, 누가 곤란해지나요?</span></div>
+    <textarea class="ans sm" name="K4.text1" rows="2" aria-label="K4 겪는 사람과 곤란해지는 사람" data-label="겪는 사람과 곤란해지는 사람"></textarea>
+    <div class="ans-label">대략 몇 명 정도인가요?</div>
+    <textarea class="ans sm" name="K4.text2" rows="1" aria-label="K4 대략적인 인원" data-label="겪는 사람 인원" placeholder="예: 우리 팀 3명, 영업 12명"></textarea>
+  </div>
+  <div class="q item" data-id="K5" data-group="풀고 싶은 문제">
+    <div class="qh"><span class="qid">K5</span><span class="qt">지금은 이 문제를 어떻게 넘기고 계신가요?</span></div>
+    <ul class="opts" role="group" aria-label="K5 선택지" data-type="checkbox" data-label="지금 넘기는 방법">
+      <li><label><input type="checkbox" name="K5.choice1" value="엑셀·수작업"> 엑셀·수작업</label></li>
+      <li><label><input type="checkbox" name="K5.choice1" value="다른 사람이나 팀에 요청"> 다른 사람이나 팀에 요청</label></li>
+      <li><label><input type="checkbox" name="K5.choice1" value="사내 시스템"> 사내 시스템</label></li>
+      <li><label><input type="checkbox" name="K5.choice1" value="외부 도구·서비스"> 외부 도구·서비스</label></li>
+      <li><label><input type="checkbox" name="K5.choice1" value="그냥 감수함"> 그냥 감수함</label></li>
+      <li><label><input type="checkbox" name="K5.choice1" value="기타"> 기타</label><input type="text" class="etc" name="K5.choice1.etc" placeholder="직접 입력" aria-label="K5 기타 직접 입력"></li>
+    </ul>
+    <div class="ans-label">조금 더 적어 주실 것 <span class="h">(쓰시는 시스템이나 도구 이름, 개선을 시도해 보셨다면 멈춘 이유)</span></div>
+    <textarea class="ans sm" name="K5.text1" rows="1" aria-label="K5 더 적어 주실 것" data-label="지금 넘기는 방법과 해 본 시도"></textarea>
+  </div>
+  <div class="q item" data-id="K6" data-group="풀고 싶은 문제">
+    <div class="qh"><span class="qid">K6</span><span class="qt">이 문제는 왜 생긴다고 보시나요? 추정이어도 괜찮습니다.</span></div>
+    <textarea class="ans sm" name="K6.text1" rows="2" aria-label="K6 답변"></textarea>
+  </div>
+  <div class="q item" data-id="K7" data-group="풀고 싶은 문제">
+    <div class="qh"><span class="qid">K7</span><span class="qt">해결되면 무엇이 달라지나요? 그걸 어떻게 알 수 있을까요?</span></div>
+    <textarea class="ans sm" name="K7.text1" rows="2" aria-label="K7 답변"></textarea>
+  </div>
+  <div class="q item" data-id="K10" data-group="풀고 싶은 문제">
+    <div class="qh"><span class="qid">K10</span><span class="qt">이 문제에 대해 팀에서 자주 나오는 말이 있다면 다듬지 않고 그대로 적어 주세요.</span></div>
+    <textarea class="ans sm" name="K10.text1" rows="1" aria-label="K10 답변" placeholder="예: &quot;월말만 되면 숫자 맞추느라 야근해요&quot;"></textarea>
+  </div>
+</section>
+<!-- /type -->
+
+<section id="files" data-toc="다룰 자료와 보내 주실 자료">
+  <div class="sec-no"></div>
+  <h2>다룰 자료와 보내 주실 자료</h2>
+  <p class="sub">있는 것만 적어 주세요. 파일은 답변 파일과 함께 메일에 첨부해 보내 주시면 됩니다.</p>
+  <div class="note">개인정보와 기밀은 가리거나 지운 뒤 보내 주세요.</div>
+  <div class="q item" data-id="D1" data-group="다룰 자료와 보내 주실 자료">
+    <div class="qh"><span class="qid">D1</span><span class="qt">이번에 다룰 일에 필요한 데이터는 어디에 있고, 누가 관리하나요? 워크숍에서 다루면 안 되는 자료가 있다면 함께 적어 주세요.</span></div>
+    <textarea class="ans sm" name="D1.text1" rows="2" aria-label="D1 답변"></textarea>
+  </div>
+  <div class="q item" data-id="A1" data-group="다룰 자료와 보내 주실 자료">
+    <div class="qh"><span class="qid">A1</span><span class="qt">보내 주실 수 있는 자료를 골라 주세요.</span></div>
+    <ul class="opts" role="group" aria-label="A1 선택지" data-type="checkbox" data-label="보낼 자료">
+      <li><label><input type="checkbox" name="A1.choice1" value="지금 쓰는 양식이나 엑셀"> 지금 쓰는 양식이나 엑셀</label></li>
+      <li><label><input type="checkbox" name="A1.choice1" value="화면 캡처"> 화면 캡처</label></li>
+      <li><label><input type="checkbox" name="A1.choice1" value="샘플 데이터"> 샘플 데이터</label></li>
+      <li><label><input type="checkbox" name="A1.choice1" value="기대하는 결과물의 예시"> 기대하는 결과물의 예시</label></li>
+      <li><label><input type="checkbox" name="A1.choice1" value="업무 절차·규정 문서"> 업무 절차·규정 문서</label></li>
+      <li><label><input type="checkbox" name="A1.choice1" value="기획서·구상 메모"> 기획서·구상 메모</label></li>
+      <li><label><input type="checkbox" name="A1.choice1" value="기타"> 기타</label><input type="text" class="etc" name="A1.choice1.etc" placeholder="직접 입력" aria-label="A1 기타 직접 입력"></li>
+    </ul>
+    <div class="ans-label">파일 이름이나 간단한 설명</div>
+    <textarea class="ans sm" name="A1.text1" rows="2" aria-label="A1 파일 이름이나 설명" data-label="파일 이름이나 설명"></textarea>
+  </div>
+  <div class="q item" data-id="O1" data-group="다룰 자료와 보내 주실 자료">
+    <div class="qh"><span class="qid">O1</span><span class="qt">그 밖에 워크숍 전에 알려 주실 것이 있나요?</span></div>
+    <textarea class="ans sm" name="O1.text1" rows="2" aria-label="O1 답변"></textarea>
+  </div>
+</section>
+
+<section id="send" data-toc="보내기">
+  <div class="sec-no"></div>
+  <h2>보내기</h2>
+  <p id="sendTo">아래 버튼으로 답변 파일을 저장하신 뒤, 보내 주실 자료 파일과 함께 메일에 첨부해 보내 주세요.</p>
+  <p class="muted">"메일 쓰기"를 누르면 메일 창만 열리고 파일은 첨부되지 않으니, 저장한 파일을 직접 첨부해 주세요. 파일 이름에는 저장한 날짜와 시각이 붙습니다. 나중에 고치셨다면 새로 저장한 파일을 다시 보내 주시면 됩니다.</p>
+  <div class="warn" id="sendWarn" hidden><b>입력지 종류를 고르지 않으셨습니다.</b>지금 저장하면 공통 질문의 답만 담깁니다. <a href="#kind">위로 올라가 종류를 골라 주세요.</a></div>
+  <div class="send">
+    <button type="button" class="btn primary big" id="btnExport2">답변 파일 저장</button>
+    <a class="btn" id="mailLink" hidden>메일 쓰기</a>
+  </div>
+</section>
+
+<footer id="footer">AI-PDS 워크숍 · 사전 입력지</footer>
+</div>
+
+<script>
+(function () {
+  'use strict';
+  var CFG = window.FORM_CONFIG || {};
+  function cfg(k) { return typeof CFG[k] === 'string' ? CFG[k].trim() : ''; }
+  var TYPES = {
+    improve: { name: '업무 개선', topic: '이번에 함께 보는 일',
+      lead: '지금 업무에서 시간이 많이 드는 일을 여쭙습니다. 무엇부터 다룰지는 워크숍에서 함께 정합니다.' },
+    build: { name: '만들고 싶은 것', topic: '이번에 함께 보는 구상',
+      lead: '만들고 싶으신 것을 워크숍에서 다루려고 합니다. 아이디어보다 쓰실 분과 그분들이 지금 겪는 문제를 먼저 여쭙습니다.' },
+    problem: { name: '풀고 싶은 문제', topic: '이번에 함께 보는 문제',
+      lead: '풀고 싶으신 문제 하나를 워크숍에서 깊게 다루려고 합니다. 최근에 실제로 겪으신 일 하나를 따라가며 여쭙습니다.' }
+  };
+  var TOPIC = cfg('topic');
+  var FIXED = Object.prototype.hasOwnProperty.call(TYPES, cfg('type')) ? cfg('type') : '';
+  // v4: 무기명(이름 칸 없음, 응답 ID로 중복 구분), 역할 선택지 정리. v1~v3 파일도 불러올 수 있고, 이 화면에 없는 질문이나 선택지의 답은 보이지 않습니다.
+  var SCHEMA = 'ai-pds-pre-interview-form/v4';
+  var COMPAT = ['ai-pds-pre-interview-form/v1', 'ai-pds-pre-interview-form/v2', 'ai-pds-pre-interview-form/v3', SCHEMA];
+  var STORE = 'ai-pds-pre-interview-form|' + cfg('customer') + '|' + cfg('team') + '|' + FIXED;
+  // A random ID per browser, not per person: it lets the collector keep only the latest file from
+  // the same respondent without asking for a name. "입력 지우기" issues a new one.
+  var RID_STORE = STORE + '|rid';
+  var respondentId = '';
+  var NO_STORAGE = '이 환경에서는 자동 저장이 되지 않습니다. 끝나기 전에 답변 파일로 저장해 주세요.';
+  var statusEl = document.getElementById('saveStatus');
+  var storageOk = true;
+  var timer = null;
+
+  function each(list, fn) { Array.prototype.forEach.call(list, fn); }
+  function $(id) { return document.getElementById(id); }
+  function pad(n) { return String(n).padStart(2, '0'); }
+
+  function currentType() {
+    if (FIXED) { return FIXED; }
+    var r = document.querySelector('input[name="T0.type"]:checked');
+    return r && TYPES[r.value] ? r.value : '';
+  }
+  function allowed(el, type) {
+    var f = el.getAttribute('data-for');
+    return !f || (type !== '' && f.split(/\s+/).indexOf(type) !== -1);
+  }
+
+  // ---- header and send text from FORM_CONFIG (textContent only) ----
+  function renderConfig() {
+    var parts = [cfg('customer'), cfg('team')].filter(Boolean);
+    if (parts.length) {
+      document.querySelector('h1').textContent = parts.join(' ') + ' 사전 입력지';
+    }
+    var meta = [];
+    if (cfg('due')) { meta.push('회신 기한 ' + cfg('due')); }
+    if (cfg('workshop')) {
+      meta.push('워크숍 ' + cfg('workshop'));
+      $('workshopLine').textContent = '보내 주신 답은 질문별로 모아 팀이 함께 확인한 뒤 ' + cfg('workshop') +
+        ' AI-PDS 워크숍의 입력으로 씁니다. 적기 어려우셨던 부분은 워크숍에서 함께 채웁니다.';
+    }
+    if (meta.length) { $('metaLine').textContent = meta.join(' · '); $('metaLine').hidden = false; }
+
+    var who = (cfg('contact') + (cfg('email') ? ' (' + cfg('email') + ')' : '')).trim();
+    if (who) {
+      $('altLine').textContent = '글로 적기보다 말로 설명하시는 편이 편하시면 ' + who + '에게 알려 주세요. 약 1시간의 사전 인터뷰로 진행하겠습니다.';
+      var due = cfg('due') ? cfg('due') + '까지 ' : '';
+      $('sendLine').textContent = '다 쓰신 뒤 위쪽의 "답변 파일 저장"을 누르고, 저장된 파일(.json)을 메일에 첨부해 ' + due + who + '에게 보내 주세요.';
+      $('sendTo').textContent = '아래 버튼으로 답변 파일을 저장하신 뒤, 보내 주실 자료 파일과 함께 메일에 첨부해 ' + due + who + '에게 보내 주세요.';
+    }
+    var email = cfg('email');
+    if (/^[^\s@<>"]+@[^\s@<>"]+\.[^\s@<>"]+$/.test(email)) {
+      var subj = 'AI-PDS 사전 입력지' + (parts.length ? ' · ' + parts.join(' ') : '');
+      var a = $('mailLink');
+      a.href = 'mailto:' + encodeURIComponent(email).replace(/%40/g, '@') + '?subject=' + encodeURIComponent(subj);
+      a.hidden = false;
+    }
+  }
+
+  // ---- type: show matching sections, renumber, rebuild the table of contents ----
+  function applyType() {
+    var type = currentType();
+    var t = TYPES[type];
+    each(document.querySelectorAll('section[data-for]'), function (s) { s.hidden = !allowed(s, type); });
+    var kind = $('kind');
+    if (kind) { kind.hidden = !!FIXED; }
+    // Without a type only the shared questions show, so the warning stays up until one is picked.
+    var missing = !FIXED && !type;
+    each(['typeWarn', 'barWarn', 'sendWarn'], function (id) { var el = $(id); if (el) { el.hidden = !missing; } });
+    var lead = $('typeLead');
+    lead.hidden = !t;
+    lead.textContent = t ? t.lead : '';
+    $('topicLabel').textContent = t ? t.topic : '이번에 함께 보는 주제';
+    var label = 'AI-PDS 워크숍 · 사전 준비' + (t ? ' · ' + t.name : '');
+    $('eyebrow').textContent = label;
+    $('barTitle').textContent = 'AI-PDS 워크숍 · 사전 입력지' + (t ? ' · ' + t.name : '');
+    $('footer').textContent = 'AI-PDS 워크숍 · 사전 입력지' + (t ? ' · ' + t.name : '');
+    var base = [cfg('customer'), cfg('team')].filter(Boolean).join(' ');
+    document.title = (base ? base + ' · ' : '') + 'AI-PDS 사전 입력지' + (t ? ' · ' + t.name : '');
+
+    var toc = $('toc');
+    while (toc.firstChild) { toc.removeChild(toc.firstChild); }
+    var n = 0;
+    each(document.querySelectorAll('.wrap > section'), function (s) {
+      if (s.hidden) { return; }
+      n += 1;
+      var no = s.querySelector('.sec-no');
+      if (no) { no.textContent = pad(n); }
+      var li = document.createElement('li');
+      var a = document.createElement('a');
+      a.href = '#' + s.id;
+      a.textContent = n + '. ' + (s.getAttribute('data-toc') || '');
+      li.appendChild(a);
+      toc.appendChild(li);
+    });
+    // Badges count the questions on screen 1, 2, 3 ...; data-id keeps the stable ID used in the JSON.
+    var q = 0;
+    each(document.querySelectorAll('.wrap .item'), function (it) {
+      if (it.closest('[hidden]')) { return; }
+      q += 1;
+      var badge = it.querySelector('.qid');
+      if (badge) { badge.textContent = String(q); }
+    });
+  }
+
+  // ---- the 업무 개선 task block from its template (only in files that include that part) ----
+  function fill(tpl, map) {
+    return tpl.replace(/\{(\w+)\}/g, function (m, k) { return Object.prototype.hasOwnProperty.call(map, k) ? map[k] : m; });
+  }
+  function buildRepeats() {
+    var tTask = $('tplTask');
+    if (tTask && $('taskList')) {
+      $('taskList').innerHTML = fill(tTask.innerHTML, { n: '1', title: TOPIC ? '이번에 함께 보는 일' : '가장 시간이 많이 드는 일', opt: '' });
+      $('taskList').querySelector('details.task').open = true;
+    }
+  }
+  // ---- a topic set by AWS: everyone answers about the same thing (textContent only) ----
+  function applyTopic() {
+    // Company facts written once by whoever sends the form: background for every respondent.
+    var shown = false;
+    each([['business', 'businessLine', 'businessText'], ['customers', 'customersLine', 'customersText']], function (c) {
+      if (!cfg(c[0])) { return; }
+      $(c[2]).textContent = cfg(c[0]);
+      $(c[1]).hidden = false;
+      shown = true;
+    });
+    $('contextBox').hidden = !shown;
+    if (!TOPIC) { return; }
+    $('topicText').textContent = TOPIC;
+    $('topicBox').hidden = false;
+    each(document.querySelectorAll('.wrap [data-topic]'), function (el) { el.textContent = el.getAttribute('data-topic'); });
+  }
+
+  function fieldEls() { return Array.prototype.slice.call(document.querySelectorAll('.wrap [name]')); }
+  function setStatus(msg) { if (statusEl) { statusEl.textContent = msg; } }
+  function hhmm(d) { return pad(d.getHours()) + ':' + pad(d.getMinutes()); }
+  function stamp(d) { return d.getFullYear() + pad(d.getMonth() + 1) + pad(d.getDate()) + '-' + pad(d.getHours()) + pad(d.getMinutes()); }
+  function grow(el) {
+    if (!el.offsetParent) { return; }  // hidden or inside a closed block; grown when shown
+    el.style.height = 'auto'; el.style.height = (el.scrollHeight + 2) + 'px';
+  }
+  function growIn(root) { each(root.querySelectorAll('textarea'), grow); }
+  function isChoice(el) { return el.type === 'checkbox' || el.type === 'radio'; }
+  function textOf(el) { return el ? el.textContent.replace(/\s+/g, ' ').trim() : ''; }
+
+  function collectState() {
+    var state = {};
+    fieldEls().forEach(function (el) {
+      if (isChoice(el)) {
+        if (el.checked) { (state[el.name] = state[el.name] || []).push(el.value); }
+      } else if (el.value.trim() !== '') {
+        state[el.name] = el.value;
+      }
+    });
+    return state;
+  }
+
+  function applyState(state) {
+    fieldEls().forEach(function (el) {
+      var v = Object.prototype.hasOwnProperty.call(state, el.name) ? state[el.name] : undefined;
+      if (isChoice(el)) {
+        el.checked = Array.isArray(v) && v.indexOf(el.value) !== -1;
+      } else {
+        el.value = typeof v === 'string' ? v : '';
+      }
+    });
+    each(document.querySelectorAll('details.task'), function (d, i) {
+      if (i === 0) { return; }
+      d.open = hasAnswer(d);
+    });
+    applyType();
+    growIn(document);
+  }
+
+  function hasAnswer(root) {
+    var any = false;
+    each(root.querySelectorAll('[name]'), function (el) {
+      if (isChoice(el) ? el.checked : el.value.trim() !== '') { any = true; }
+    });
+    return any;
+  }
+
+  // Keep only string / string[] values so an edited or foreign file cannot inject other types.
+  function cleanState(raw) {
+    var out = {};
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) { return null; }
+    Object.keys(raw).forEach(function (k) {
+      var v = raw[k];
+      if (typeof v === 'string') { out[k] = v; }
+      else if (Array.isArray(v)) { out[k] = v.filter(function (x) { return typeof x === 'string'; }); }
+    });
+    return out;
+  }
+
+  function save() {
+    if (!storageOk) { return; }
+    try {
+      localStorage.setItem(STORE, JSON.stringify(collectState()));
+      setStatus('자동 저장됨 ' + hhmm(new Date()));
+    } catch (e) {
+      storageOk = false;
+      setStatus(NO_STORAGE);
+    }
+  }
+  function scheduleSave() { clearTimeout(timer); timer = setTimeout(save, 400); }
+
+  function load() {
+    try {
+      var raw = localStorage.getItem(STORE);
+      if (raw) {
+        var st = cleanState(JSON.parse(raw));
+        if (st && Object.keys(st).length) { applyState(st); setStatus('이전에 입력한 내용을 불러왔습니다'); }
+      }
+    } catch (e) {
+      storageOk = false;
+      setStatus(NO_STORAGE);
+    }
+  }
+
+  function newId() {
+    if (window.crypto && window.crypto.randomUUID) { return window.crypto.randomUUID(); }
+    return 'r-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 10);
+  }
+  function loadRespondentId(reset) {
+    var id = '';
+    try { id = reset ? '' : (localStorage.getItem(RID_STORE) || ''); } catch (e) { /* storage unavailable */ }
+    if (!id) {
+      id = newId();
+      try { localStorage.setItem(RID_STORE, id); } catch (e) { /* storage unavailable */ }
+    }
+    respondentId = id;
+  }
+
+  function roleValue() {
+    var r = document.querySelector('input[name="P1.role"]:checked');
+    return r ? r.value : '';
+  }
+
+  // ---- export ----
+  function buildItem(q) {
+    var fields = [];
+    var any = false;
+    each(q.querySelectorAll('ul.opts, textarea'), function (el) {
+      if (el.tagName === 'TEXTAREA') {
+        var val = el.value.trim();
+        if (val) { any = true; }
+        fields.push({ type: 'text', name: el.name, label: el.getAttribute('data-label') || null, answer: val });
+        return;
+      }
+      var inputs = el.querySelectorAll('input[type=checkbox], input[type=radio]');
+      var opts = [];
+      var sel = [];
+      each(inputs, function (i) { opts.push(i.value); if (i.checked) { sel.push(i.value); } });
+      var etc = el.querySelector('input.etc');
+      var etcVal = etc ? etc.value.trim() : '';
+      if (sel.length || etcVal) { any = true; }
+      var f = { type: 'choice', name: inputs.length ? inputs[0].name : '', label: el.getAttribute('data-label') || null,
+                multiple: el.getAttribute('data-type') !== 'radio', options: opts, selected: sel };
+      if (etc) { f.other = etcVal; }
+      fields.push(f);
+    });
+    var item = {
+      id: q.getAttribute('data-id'),
+      group: q.getAttribute('data-group'),
+      question: textOf(q.querySelector('.qt')),
+      answered: any,
+      shown: !q.closest('[hidden]'),
+      fields: fields
+    };
+    var ft = q.closest('[data-for]');
+    if (ft) { item.for_type = ft.getAttribute('data-for'); }
+    return item;
+  }
+
+  function buildExport() {
+    var items = [];
+    var groups = {};
+    each(document.querySelectorAll('.wrap .item'), function (q) {
+      var it = buildItem(q);
+      if (it.answered) { groups[it.group] = true; }
+      items.push(it);
+    });
+    var type = currentType();
+    var etc = document.querySelector('input[name="P1.role.etc"]');
+    return {
+      schema: SCHEMA,
+      document: 'AI-PDS 워크숍 사전 입력지',
+      form: { type: type, type_name: type ? TYPES[type].name : '', type_fixed: !!FIXED,
+              customer: cfg('customer'), team: cfg('team'), due: cfg('due'), workshop: cfg('workshop'), topic: TOPIC,
+              business: cfg('business'), customers: cfg('customers') },
+      saved_at: new Date().toISOString(),
+      source_note: '고객이 직접 작성한 서면 답변입니다. 사전 인터뷰를 대신하며, 인터뷰 녹취가 아닙니다.',
+      respondent: {
+        id: respondentId,
+        role: roleValue(),
+        role_other: etc ? etc.value.trim() : ''
+      },
+      sections_answered: Object.keys(groups),
+      items: items,
+      state: collectState()
+    };
+  }
+
+  function download(name, text, type) {
+    var url = URL.createObjectURL(new Blob([text], { type: type }));
+    var a = document.createElement('a');
+    a.href = url;
+    a.download = name;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(function () { URL.revokeObjectURL(url); }, 2000);
+  }
+  function safe(s) { return s.replace(/[\\\/:*?"<>|\s]+/g, '_').replace(/^_+|_+$/g, ''); }
+
+  function exportJson() {
+    var data = buildExport();
+    if (!data.sections_answered.length && !window.confirm('아직 입력한 내용이 없습니다. 빈 파일로 저장할까요?')) { return; }
+    if (!data.form.type && !window.confirm('입력지 종류를 고르지 않으셨습니다.\n종류를 고르지 않으면 핵심 질문이 나오지 않아 공통 질문의 답만 저장됩니다.\n그래도 저장할까요?')) { return; }
+    var label = safe(cfg('team') || cfg('customer'));
+    var kind = data.form.type ? safe(data.form.type_name) + '_' : '';
+    download('AI-PDS_사전입력_' + kind + (label ? label + '_' : '') + stamp(new Date()) + '.json',
+      JSON.stringify(data, null, 2), 'application/json;charset=utf-8');
+    setStatus('답변 파일을 저장했습니다');
+  }
+
+  function importJson(file) {
+    if (!file) { return; }
+    if (file.size > 2 * 1024 * 1024) { window.alert('파일이 너무 큽니다. 이 문서에서 저장한 답변 파일인지 확인해 주세요.'); return; }
+    var reader = new FileReader();
+    reader.onload = function () {
+      var data;
+      try { data = JSON.parse(String(reader.result)); } catch (e) { data = null; }
+      var st = data && COMPAT.indexOf(data.schema) !== -1 ? cleanState(data.state) : null;
+      if (!st) { window.alert('이 문서에서 저장한 답변 파일이 아닙니다.'); return; }
+      var ft = data.form && typeof data.form.type === 'string' ? data.form.type : '';
+      if (FIXED && ft && ft !== FIXED &&
+          !window.confirm('다른 종류(' + (TYPES[ft] ? TYPES[ft].name : ft) + ') 입력지에서 저장한 파일입니다. 이 화면에 없는 질문의 답은 보이지 않습니다. 계속할까요?')) { return; }
+      if (!FIXED && ft && TYPES[ft] && !st['T0.type']) { st['T0.type'] = [ft]; }
+      if (Object.keys(collectState()).length && !window.confirm('지금 화면에 입력된 내용을 불러온 파일 내용으로 바꿀까요?')) { return; }
+      applyState(st);
+      save();
+      setStatus('불러왔습니다: ' + file.name);
+    };
+    reader.onerror = function () { window.alert('파일을 읽지 못했습니다.'); };
+    reader.readAsText(file, 'utf-8');
+  }
+
+  function clearAll() {
+    if (!window.confirm('입력한 내용을 모두 지울까요? 저장하지 않은 내용은 되돌릴 수 없습니다.')) { return; }
+    applyState({});
+    try { localStorage.removeItem(STORE); } catch (e) { /* storage unavailable */ }
+    loadRespondentId(true);
+    setStatus('입력을 지웠습니다');
+  }
+
+  function on(id, fn) { var el = $(id); if (el) { el.addEventListener('click', fn); } }
+
+  renderConfig();
+  buildRepeats();
+  applyTopic();
+
+  on('btnExport', exportJson);
+  on('btnExport2', exportJson);
+  on('btnClear', clearAll);
+  on('btnPrint', function () { window.print(); });
+  var fileInput = $('importFile');
+  on('btnImport', function () { if (fileInput) { fileInput.click(); } });
+  if (fileInput) {
+    fileInput.addEventListener('change', function () { importJson(fileInput.files[0]); fileInput.value = ''; });
+  }
+
+  function onEdit(e) {
+    var t = e.target;
+    if (!t || !t.closest || !t.closest('.wrap') || !t.name) { return; }
+    if (t.tagName === 'TEXTAREA') { grow(t); }
+    // Typing in the "기타" box selects its "기타" option.
+    if (t.classList.contains('etc') && t.value.trim() !== '') {
+      var box = t.parentNode.querySelector('input[type=checkbox], input[type=radio]');
+      if (box) { box.checked = true; }
+    }
+    if (t.name === 'T0.type') { applyType(); growIn(document); }
+    scheduleSave();
+  }
+  document.addEventListener('input', onEdit);
+  document.addEventListener('change', onEdit);
+  each(document.querySelectorAll('details.task'), function (d) {
+    d.addEventListener('toggle', function () { if (d.open) { growIn(d); } });
+  });
+  window.addEventListener('pagehide', function () { clearTimeout(timer); save(); });
+  window.addEventListener('beforeprint', function () {
+    each(document.querySelectorAll('details.task'), function (d) { if (hasAnswer(d)) { d.open = true; } });
+  });
+
+  applyType();
+  loadRespondentId(false);
+  load();
+  growIn(document);
+})();
+</script>
+</body>
+</html>
