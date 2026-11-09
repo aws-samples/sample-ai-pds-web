@@ -131,6 +131,16 @@ def auto_compact_window() -> str | None:
     return str(value)
 
 
+#: The SDK's `max_buffer_size`: the largest single stream-json message it reads from the CLI. Its default is
+#: 1 MiB, and one `Read` of an attached screenshot does not fit — observed (2026-11-09, deployed instance): the CLI echoes the
+#: tool result back as one message carrying the image as base64, three PNGs of 2646–3458 px wide came to 0.66–1.0
+#: MB each in the transcript, and the reader died with "JSON message exceeded maximum buffer size of 1048576
+#: bytes", failing the turn. The CLI scales an image down to 2000 px before returning it, so a few MB covers one;
+#: 64 MiB leaves room for a turn that reads several at once. It is a ceiling on one message, not memory held per
+#: turn.
+SDK_MAX_BUFFER_BYTES = 64 * 1024 * 1024
+
+
 #: The bundled CLI's background execution switch. When on, subagents (`Agent`), Bash's
 #: `run_in_background`, and automatic background switching are all turned off, and work finishes within the turn that requested it.
 DISABLE_BACKGROUND_TASKS_ENV = "CLAUDE_CODE_DISABLE_BACKGROUND_TASKS"

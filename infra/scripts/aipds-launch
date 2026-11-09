@@ -247,8 +247,14 @@ def build_run(kind: str, project_id: str, slug: str | None, args: list[str],
         "InaccessiblePaths=-/etc/nginx",
         "InaccessiblePaths=-/etc/systemd/system",
         "InaccessiblePaths=-/etc/sudoers.d",
-        f"BindPaths={work}",
-        f"BindPaths={home}",
+        # `-`: a missing source is skipped rather than failing the namespace setup. Not for the start -- both
+        # are checked above (`_real_dir`) -- but for ExecStopPost, which sets up the same namespace when the unit
+        # stops. A project delete removes the workspace while the agent's unit is still stopping (the backend's
+        # disconnect does not wait for ExecStopPost), and without the prefix the chmod below then died with
+        # "Failed to set up mount namespacing: …/workspaces/<pid>: No such file or directory", leaving the
+        # agent home 0700 and the project impossible to delete (measured 2026-11-09).
+        f"BindPaths=-{work}",
+        f"BindPaths=-{home}",
     ]
     if exe_kind == "claude":
         # The only file in the app tree this kind executes. It is a single executable (ripgrep is built in too —

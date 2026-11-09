@@ -1467,6 +1467,82 @@ async def test_a_failed_connect_does_not_poison_the_client_cache(tmp_path):
     assert made[1].connected
 
 
+@pytest.mark.asyncio
+async def test_a_turn_that_fails_mid_flight_does_not_leave_a_dead_client(tmp_path):
+    # Observed (2026-11-09, deployed instance): a Read of three attached PNGs came back as a
+    # message over the SDK's 1 MiB buffer, the SDK's read loop died, and the cached client then
+    # ended the next turn in 170 ms with nothing said — every turn after it, until a restart.
+    # The SDK's read loop does not restart, so the client has to go.
+    from tests.fakes.fake_sdk_asking import SessionIdCheckingSdkClient
+
+    class _DiesMidTurn(SessionIdCheckingSdkClient):
+        async def receive_response(self):
+            raise RuntimeError("JSON message exceeded maximum buffer size of 1048576 bytes")
+            yield  # pragma: no cover
+
+    d, made, cfg, ws = _checking_driver(tmp_path)
+
+    def factory(session):
+        cls = _DiesMidTurn if not made else SessionIdCheckingSdkClient
+        c = cls(session, str(cfg), str(ws))
+        made.append(c)
+        return c
+
+    d._client_factory = factory  # type: ignore[assignment]
+    session = {"session_id": "acme"}
+    assert [e.kind async for e in d.run("이미지 3장", session)] == ["error"]
+    assert d._client is None
+    assert made[0].disconnect_calls == 1
+
+    # The next turn connects again — and resumes, since the first connect left a transcript;
+    # `--session-id` on it is what the CLI refuses with "already in use".
+    assert [e.kind async for e in d.run("다시", session)] == ["done"]
+    assert len(made) == 2 and made[1]._session["resume"] is True
+
+
+@pytest.mark.asyncio
+async def test_the_transcript_is_probed_only_when_a_client_is_built(tmp_path, monkeypatch):
+    # Mid-session the sandboxed CLI holds its directory at 0700, so the probe was refused on
+    # every turn after the first — and its answer is not used while the client is reused.
+    import aipds.agent.claude_driver as cd
+
+    calls: list[str] = []
+    real = cd._transcript_exists
+
+    def counting(*args):
+        calls.append(args[2])
+        return real(*args)
+
+    monkeypatch.setattr(cd, "_transcript_exists", counting)
+    d, made, _, _ = _checking_driver(tmp_path)
+    session = {"session_id": "acme"}
+    for text in ("하나", "둘", "셋"):
+        assert [e.kind async for e in d.run(text, session)] == ["done"]
+    assert len(made) == 1
+    # Restore and resume each look once, for the one client built.
+    assert len(calls) == 2, calls
+
+
+@pytest.mark.skipif(__import__("os").geteuid() == 0, reason="root reads through 0700")
+def test_a_transcript_the_backend_cannot_stat_counts_as_present(tmp_path):
+    # Under the execution wrapper the CLI (another uid) creates projects/<cwd>/ as 0700, and the
+    # backend's stat is refused — only because that directory exists for this cwd. "Absent"
+    # would pick --session-id on an existing transcript ("already in use").
+    from aipds.agent.claude_driver import _transcript_exists, _transcript_path
+
+    cfg, ws = tmp_path / "cfg", tmp_path / "ws"
+    ws.mkdir()
+    sid = "bde34f1e-bdb0-5f78-8ca2-07822c3609a0"
+    p = _transcript_path(str(cfg), str(ws), sid)
+    p.parent.mkdir(parents=True)
+    p.write_text("{}\n", encoding="utf-8")
+    p.parent.chmod(0o000)
+    try:
+        assert _transcript_exists(str(cfg), str(ws), sid) is True
+    finally:
+        p.parent.chmod(0o700)
+
+
 # ---- I2: whether pending() actually makes "answering after a refresh" possible ----
 
 

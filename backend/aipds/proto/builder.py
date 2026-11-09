@@ -27,9 +27,9 @@ from aipds.agent_activity import (AGENT_ACTIVITY, TERMINAL_TASK_STATUSES,
                                   activity_payload)
 from aipds.agent.questions_payload import (normalize_sdk_questions,
                                                  question_file_from_sdk)
-from aipds.agent.claude_driver import _transcript_path
+from aipds.agent.claude_driver import _transcript_exists
 from aipds.agent_home import copy_config
-from aipds.cli_settings import cli_context_env
+from aipds.cli_settings import SDK_MAX_BUFFER_BYTES, cli_context_env
 from aipds.context_usage import ContextMeter, wants_sample
 from aipds.models import AgentEvent
 from aipds.proto import prompts
@@ -187,6 +187,8 @@ def _default_client_factory(builder: "PrototypeBuilder") -> Callable[[], Any]:
             env.update(launch_env)
         options = ClaudeAgentOptions(
             cli_path=cli_path,
+            # Same as the Discovery driver -- a screenshot the build agent reads arrives as one message.
+            max_buffer_size=SDK_MAX_BUFFER_BYTES,
             permission_mode=builder._permission_mode,
             cwd=builder._workspace,
             env=env,
@@ -560,6 +562,12 @@ class PrototypeBuilder:
 
     async def _ensure_client(self):
         if self._client is None:
+            # A transcript on disk overrules a fresh start: `--session-id` on it exits "already in
+            # use". It is there once this builder has connected and a turn failed (`run` drops the
+            # client), which session.py's record, read at construction, cannot know.
+            if not self._resume and _transcript_exists(self._config_dir, self._workspace,
+                                                       self._session_id):
+                self._resume = True
             await self._restore_transcript()
             _suppress_shadowed_callback_warning()
             self._client = self._factory()
@@ -576,8 +584,9 @@ class PrototypeBuilder:
         """
         if not self._resume or self._session_store is None:
             return
-        if _transcript_path(self._config_dir, self._workspace,
-                            self._session_id).is_file():
+        # The shared probe, not a bare is_file(): under the execution wrapper the CLI's 0700
+        # directory refuses the stat, and that raised out of the turn (claude_driver._transcript_exists).
+        if _transcript_exists(self._config_dir, self._workspace, self._session_id):
             return
         try:
             await restore_transcript(self._session_store, self._config_dir,
@@ -912,6 +921,7 @@ class PrototypeBuilder:
         # The turn's ONE terminal event, held rather than yielded the moment
         # `_translate` produces it -- see the terminal harvest after the loop.
         terminal: AgentEvent | None = None
+        failed = False
         try:
             client = await self._ensure_client()
             await client.query(text)
@@ -1012,6 +1022,7 @@ class PrototypeBuilder:
             return
         except Exception:
             _log.exception("sdk turn failed")
+            failed = True
             # CALL SITE 3 -- the error path. Order matters here specifically:
             # sse.ts:29 closes the EventSource on `error` as well as on `done`,
             # so a queue relayed after the terminal event is silently dropped
@@ -1033,6 +1044,13 @@ class PrototypeBuilder:
                 # The ResultMessage already scheduled a write; this covers the turns
                 # that never reached one (interrupt, error, abandoned consumer).
                 self._usage.flush_soon()
+            if failed:
+                # The SDK's read loop does not restart after its first error, so the cached client
+                # would end every later build turn at once (claude_driver._drop_failed_client). The
+                # same covers a failed connect, which `_ensure_client` has already cached. The next
+                # turn connects again; proto/session.py decides resume from its own S3 record.
+                _log.warning("dropping the build client after a failed turn — the next turn reconnects")
+                await self.disconnect()
         # CALL SITE 4 -- the terminal exit, reached only on a NORMAL loop exit
         # (both `except` arms return, so this is the success path only).
         #
