@@ -9,7 +9,7 @@ import { en } from "@/lib/i18n/en";
 import { ko } from "@/lib/i18n/ko";
 import type { PackageView, Readiness, SupplementView } from "@/lib/api/handoff";
 import { GenerationProgress } from "./GenerationProgress";
-import { PackagePanel } from "./PackagePanel";
+import { PackagePanel, startRequest } from "./PackagePanel";
 import { ReadinessPanel } from "./ReadinessPanel";
 import { ResetDialog, savedAnswers } from "./ResetDialog";
 import { SupplementForm, toUpdate } from "./SupplementForm";
@@ -387,7 +387,9 @@ const READY: PackageView = {
   },
   files: { "vision.md": "# 샘플몰 — Vision\n", "README.md": "# 개발 인계 패키지\n",
            "decisions.md": "# 결정 장부\n",
-           "start-prompt.md": "# AI-DLC 시작 프롬프트\n\n```text\n/aidlc ./vision.md를 읽고 만들어 주세요.\n```\n\n```text\n/aidlc 다른 변형\n```\n" },
+           "start-prompt.md": "# AI-DLC 시작 프롬프트\n\n## AI-DLC v2\n\n```text\n/aidlc ./vision.md를 읽고 만들어 주세요.\n```\n\n"
+             + "```text\n/aidlc 다른 변형\n```\n\n## AI-DLC v1\n\n```text\nUsing AI-DLC, ./vision.md를 읽고 만들어 주세요.\n```\n\n"
+             + "```text\nUsing AI-DLC, 다른 변형\n```\n" },
   stale: [`${D}use-case-intake/use-cases.md`],
   supplement_changed: true,
   resumable: false,
@@ -448,6 +450,26 @@ describe("PackagePanel", () => {
     await userEvent.click(screen.getByRole("button", { name: "복사" }));
     expect(writeText).toHaveBeenCalledWith("/aidlc ./vision.md를 읽고 만들어 주세요.");
     expect(screen.getByRole("button", { name: "복사됨" })).toBeInTheDocument();
+  });
+
+  it("switches to the AI-DLC v1 request and copies that one", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
+    render(<PackagePanel pkg={READY} generating={false} {...handlers()} />);
+    expect(screen.getByRole("button", { name: "AI-DLC v2" })).toHaveAttribute("aria-pressed", "true");
+    await userEvent.click(screen.getByRole("button", { name: "AI-DLC v1" }));
+    expect(screen.getByText("Using AI-DLC, ./vision.md를 읽고 만들어 주세요.")).toBeInTheDocument();
+    expect(screen.getByText(/v1은 \/aidlc 명령 없이/)).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "복사" }));
+    expect(writeText).toHaveBeenCalledWith("Using AI-DLC, ./vision.md를 읽고 만들어 주세요.");
+  });
+
+  it("finds each version's request by its heading, and reads a file without sections as v2", () => {
+    const prompt = READY.files["start-prompt.md"];
+    expect(startRequest(prompt, "v2")).toBe("/aidlc ./vision.md를 읽고 만들어 주세요.");
+    expect(startRequest(prompt, "v1")).toBe("Using AI-DLC, ./vision.md를 읽고 만들어 주세요.");
+    expect(startRequest("```text\n/aidlc 예전 판\n```\n", "v2")).toBe("/aidlc 예전 판");
+    expect(startRequest("```text\n/aidlc 예전 판\n```\n", "v1")).toBeNull();
   });
 
   it("says how many before-build PM decisions go out open, and where AI-DLC asks them", async () => {

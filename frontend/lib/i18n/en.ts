@@ -806,6 +806,8 @@ export const en: Record<keyof typeof ko, string> = {
   "handoff.pkg.toStatus": "← Handoff readiness",
   "handoff.pkg.startPrompt": "AI-DLC start prompt",
   "handoff.pkg.startPromptHint": "Unpacking at the project root creates a directory named like the zip; then paste this as it is",
+  "handoff.pkg.version": "AI-DLC version",
+  "handoff.pkg.v1Hint": "v1 has no /aidlc command and runs from rule files. Install them in the project as the v1 README says, then paste this",
   "handoff.pkg.copy": "Copy",
   "handoff.pkg.copied": "Copied",
   "handoff.pkg.openCarried": "{n} PM decisions needed before the build go out open",
