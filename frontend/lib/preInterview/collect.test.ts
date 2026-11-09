@@ -128,8 +128,15 @@ describe("buildPrompt", () => {
   it("names the type split when types differ", () => {
     const p = buildPrompt(collect(["problem-a", "problem-b", "build-a"].map(fx)), "ko");
     expect(p).toContain("팀원 3명");
-    expect(p).toContain("응답마다 고른 종류가 다르다(만들고 싶은 것 응답 3, 풀고 싶은 문제 응답 1·2)");
+    expect(p).toContain("응답마다 고른 종류가 다릅니다(만들고 싶은 것 응답 3, 풀고 싶은 문제 응답 1·2)");
     expect(p).toContain("한쪽으로 정하지 말고");
+  });
+
+  it("asks politely in Korean", () => {
+    const p = buildPrompt(collect(["problem-a", "build-a"].map(fx)), "ko");
+    expect(p).toContain("가정으로 표시해 주세요.");
+    // No casual endings ("~줘", "~할게", "~이다").
+    expect(p).not.toMatch(/줘[.(]|줘$|할게|게\.$|[이았]다\.|있다\.|다르다/m);
   });
 
   it("states the single type otherwise, in the project language", () => {
