@@ -146,7 +146,7 @@ def test_builder_factory_applies_the_suffix(monkeypatch, tmp_path):
 # test_claude_driver._captured_options).
 
 
-def _discovery_env(tmp_path, monkeypatch) -> dict:
+def _discovery_options(tmp_path, monkeypatch):
     from aipds.agent.claude_driver import ClaudeDriver, _default_client_factory
     from tests.fakes.in_memory_s3 import FakeS3Store
 
@@ -161,10 +161,14 @@ def _discovery_env(tmp_path, monkeypatch) -> dict:
     driver = ClaudeDriver(workspace=str(tmp_path), rules_dir=str(tmp_path),
                           config_dir=str(tmp_path / "cfg"), s3=FakeS3Store())
     _default_client_factory(driver)({"session_id": "p1", "resume": False})
-    return captured["options"].env
+    return captured["options"]
 
 
-def _builder_env(tmp_path, monkeypatch) -> dict:
+def _discovery_env(tmp_path, monkeypatch) -> dict:
+    return _discovery_options(tmp_path, monkeypatch).env
+
+
+def _builder_options(tmp_path, monkeypatch):
     from aipds.proto.builder import PrototypeBuilder, _default_client_factory
 
     captured = {}
@@ -179,7 +183,20 @@ def _builder_env(tmp_path, monkeypatch) -> dict:
         workspace=str(tmp_path), config_dir=str(tmp_path / "config"),
         session_id="11111111-2222-3333-4444-555555555555", resume=False)
     _default_client_factory(b)()
-    return captured["options"].env
+    return captured["options"]
+
+
+def _builder_env(tmp_path, monkeypatch) -> dict:
+    return _builder_options(tmp_path, monkeypatch).env
+
+
+def test_both_agents_read_messages_larger_than_the_sdk_default(tmp_path, monkeypatch):
+    # One Read of an attached screenshot comes back from the CLI as one message with the image
+    # in base64; the SDK's 1 MiB default failed the turn on 0.66-1.0 MB PNGs (2026-11-09).
+    from aipds.cli_settings import SDK_MAX_BUFFER_BYTES
+    assert SDK_MAX_BUFFER_BYTES > 8 * 1024 * 1024
+    assert _discovery_options(tmp_path / "d", monkeypatch).max_buffer_size == SDK_MAX_BUFFER_BYTES
+    assert _builder_options(tmp_path / "b", monkeypatch).max_buffer_size == SDK_MAX_BUFFER_BYTES
 
 
 def test_both_agents_get_the_same_compact_window(tmp_path, monkeypatch):

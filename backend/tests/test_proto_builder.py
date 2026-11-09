@@ -64,6 +64,35 @@ async def test_client_error_yields_sanitized_error(tmp_path):
     assert "xyz" not in (events[-1].text or "")
 
 
+async def test_a_failed_turn_drops_the_client_and_the_next_one_resumes(tmp_path):
+    # The SDK's read loop does not restart after its first error, so a cached client would end
+    # every later build turn at once. The session started fresh (resume=False), but its first
+    # connect left a transcript: reconnecting with --session-id would exit "already in use".
+    from aipds.agent.claude_driver import _transcript_path
+
+    class Boom(FakeSdkClient):
+        async def receive_response(self):
+            raise RuntimeError("JSON message exceeded maximum buffer size")
+            yield  # pragma: no cover
+
+    made: list[FakeSdkClient] = []
+
+    def factory():
+        made.append(Boom() if not made else FakeSdkClient(script=[ResultMessage()]))
+        return made[-1]
+
+    b = _builder(tmp_path, None)
+    b._factory = factory
+    assert (await collect(b, "one"))[-1].kind == "error"
+    assert b._client is None and made[0].disconnect_calls == 1
+
+    p = _transcript_path(b._config_dir, b._workspace, b._session_id)
+    p.parent.mkdir(parents=True)
+    p.write_text("{}\n", encoding="utf-8")
+    assert (await collect(b, "two"))[-1].kind == "done"
+    assert len(made) == 2 and b._resume is True
+
+
 async def test_second_turn_reuses_connected_client(tmp_path):
     client = FakeSdkClient(script=[ResultMessage()])
     b = _builder(tmp_path, client)

@@ -108,6 +108,42 @@ async def test_purges(tmp_path):
     assert agent_home.discovery("p2").base.exists()
 
 
+@pytest.mark.skipif(__import__("os").geteuid() == 0, reason="root deletes through 0700")
+async def test_a_purge_waits_for_the_unit_to_hand_the_tree_back(tmp_path, monkeypatch):
+    # The sandboxed CLI's directories are 0700 until its unit's ExecStopPost chmod, and a delete
+    # gets here before that runs (the backend's disconnect does not wait for it).
+    import asyncio
+
+    monkeypatch.setattr(agent_home, "_PURGE_POLL_S", 0.01)
+    locked = agent_home.discovery("p1").prepare().config / "projects" / "-ws"
+    locked.mkdir(parents=True)
+    (locked / "t.jsonl").write_text("{}", encoding="utf-8")
+    locked.chmod(0o000)
+
+    async def unit_stops():
+        await asyncio.sleep(0.05)
+        locked.chmod(0o770)
+
+    handback = asyncio.create_task(unit_stops())
+    await agent_home.purge_project("p1")
+    await handback
+    assert not agent_home.discovery("p1").base.exists()
+
+
+@pytest.mark.skipif(__import__("os").geteuid() == 0, reason="root deletes through 0700")
+async def test_a_purge_still_reports_a_tree_that_never_comes_back(tmp_path, monkeypatch):
+    monkeypatch.setattr(agent_home, "_PURGE_WAIT_S", 0.05)
+    monkeypatch.setattr(agent_home, "_PURGE_POLL_S", 0.01)
+    locked = agent_home.discovery("p1").prepare().config / "projects"
+    (locked / "-ws").mkdir(parents=True)
+    locked.chmod(0o000)
+    try:
+        with pytest.raises(RuntimeError, match="left residue"):
+            await agent_home.purge_project("p1")
+    finally:
+        locked.chmod(0o700)
+
+
 @pytest.mark.parametrize("bad", ["", ".", "..", "a/b"])
 def test_unsafe_segments_are_refused(bad):
     with pytest.raises(ValueError):

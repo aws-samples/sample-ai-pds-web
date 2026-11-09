@@ -68,7 +68,7 @@ def test_discovery_runs_the_bundled_cli_as_the_agent_uid_in_its_own_tree(launch)
     assert "--pipe" in argv and "--wait" in argv
     props = _props(argv)
     assert f"WorkingDirectory={work}" in props
-    assert f"BindPaths={work}" in props and f"BindPaths={home}" in props
+    assert f"BindPaths=-{work}" in props and f"BindPaths=-{home}" in props
     # The entire app tree disappears under an empty tmpfs — other projects' trees, and the
     # app source and git checkout too. The only things visible again are its own tree and
     # the CLI binary (read-only).
@@ -178,6 +178,12 @@ def test_the_agent_home_is_handed_back_to_the_group_when_the_unit_stops(launch, 
     assert stops == [f"ExecStopPost=/usr/bin/chmod -R g+rwX {home}"]
     caps = next(p for p in props if p.startswith("CapabilityBoundingSet=")).split("=", 1)[1].split()
     assert {"CAP_FOWNER", "CAP_DAC_READ_SEARCH"} <= set(caps)
+    # ExecStopPost sets up the same namespace when the unit stops. A project delete removes the
+    # workspace while the unit is still stopping, and a bind whose source is gone failed that setup,
+    # so the chmod never ran and the project could not be deleted (measured 2026-11-09). `-` skips
+    # a missing source instead.
+    binds = [p for p in props if p.startswith("BindPaths=")]
+    assert binds and all(p.startswith("BindPaths=-/") for p in binds)
 
 
 def test_proto_serves_only_the_prototype_subtree_with_allowed_npm_args(launch):
@@ -185,7 +191,7 @@ def test_proto_serves_only_the_prototype_subtree_with_allowed_npm_args(launch):
     argv, env = _run(launch, "proto", slug="todo", args=["run", "start"],
                      environ={"PORT": "4001", "NEXT_PUBLIC_BASE_PATH": "/api/proto/p1/todo"})
     assert work == launch.PROTOS / "p1" / "todo" / "prototype"
-    assert f"BindPaths={work}" in _props(argv)
+    assert f"BindPaths=-{work}" in _props(argv)
     cmd = _command(argv)
     assert "--reuid=aipds-proto" in cmd
     assert cmd[-3:] == ["/usr/bin/npm", "run", "start"]
@@ -199,7 +205,7 @@ def test_npm_kinds_see_no_app_tree_and_bind_no_binary(launch):
     props = _props(_run(launch, "proto", slug="s1", args=["run", "start"])[0])
     assert f"TemporaryFileSystem={launch.APP}" in props
     assert not [p for p in props if p.startswith("BindReadOnlyPaths=")]
-    assert f"BindPaths={work}" in props and f"BindPaths={home}" in props
+    assert f"BindPaths=-{work}" in props and f"BindPaths=-{home}" in props
 
 
 @pytest.mark.parametrize("kind,args", [

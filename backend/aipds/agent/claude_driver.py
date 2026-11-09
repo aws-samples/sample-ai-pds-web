@@ -83,7 +83,7 @@ from aipds.agent.questions_payload import (normalize_sdk_questions,
 from aipds.agent.session_store import DiscoverySessionStore
 from aipds.agent.workspace_rules import place_rules
 from aipds.agent_home import copy_config
-from aipds.cli_settings import cli_context_env, cli_debug_args
+from aipds.cli_settings import SDK_MAX_BUFFER_BYTES, cli_context_env, cli_debug_args
 from aipds.context_usage import ContextMeter, wants_sample
 from aipds.models import AgentEvent
 from aipds.pathsafe import workspace_relative as _rel
@@ -481,9 +481,23 @@ def _transcript_exists(config_dir: str, workspace: str, session_id: str) -> bool
     but the writer is the CLI subprocess we are about to start, and this
     driver is single-turn (`_acquire_turn`), so nothing else in the process is
     starting a session for this workspace concurrently.
+
+    **A permission error means the transcript is there.** Under the execution wrapper
+    (aipds/launcher.py) the CLI runs as another uid and creates `projects/<cwd>/` as 0700
+    no matter the umask, and group access comes back only when its unit stops
+    (infra/scripts/aipds-launch, ExecStopPost). So while the CLI runs -- or after a unit that
+    stopped without that chmod -- this stat is refused, and only because the CLI made that
+    directory for this cwd. Observed (2026-11-09, deployed instance): refused on every turn
+    after the first, in two projects. Reading that as "absent" picks `--session-id` for a
+    session whose transcript exists, which the CLI refuses with "already in use" -- harmless
+    while the connected client is reused, fatal the moment one has to be built again.
     """
     try:
         return _transcript_path(config_dir, workspace, session_id).is_file()
+    except PermissionError:
+        _log.warning("transcript for session %s is not readable by the backend "
+                     "(the sandboxed CLI holds it) — resuming it", session_id)
+        return True
     except OSError:  # pragma: no cover -- an unreadable config dir
         _log.exception("transcript probe failed — starting a fresh session")
         return False
@@ -537,6 +551,8 @@ def _default_client_factory(driver: "ClaudeDriver") -> Callable[[dict], Any]:
             # The completed message arrives **again, verbatim** after the deltas, so
             # `_translate` folds the duplicate -- the comment there holds that contract.
             include_partial_messages=True,
+            # One message from the CLI may carry an attached image as base64 (cli_settings).
+            max_buffer_size=SDK_MAX_BUFFER_BYTES,
             permission_mode=driver._permission_mode,
             cwd=driver._workspace,
             env=env,
@@ -1932,6 +1948,8 @@ class ClaudeDriver:
         first_sdk_event_logged = False
         first_text_logged = False
         reader_for_turn: _MessageReader | None = None
+        # A failure after connect leaves a client whose reader is dead (`_drop_failed_client`).
+        connected = failed = False
         self._last_status = None
         # Delta state lives as long as the instance (the driver keeps serving one project),
         # while a turn can be abandoned midway (SSE disconnect, proxy timeout, page
@@ -1949,10 +1967,14 @@ class ClaudeDriver:
             # inside _ensure_client) keeps the client factory's contract
             # unchanged: it still receives a session dict with `resume`
             # already settled.
+            # Only a client about to be built reads the decision, so the probe runs only then:
+            # mid-session the sandboxed CLI holds its directory at 0700 and the probe is refused
+            # every turn (`_transcript_exists`).
             await self._restore_transcript(session)
-            connect_session = self._resolve_resume(dict(session,
-                                                       resume=resume))
+            connect_session = (self._resolve_resume(dict(session, resume=resume))
+                               if self._client is None else session)
             client = await self._ensure_client(connect_session)
+            connected = True
             # A new `query()` starts a new turn, so anything the previous turn's
             # reader was still holding belongs to a turn nobody will relay --
             # this is the only place it is safe to drop it.
@@ -1982,6 +2004,7 @@ class ClaudeDriver:
                 yield ev
         except Exception:
             _log.exception("claude sdk turn failed")
+            failed = connected
             async for ev in self._relay_queue():
                 yield ev
             yield AgentEvent(kind="error", text="agent turn failed")
@@ -1989,6 +2012,8 @@ class ClaudeDriver:
         finally:
             if reader_for_turn is None or not reader_for_turn.transcript_flushed:
                 await self._flush_transcript_mirror()
+            if failed:
+                await self._drop_failed_client()
             log_performance(
                 _log,
                 self._current_session_id, "driver_turn_total", turn_started)
@@ -2023,11 +2048,13 @@ class ClaudeDriver:
             yield AgentEvent(kind="error", text="agent turn failed")
             return
         reader.transcript_flushed = False
+        failed = False
         try:
             async for ev in self._pump(reader):
                 yield ev
         except Exception:
             _log.exception("claude sdk answer turn failed")
+            failed = True
             async for ev in self._relay_queue():
                 yield ev
             yield AgentEvent(kind="error", text="agent turn failed")
@@ -2035,6 +2062,8 @@ class ClaudeDriver:
         finally:
             if not reader.transcript_flushed:
                 await self._flush_transcript_mirror()
+            if failed:
+                await self._drop_failed_client()
 
     async def _resume_with_answers(self, interrupt_id: str,
                                    answers: dict[str, str],
@@ -2299,6 +2328,23 @@ class ClaudeDriver:
                           default=lambda o: o.model_dump())
 
     # ---- lifecycle (beyond the three-method contract) ----
+
+    async def _drop_failed_client(self) -> None:
+        """Tear down the client after a turn the SDK failed mid-flight.
+
+        The SDK's read loop ends at its first error and does not restart, so the client it
+        belongs to cannot run another turn: the next `query()` goes out and `receive_response()`
+        ends at once. Kept in the cache, that client made every later turn of the project an
+        empty `done` until the backend restarted -- observed (2026-11-09, deployed instance): one turn died
+        on an oversized message, and the next one ended in 170 ms with nothing said. Dropping
+        it makes the next turn connect again and resume from the transcript, the same recovery
+        `_ensure_client` gives a failed connect.
+
+        `disconnect()` also drops what only the dead subprocess could have answered -- a parked
+        question, the reader -- which is what a failed turn leaves.
+        """
+        _log.warning("dropping the claude client after a failed turn — the next turn reconnects")
+        await self.disconnect()
 
     async def disconnect(self) -> None:
         """Tear down the claude subprocess. Idempotent.

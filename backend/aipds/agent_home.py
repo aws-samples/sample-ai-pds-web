@@ -127,12 +127,26 @@ def proto(project_id: str, slug: str) -> AgentHome:
     return AgentHome(root() / "proto" / project_id / slug)
 
 
+#: How long a purge waits for the agent's unit to hand its tree back. Under the execution wrapper the CLI's
+#: 0700 directories become group-accessible only in the unit's ExecStopPost (infra/scripts/aipds-launch), and
+#: the backend's disconnect returns before that runs -- a delete reaches here first and finds a tree it cannot
+#: enter. The chmod takes well under a second; the window is for a unit still shutting its CLI down.
+_PURGE_WAIT_S = 15.0
+_PURGE_POLL_S = 0.5
+
+
 async def _rmtree(target: Path) -> None:
     if not target.exists():
         return
-    await asyncio.to_thread(shutil.rmtree, target, ignore_errors=True)
-    if target.exists():
-        raise RuntimeError(f"agent home purge left residue: {target}")
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + _PURGE_WAIT_S
+    while True:
+        await asyncio.to_thread(shutil.rmtree, target, ignore_errors=True)
+        if not target.exists():
+            return
+        if loop.time() >= deadline:
+            raise RuntimeError(f"agent home purge left residue: {target}")
+        await asyncio.sleep(_PURGE_POLL_S)
 
 
 async def purge_prototype(project_id: str, slug: str) -> None:
