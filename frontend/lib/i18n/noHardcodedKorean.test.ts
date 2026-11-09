@@ -84,6 +84,7 @@ const ALLOWED: Array<[string, string]> = [
   ["lib/approvalMarker.ts", 'ko: "승인"'],
   ["lib/startMessage.ts", "ko:"],
   ["lib/stageRequests.ts", "ko:"],
+  ["lib/preInterview/outputText.ts", "ko:"],
   ["app/projects/[projectId]/workspace/page.tsx", "첨부 파일"],
 ];
 

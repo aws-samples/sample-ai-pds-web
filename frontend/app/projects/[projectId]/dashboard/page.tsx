@@ -8,6 +8,7 @@ import { StageTimeline } from "@/components/dashboard/StageTimeline";
 import { ArtifactsPanel } from "@/components/dashboard/ArtifactsPanel";
 import { ActivityFeed } from "@/components/dashboard/ActivityFeed";
 import { ProjectCostCard } from "@/components/dashboard/ProjectCostCard";
+import { PreInterviewCollector } from "@/components/dashboard/PreInterviewCollector";
 import { getState, listArtifacts, getAudit, listQuestionFiles, ApiError } from "@/lib/api/client";
 import { useAsync } from "@/lib/useAsync";
 import { useProjectMeta } from "@/lib/useProjectModel";
@@ -72,6 +73,8 @@ export default function DashboardPage({ params }: { params: Promise<{ projectId:
             />
             {/* Draws nothing for a non-admin. */}
             <ProjectCostCard projectId={projectId} />
+            {/* Hands out files only; the team attaches them in the workspace when Envision asks. */}
+            {!readOnly && <PreInterviewCollector language={language} />}
 
             <div className="grid lg:grid-cols-3 gap-6">
               <StageTimeline state={state.data} projectId={projectId} />
