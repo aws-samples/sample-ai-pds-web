@@ -12,6 +12,10 @@
        'build'   만들고 싶은 것: 고객에게 만들고 싶은 서비스나 도구가 이미 있을 때
        'problem' 풀고 싶은 문제: 해결하고 싶은 구체적인 문제가 하나 있을 때
        ''        비워 두면 고객이 맨 위에서 종류를 고릅니다
+  2-1) lang으로 처음 보이는 언어를 고릅니다. 'ko' 한국어, 'en' 영어, 비워 두면 한국어입니다.
+       고객은 화면 위의 언어 버튼으로 언제든 바꿀 수 있고, 고른 언어는 그 브라우저에 기억됩니다.
+       주소 뒤에 ?lang=en을 붙여 열어도 됩니다. 답변 파일의 질문·선택지 글은 저장할 때 화면의 언어로
+       적히고, 답과 질문 ID는 언어와 상관없이 같으므로 두 언어로 쓴 파일을 함께 취합할 수 있습니다.
   3) 팀마다 파일을 하나씩 만들어 그 팀에서 이 일을 함께하는 분들께 모두 보냅니다.
      고객사·팀명이 다르면 자동 저장도 따로 됩니다.
      한 과제를 여러 분께 보낼 때는 topic을 꼭 채웁니다. type을 정해 두면 모두 같은 질문에 답하고,
@@ -44,6 +48,7 @@ window.FORM_CONFIG = {
   contact:   '',   // 받는 사람. 예: '홍길동 SA'
   email:     '',   // 받는 메일 주소
   workshop:  '',   // 워크숍 일정. 예: '11월 20일(목) 13:00'
+  lang:      '',   // 'ko' | 'en' | '' (한국어). 처음 보이는 언어
   topic:     ''    // 이번에 함께 볼 문제·구상·일 한 줄. 예: '월말 정산 때 거래처 금액이 맞지 않는 문제'
 };
 </script>
@@ -185,6 +190,7 @@ window.FORM_CONFIG = {
 <div class="bar">
   <span class="t" id="barTitle">AI-PDS 워크숍 · 사전 입력지</span>
   <div class="tools">
+    <button type="button" class="btn" id="btnLang" lang="en">English</button>
     <a class="bar-warn" id="barWarn" href="#kind" hidden>종류를 먼저 골라 주세요</a>
     <span class="save-status" id="saveStatus" aria-live="polite"></span>
     <button type="button" class="btn primary" id="btnExport">답변 파일 저장</button>
@@ -487,12 +493,20 @@ window.FORM_CONFIG = {
   function cfg(k) { return typeof CFG[k] === 'string' ? CFG[k].trim() : ''; }
   var TYPES = {
     improve: { name: '업무 개선', topic: '이번에 함께 보는 일',
-      lead: '지금 업무에서 시간이 많이 드는 일을 여쭙습니다. 무엇부터 다룰지는 워크숍에서 함께 정합니다.' },
+      lead: '지금 업무에서 시간이 많이 드는 일을 여쭙습니다. 무엇부터 다룰지는 워크숍에서 함께 정합니다.',
+      en: { name: 'Improving work', topic: 'The work we will look at together',
+        lead: 'We ask about the work that takes a lot of time in your job now. We will decide together at the workshop what to tackle first.' } },
     build: { name: '만들고 싶은 것', topic: '이번에 함께 보는 구상',
-      lead: '만들고 싶으신 것을 워크숍에서 다루려고 합니다. 아이디어보다 쓰실 분과 그분들이 지금 겪는 문제를 먼저 여쭙습니다.' },
+      lead: '만들고 싶으신 것을 워크숍에서 다루려고 합니다. 아이디어보다 쓰실 분과 그분들이 지금 겪는 문제를 먼저 여쭙습니다.',
+      en: { name: 'Something to build', topic: 'The idea we will look at together',
+        lead: 'We will take up what you want to build at the workshop. Before the idea itself, we ask about the people who will use it and the problems they face now.' } },
     problem: { name: '풀고 싶은 문제', topic: '이번에 함께 보는 문제',
-      lead: '풀고 싶으신 문제 하나를 워크숍에서 깊게 다루려고 합니다. 최근에 실제로 겪으신 일 하나를 따라가며 여쭙습니다.' }
+      lead: '풀고 싶으신 문제 하나를 워크숍에서 깊게 다루려고 합니다. 최근에 실제로 겪으신 일 하나를 따라가며 여쭙습니다.',
+      en: { name: 'A problem to solve', topic: 'The problem we will look at together',
+        lead: 'We will dig into one problem you want to solve at the workshop. We ask by following one thing you actually went through recently.' } }
   };
+  /** One field of a TYPES entry in the current language. */
+  function tt(t, k) { return LANG === 'en' ? t.en[k] : t[k]; }
   var TOPIC = cfg('topic');
   var FIXED = Object.prototype.hasOwnProperty.call(TYPES, cfg('type')) ? cfg('type') : '';
   // v4: 무기명(이름 칸 없음, 응답 ID로 중복 구분), 역할 선택지 정리. v1~v3 파일도 불러올 수 있고, 이 화면에 없는 질문이나 선택지의 답은 보이지 않습니다.
@@ -502,8 +516,273 @@ window.FORM_CONFIG = {
   // A random ID per browser, not per person: it lets the collector keep only the latest file from
   // the same respondent without asking for a name. "입력 지우기" issues a new one.
   var RID_STORE = STORE + '|rid';
+
+  // ---- language ----
+  // Korean is the source text and EN maps it to English. Option values, field names and item ids
+  // are never translated, so answers survive a language switch and v1-v4 answer files still load.
+  // Only what is on screen follows the language, plus the question, label and option text written
+  // into the export, which the dashboard collector copies verbatim.
+  var EN = {
+      "AI-PDS 워크숍 · 사전 입력지": "AI-PDS workshop · Pre-workshop form",
+      "종류를 먼저 골라 주세요": "Please choose a form type first",
+      "답변 파일 저장": "Save answer file",
+      "답변 파일 불러오기": "Open answer file",
+      "인쇄": "Print",
+      "입력 지우기": "Clear answers",
+      "AI-PDS 워크숍 · 사전 준비": "AI-PDS workshop · Preparation",
+      "사전 입력지": "Pre-workshop form",
+      "AI-PDS 워크숍을 귀 팀의 실제 상황에 맞춰 준비하려고, 사전 인터뷰 대신 몇 가지를 글로 여쭙니다. 모든 항목은 선택 사항이고, 최근에 있었던 일을 구체적으로 적어 주실수록 워크숍에서 바로 깊이 들어갈 수 있습니다.": "To prepare the AI-PDS workshop around your team's actual situation, we are asking a few questions in writing instead of holding a pre-workshop interview. Every item is optional. The more concretely you describe things that happened recently, the faster we can go deep at the workshop.",
+      "이번에 함께 보는 주제": "The topic we will look at together",
+      "이 프로젝트를 함께하는 동료가 있다면, 의견을 모으지 말고 각자의 생각을 적어 주세요.": "If colleagues are working on this project with you, please each write your own view rather than gathering opinions first.",
+      "글로 적기보다 말로 설명하시는 편이 편하시면 알려 주세요. 약 1시간의 사전 인터뷰로 진행하겠습니다.": "If you would rather explain by talking than in writing, let us know. We will hold a pre-workshop interview of about one hour instead.",
+      "이 화면에서 적기": "Write on this page",
+      "입력한 내용은 이 브라우저에 자동으로 저장되어, 중간에 닫으셔도 다시 여시면 이어서 쓰실 수 있습니다.": "What you type is saved automatically in this browser, so you can close the page and pick up where you left off when you open it again.",
+      "답변 파일로 저장해 메일로 보내기": "Save an answer file and send it by email",
+      "다 쓰신 뒤 위쪽의 \"답변 파일 저장\"을 누르고, 저장된 파일(.json)을 메일에 첨부해 보내 주세요.": "When you are done, click \"Save answer file\" at the top and attach the saved file (.json) to an email.",
+      "동료분들도 각자 저장하신 파일을 따로 보내 주시면 됩니다.": "Colleagues can each send the file they saved separately.",
+      "함께 확인하신 뒤 워크숍": "Review together, then the workshop",
+      "보내 주신 답은 질문별로 모아 팀이 함께 확인한 뒤 AI-PDS 워크숍의 입력으로 씁니다. 적기 어려우셨던 부분은 워크숍에서 함께 채웁니다.": "Your answers are gathered question by question, reviewed together by the team, and then used as input for the AI-PDS workshop. Anything that was hard to write down, we will fill in together at the workshop.",
+      "이 입력지는 이름을 받지 않습니다. 보내 주신 답은 이름 없이 역할과 함께 팀 안에서 공유되고, AI-PDS 워크숍의 입력으로 쓰입니다.": "This form does not ask for your name. Your answers are shared within the team with your role but without your name, and are used as input for the AI-PDS workshop.",
+      "개인정보(이름, 연락처, 고객 정보)와 외부에 공유할 수 없는 기밀은 적지 말아 주세요.": "Please do not include personal information (names, contact details, customer information) or confidential material that cannot be shared outside your company.",
+      "숫자는 대략으로 적어 주셔도 충분합니다. 모르시면 비워 두시면 됩니다.": "Rough numbers are fine. If you do not know, leave it blank.",
+      "칸 안의 회색 예시 글자는 저장되지 않습니다.": "The gray example text inside the boxes is not saved.",
+      "입력지 종류": "Form type",
+      "어떤 내용을 적어 주실지 골라 주세요": "Choose what you will write about",
+      "고르신 종류에 맞는 질문이 아래에 나옵니다. 나중에 바꾸셔도 적어 두신 내용은 지워지지 않습니다.": "Questions for the type you choose appear below. If you change it later, what you have already written is not deleted.",
+      "업무 개선": "Improving work",
+      "팀이나 담당자의 업무를 넓게 보고, 무엇부터 개선할지 찾고 싶을 때": "When you want to look broadly at a team's or a person's work and find what to improve first",
+      "만들고 싶은 것": "Something to build",
+      "만들고 싶은 서비스나 도구가 이미 있을 때": "When you already have a service or tool in mind that you want to build",
+      "풀고 싶은 문제": "A problem to solve",
+      "해결하고 싶은 구체적인 문제가 하나 있을 때": "When there is one specific problem you want to solve",
+      "아직 종류를 고르지 않으셨습니다.": "You have not chosen a type yet.",
+      "세 가지 중 하나를 골라야 이번 워크숍의 핵심 질문이 아래에 나옵니다. 고르지 않으면 공통 질문만 보이고, 그 답만 저장됩니다.": "The key questions for this workshop appear below only after you choose one of the three. Without a choice, only the common questions are shown and only those answers are saved.",
+      "작성하시는 분과 팀 업무": "About you and your team's work",
+      "팀이 하는 일을 처음 듣는 사람에게 설명하듯 적어 주세요.": "Describe what your team does as if explaining it to someone hearing about it for the first time.",
+      "작성하시는 분": "About you",
+      "이번에 다룰 일에서 맡고 계신 역할을 골라 주세요.": "Choose your role in the work we will look at.",
+      "역할": "Role",
+      "그 일을 직접 하는 실무자": "I do the work myself",
+      "그 일의 결과를 받아 쓰는 분": "I use the results of that work",
+      "경영진 · 리더": "Executive · Leader",
+      "기타": "Other",
+      "직접 입력": "Please specify",
+      "기타 역할 직접 입력": "Other role, please specify",
+      "팀 업무": "Your team's work",
+      "팀이 맡고 있는 일과, 그 결과를 누가 받아서 쓰는지 간단히 소개해 주세요.": "Briefly describe what your team is responsible for and who receives and uses the results.",
+      "답변": "Answer",
+      "예: 매장별 판매 데이터를 모아 주간 보고를 만들고, 매장별 개선 과제를 관리합니다.": "e.g. We collect sales data from each store, prepare a weekly report, and track improvement items for each store.",
+      "왜 여쭙나요": "Why we ask",
+      "워크숍에서 AI가 업무에 대해 묻는 질문에 답할 때 근거가 됩니다.": "When the AI asks about your work during the workshop, this is what the answers will draw on.",
+      "시간이 많이 드는 일": "Work that takes a lot of time",
+      "위에 적힌 일을 두고, 지난번에 하셨던 대로 적어 주세요. \"보통은\"보다 \"지난번에는\"으로 적어 주시면 더 정확합니다.": "For the work described above, write it the way you did it last time. \"Last time, I…\" is more accurate than \"Usually, we…\".",
+      "지난주나 지난달을 떠올려 보시고, 시간이 가장 많이 든 일 하나를 자세히 적어 주세요. \"보통은\"보다 \"지난번에는\"으로 적어 주시면 더 정확합니다. 무엇부터 다룰지는 워크숍에서 함께 정합니다.": "Think back over the last week or month and describe in detail the one task that took the most time. \"Last time, I…\" is more accurate than \"Usually, we…\". We will decide together at the workshop what to tackle first.",
+      "그 밖에 시간이 많이 드는 일이 있다면 한 줄씩 적어 주세요. 두 가지까지면 충분합니다.": "If other tasks also take a lot of time, list them one per line. Two at most is plenty.",
+      "(선택)": "(optional)",
+      "그 밖에 시간이 많이 드는 일": "Other time-consuming tasks",
+      "워크숍은 이 내용을 페인 포인트로 넣고 시작합니다. 팀에서 자주 나오는 말은 고치지 않고 그대로 씁니다.": "The workshop starts by entering this as pain points. Phrases your team often uses are kept as they are, without rewording.",
+      "위 일을 내 말로 한두 문장으로 적으면": "The work above, in your own words, in one or two sentences",
+      "어떤 일인가요?": "What is the task?",
+      "(한두 문장)": "(one or two sentences)",
+      "어떤 일인가요": "What the task is",
+      "지난번에 그 일을 어떻게 하셨는지 순서대로": "How you did it last time, step by step",
+      "지난번에 한 순서": "Steps taken last time",
+      "예: ① 매장 담당자 12명에게 엑셀을 메일로 받음 ② 하나로 합치며 형식을 맞춤 ③ 빠진 곳을 다시 요청 ④ 표와 그래프를 만들어 보고": "e.g. ① Received Excel files by email from 12 store managers ② Merged them into one, fixing the formats ③ Asked again for the missing parts ④ Built tables and charts and reported",
+      "그중 손이 가장 많이 가는 단계와 그 이유": "The step that takes the most effort, and why",
+      "손이 가장 많이 가는 단계": "Step that takes the most effort",
+      "손이 가장 많이 가는 단계와 이유": "Most effortful step and why",
+      "얼마나 자주 하시나요?": "How often do you do it?",
+      "빈도": "Frequency",
+      "매일": "Daily",
+      "매주": "Weekly",
+      "매월": "Monthly",
+      "특정 시기에 몰림": "Concentrated in certain periods",
+      "수시": "As needed",
+      "한 번 할 때 걸리는 시간": "Time it takes each time",
+      "한 번에 걸리는 시간": "Time per occurrence",
+      "1시간 이내": "Under 1 hour",
+      "1시간에서 반나절": "1 hour to half a day",
+      "하루 정도": "About a day",
+      "며칠 이상": "Several days or more",
+      "잘 모르겠음": "Not sure",
+      "숫자로 아시면": "If you know the number",
+      "(대략)": "(roughly)",
+      "걸리는 시간 숫자": "Time taken (number)",
+      "지금은 어떻게 하고 계신가요?": "How do you do it now?",
+      "지금 하는 방법": "Current method",
+      "엑셀·수작업": "Excel / manual work",
+      "다른 사람이나 팀에 요청": "Asking another person or team",
+      "사내 시스템": "In-house system",
+      "외부 도구·서비스": "External tool or service",
+      "기타 방법 직접 입력": "Other method, please specify",
+      "조금 더 적어 주실 것": "A little more detail",
+      "(쓰시는 시스템이나 도구 이름, 개선을 시도해 보셨다면 멈춘 이유)": "(names of the systems or tools you use; if you tried to improve it, why the attempt stopped)",
+      "도구 이름과 개선 시도": "Tool names and improvement attempts",
+      "쓰는 도구와 개선 시도": "Tools used and improvement attempts",
+      "늦어지거나 틀리면 누가 곤란해지나요?": "Who is affected if it is late or wrong?",
+      "곤란해지는 사람": "Who is affected",
+      "늦어지거나 틀리면 곤란해지는 사람": "Who is affected if it is late or wrong",
+      "이 일에 대해 팀에서 자주 나오는 말": "Things your team often says about this work",
+      "(다듬지 않고 그대로)": "(as is, without polishing)",
+      "팀에서 자주 나오는 말": "Things the team often says",
+      "예: \"월요일 오전은 이것만 하다 끝나요\"": "e.g. \"Monday mornings go entirely to this\"",
+      "쓰실 분과 그분들이 지금 겪는 문제를 먼저 여쭙고, 만들고 싶으신 것은 그다음에 여쭙니다. 워크숍에서는 만들고 싶으신 것이 그 문제를 푸는지 함께 확인합니다.": "We first ask about the people who will use it and the problems they face now, and then about what you want to build. At the workshop we check together whether what you want to build solves that problem.",
+      "이것을 주로 쓰게 될 분은 누구인가요? 어떤 상황에서 쓰게 되나요?": "Who will mainly use this? In what situation will they use it?",
+      "쓰실 분과 상황": "Users and situation",
+      "쓰실 분과 쓰는 상황": "Users and when they use it",
+      "예: 매장을 순회하는 지역 담당자가 매장 점검을 마친 직후에": "e.g. Regional managers who visit stores, right after finishing a store inspection",
+      "대략 몇 명 정도인가요?": "Roughly how many people?",
+      "대략적인 인원": "Approximate number of people",
+      "쓰실 분 인원": "Number of users",
+      "그분들은 지금 무엇 때문에 불편하거나 시간이 많이 드나요? 최근에 있었던 일 하나로 적어 주시면 더 정확합니다.": "What makes things inconvenient or time-consuming for them now? Describing one recent occurrence is more accurate.",
+      "지금은 그 일을 어떻게 하고 있나요?": "How is that work done now?",
+      "선택지": "Options",
+      "하지 못하고 있음": "Not being done",
+      "기타 직접 입력": "Other, please specify",
+      "(쓰시는 시스템이나 도구 이름, 비슷한 것을 써 보거나 만들어 보셨다면 그 결과)": "(names of the systems or tools you use; if you have used or built something similar, how it went)",
+      "더 적어 주실 것": "More detail",
+      "지금 하는 방법과 써 본 것": "Current method and what was tried",
+      "위 구상을 내 말로 한두 문장으로 적어 주세요.": "Describe the idea above in your own words, in one or two sentences.",
+      "만들고 싶으신 것을 한두 문장으로 적어 주세요.": "Describe what you want to build in one or two sentences.",
+      "예: 점검 사진을 올리면 점검 보고서 초안을 만들어 주는 화면": "e.g. A screen that drafts an inspection report when you upload inspection photos",
+      "워크숍에서는 이 구상을 검증 전 아이디어로 두고, 앞에 적으신 분들의 문제를 푸는지 함께 확인합니다.": "At the workshop we treat this idea as not yet validated, and check together whether it solves the problems of the people you described above.",
+      "잘 되면 무엇이 달라지나요? 그걸 어떻게 알 수 있을까요?": "If it works, what changes? How could you tell?",
+      "예: 보고서를 쓰는 시간이 줄어든다. 주간 점검 건수로 확인할 수 있다": "e.g. Less time goes into writing reports. We can check it with the weekly number of inspections",
+      "꼭 있어야 하는 것과 처음에는 없어도 되는 것을 나눠 주세요.": "Separate what it must have from what it can do without at first.",
+      "꼭 있어야 하는 것": "Must have",
+      "처음에는 없어도 되는 것": "Can wait",
+      "아직 확인하지 못한 것이 있나요?": "Is there anything you have not been able to confirm yet?",
+      "예: 지역 담당자가 실제로 쓸지, 점검 사진을 써도 되는지": "e.g. Whether regional managers will actually use it, whether we are allowed to use the inspection photos",
+      "최근에 실제로 겪으신 일 하나를 떠올리며 적어 주세요. \"보통은\"보다 \"지난번에는\"으로 적어 주시면 더 정확합니다.": "Write with one thing you actually went through recently in mind. \"Last time, I…\" is more accurate than \"Usually, we…\".",
+      "위 문제를 내 말로 한두 문장으로 적어 주세요.": "Describe the problem above in your own words, in one or two sentences.",
+      "풀고 싶은 문제를 한두 문장으로 적어 주세요.": "Describe the problem you want to solve in one or two sentences.",
+      "최근에 이 문제를 겪으신 일 하나를 순서대로 적어 주세요. 언제, 무엇을 하다가, 어디서 막혔고, 결국 어떻게 하셨는지 적어 주시면 됩니다.": "Describe one recent time you ran into this problem, step by step: when it was, what you were doing, where you got stuck, and how you dealt with it in the end.",
+      "예: 지난달 말 정산 때 거래처 세 곳의 금액이 맞지 않아, 메일을 다시 뒤져 원본을 찾고 담당자에게 전화로 확인했다": "e.g. At last month's closing, the amounts for three vendors did not match, so I dug through old emails for the originals and confirmed by phone with the people in charge",
+      "이 문제는 얼마나 자주 생기나요?": "How often does this problem occur?",
+      "한 번 생기면 처리하는 데 드는 시간": "Time it takes to handle it each time it occurs",
+      "한 번에 드는 시간": "Time per occurrence",
+      "시간이나 비용을 숫자로 아시면": "If you know the time or cost as a number",
+      "드는 시간이나 비용": "Time or cost",
+      "한 번 생기면 드는 시간이나 비용": "Time or cost per occurrence",
+      "누가 이 문제를 겪고, 누가 곤란해지나요?": "Who runs into this problem, and who is affected?",
+      "겪는 사람과 곤란해지는 사람": "Who runs into it and who is affected",
+      "겪는 사람 인원": "Number of people who run into it",
+      "지금은 이 문제를 어떻게 넘기고 계신가요?": "How are you getting by with this problem now?",
+      "지금 넘기는 방법": "Current workaround",
+      "그냥 감수함": "Just putting up with it",
+      "지금 넘기는 방법과 해 본 시도": "Current workaround and attempts so far",
+      "이 문제는 왜 생긴다고 보시나요? 추정이어도 괜찮습니다.": "Why do you think this problem happens? A guess is fine.",
+      "해결되면 무엇이 달라지나요? 그걸 어떻게 알 수 있을까요?": "If it is solved, what changes? How could you tell?",
+      "이 문제에 대해 팀에서 자주 나오는 말이 있다면 다듬지 않고 그대로 적어 주세요.": "If your team often says something about this problem, write it down as is, without polishing.",
+      "예: \"월말만 되면 숫자 맞추느라 야근해요\"": "e.g. \"Every month-end we work late just to make the numbers match\"",
+      "다룰 자료와 보내 주실 자료": "Data involved and materials to send",
+      "있는 것만 적어 주세요. 파일은 답변 파일과 함께 메일에 첨부해 보내 주시면 됩니다.": "Fill in only what you have. Attach the files to the email along with your answer file.",
+      "개인정보와 기밀은 가리거나 지운 뒤 보내 주세요.": "Mask or remove personal information and confidential details before sending.",
+      "이번에 다룰 일에 필요한 데이터는 어디에 있고, 누가 관리하나요? 워크숍에서 다루면 안 되는 자료가 있다면 함께 적어 주세요.": "Where does the data needed for this work live, and who manages it? If there is material that must not be used at the workshop, please note that too.",
+      "보내 주실 수 있는 자료를 골라 주세요.": "Choose the materials you can send.",
+      "보낼 자료": "Materials to send",
+      "지금 쓰는 양식이나 엑셀": "Forms or Excel files in current use",
+      "화면 캡처": "Screenshots",
+      "샘플 데이터": "Sample data",
+      "기대하는 결과물의 예시": "Examples of the expected output",
+      "업무 절차·규정 문서": "Work procedure or policy documents",
+      "기획서·구상 메모": "Plans or idea notes",
+      "파일 이름이나 간단한 설명": "File names or a short description",
+      "파일 이름이나 설명": "File names or description",
+      "그 밖에 워크숍 전에 알려 주실 것이 있나요?": "Is there anything else you would like us to know before the workshop?",
+      "보내기": "Send",
+      "아래 버튼으로 답변 파일을 저장하신 뒤, 보내 주실 자료 파일과 함께 메일에 첨부해 보내 주세요.": "Save your answer file with the button below, then attach it to an email together with any materials you are sending.",
+      "\"메일 쓰기\"를 누르면 메일 창만 열리고 파일은 첨부되지 않으니, 저장한 파일을 직접 첨부해 주세요. 파일 이름에는 저장한 날짜와 시각이 붙습니다. 나중에 고치셨다면 새로 저장한 파일을 다시 보내 주시면 됩니다.": "\"Write email\" only opens a mail window and does not attach any files, so please attach the saved file yourself. The file name includes the date and time it was saved. If you make changes later, just send the newly saved file again.",
+      "입력지 종류를 고르지 않으셨습니다.": "You have not chosen a form type.",
+      "지금 저장하면 공통 질문의 답만 담깁니다.": "If you save now, only the answers to the common questions are included.",
+      "위로 올라가 종류를 골라 주세요.": "Go back up and choose a type.",
+      "메일 쓰기": "Write email",
+      "이번에 함께 보는 일": "The work we will look at together",
+      "이번에 함께 보는 구상": "The idea we will look at together",
+      "이번에 함께 보는 문제": "The problem we will look at together",
+      "가장 시간이 많이 드는 일": "The most time-consuming task"
+  };
+  var LANG_STORE = STORE + '|lang';
+  var I18N_ATTRS = ['placeholder', 'aria-label', 'data-label', 'data-topic', 'data-toc', 'data-group'];
+  var ID_PREFIX = /^([A-Z][0-9]+|[A-Z]\{n\})\s+(.+)$/;
+  var koText = new WeakMap();
+  var koAttr = new WeakMap();
+  var LANG = initialLang();
+
+  function initialLang() {
+    var q = /[?&]lang=(ko|en)(?:&|$)/.exec(window.location.search);
+    if (q) { return q[1]; }
+    try {
+      var saved = localStorage.getItem(LANG_STORE);
+      if (saved === 'ko' || saved === 'en') { return saved; }
+    } catch (e) { /* storage unavailable */ }
+    return cfg('lang') === 'en' ? 'en' : 'ko';
+  }
+  function has(o, k) { return Object.prototype.hasOwnProperty.call(o, k); }
+  /** Korean source text in the current language; text without an entry is returned unchanged. */
+  function T(s) {
+    if (LANG !== 'en' || !s) { return s; }
+    var k = s.replace(/\s+/g, ' ').trim();
+    if (has(EN, k)) { return EN[k]; }
+    // aria-labels carry the question id in front ("H1 빈도"); translate the rest.
+    var m = ID_PREFIX.exec(k);
+    return m && has(EN, m[2]) ? m[1] + ' ' + EN[m[2]] : s;
+  }
+  /** For text built from config values, where a lookup table cannot hold every variant. */
+  function L(ko, en) { return LANG === 'en' ? en : ko; }
+  function swapText(ko) {
+    var k = ko.trim();
+    var t = T(k);
+    return t === k ? ko : ko.match(/^\s*/)[0] + t + ko.match(/\s*$/)[0];
+  }
+  // Each text node and attribute remembers its Korean original the first time it is seen, so
+  // switching back restores the source text rather than translating English back.
+  function translateDom() {
+    var walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, {
+      acceptNode: function (n) {
+        return /^(SCRIPT|STYLE|TEXTAREA)$/.test(n.parentNode.nodeName) ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT;
+      }
+    });
+    var node;
+    while ((node = walker.nextNode())) {
+      var ko = koText.get(node);
+      if (ko === undefined) {
+        if (!/[가-힣]/.test(node.nodeValue)) { continue; }
+        ko = node.nodeValue;
+        koText.set(node, ko);
+      }
+      node.nodeValue = swapText(ko);
+    }
+    each(document.body.querySelectorAll('[' + I18N_ATTRS.join('],[') + ']'), function (el) {
+      var saved = koAttr.get(el);
+      if (!saved) { saved = {}; koAttr.set(el, saved); }
+      I18N_ATTRS.forEach(function (a) {
+        if (!el.hasAttribute(a)) { return; }
+        if (!has(saved, a)) { saved[a] = el.getAttribute(a); }
+        el.setAttribute(a, T(saved[a]));
+      });
+    });
+  }
+  function setLang(lang, remember) {
+    LANG = lang === 'en' ? 'en' : 'ko';
+    if (remember) {
+      try { localStorage.setItem(LANG_STORE, LANG); } catch (e) { /* storage unavailable */ }
+    }
+    document.documentElement.lang = LANG;
+    translateDom();
+    renderConfig();
+    applyTopic();
+    applyType();
+    var b = $('btnLang');
+    if (b) { b.textContent = L('English', '한국어'); b.lang = L('en', 'ko'); }
+    setStatus('');
+    growIn(document);
+  }
   var respondentId = '';
-  var NO_STORAGE = '이 환경에서는 자동 저장이 되지 않습니다. 끝나기 전에 답변 파일로 저장해 주세요.';
+  function noStorage() {
+    return L('이 환경에서는 자동 저장이 되지 않습니다. 끝나기 전에 답변 파일로 저장해 주세요.',
+      'Autosave is not available here. Please save an answer file before you finish.');
+  }
   var statusEl = document.getElementById('saveStatus');
   var storageOk = true;
   var timer = null;
@@ -526,27 +805,32 @@ window.FORM_CONFIG = {
   function renderConfig() {
     var parts = [cfg('customer'), cfg('team')].filter(Boolean);
     if (parts.length) {
-      document.querySelector('h1').textContent = parts.join(' ') + ' 사전 입력지';
+      document.querySelector('h1').textContent = L(parts.join(' ') + ' 사전 입력지', 'Pre-workshop form · ' + parts.join(' '));
     }
     var meta = [];
-    if (cfg('due')) { meta.push('회신 기한 ' + cfg('due')); }
+    if (cfg('due')) { meta.push(L('회신 기한 ', 'Reply by ') + cfg('due')); }
     if (cfg('workshop')) {
-      meta.push('워크숍 ' + cfg('workshop'));
-      $('workshopLine').textContent = '보내 주신 답은 질문별로 모아 팀이 함께 확인한 뒤 ' + cfg('workshop') +
-        ' AI-PDS 워크숍의 입력으로 씁니다. 적기 어려우셨던 부분은 워크숍에서 함께 채웁니다.';
+      meta.push(L('워크숍 ', 'Workshop ') + cfg('workshop'));
+      $('workshopLine').textContent = L('보내 주신 답은 질문별로 모아 팀이 함께 확인한 뒤 ' + cfg('workshop') +
+        ' AI-PDS 워크숍의 입력으로 씁니다. 적기 어려우셨던 부분은 워크숍에서 함께 채웁니다.',
+        'Your answers are gathered question by question, reviewed together by the team, and then used as input for the AI-PDS workshop on ' +
+        cfg('workshop') + '. Anything that was hard to write down, we will fill in together at the workshop.');
     }
     if (meta.length) { $('metaLine').textContent = meta.join(' · '); $('metaLine').hidden = false; }
 
     var who = (cfg('contact') + (cfg('email') ? ' (' + cfg('email') + ')' : '')).trim();
     if (who) {
-      $('altLine').textContent = '글로 적기보다 말로 설명하시는 편이 편하시면 ' + who + '에게 알려 주세요. 약 1시간의 사전 인터뷰로 진행하겠습니다.';
-      var due = cfg('due') ? cfg('due') + '까지 ' : '';
-      $('sendLine').textContent = '다 쓰신 뒤 위쪽의 "답변 파일 저장"을 누르고, 저장된 파일(.json)을 메일에 첨부해 ' + due + who + '에게 보내 주세요.';
-      $('sendTo').textContent = '아래 버튼으로 답변 파일을 저장하신 뒤, 보내 주실 자료 파일과 함께 메일에 첨부해 ' + due + who + '에게 보내 주세요.';
+      $('altLine').textContent = L('글로 적기보다 말로 설명하시는 편이 편하시면 ' + who + '에게 알려 주세요. 약 1시간의 사전 인터뷰로 진행하겠습니다.',
+        'If you would rather explain by talking than in writing, let ' + who + ' know. We will hold a pre-workshop interview of about one hour instead.');
+      var due = cfg('due') ? L(cfg('due') + '까지 ', ' by ' + cfg('due')) : '';
+      $('sendLine').textContent = L('다 쓰신 뒤 위쪽의 "답변 파일 저장"을 누르고, 저장된 파일(.json)을 메일에 첨부해 ' + due + who + '에게 보내 주세요.',
+        'When you are done, click "Save answer file" at the top and email the saved file (.json) to ' + who + due + '.');
+      $('sendTo').textContent = L('아래 버튼으로 답변 파일을 저장하신 뒤, 보내 주실 자료 파일과 함께 메일에 첨부해 ' + due + who + '에게 보내 주세요.',
+        'Save your answer file with the button below, then email it to ' + who + due + ' together with any materials you are sending.');
     }
     var email = cfg('email');
     if (/^[^\s@<>"]+@[^\s@<>"]+\.[^\s@<>"]+$/.test(email)) {
-      var subj = 'AI-PDS 사전 입력지' + (parts.length ? ' · ' + parts.join(' ') : '');
+      var subj = L('AI-PDS 사전 입력지', 'AI-PDS pre-workshop form') + (parts.length ? ' · ' + parts.join(' ') : '');
       var a = $('mailLink');
       a.href = 'mailto:' + encodeURIComponent(email).replace(/%40/g, '@') + '?subject=' + encodeURIComponent(subj);
       a.hidden = false;
@@ -565,14 +849,14 @@ window.FORM_CONFIG = {
     each(['typeWarn', 'barWarn', 'sendWarn'], function (id) { var el = $(id); if (el) { el.hidden = !missing; } });
     var lead = $('typeLead');
     lead.hidden = !t;
-    lead.textContent = t ? t.lead : '';
-    $('topicLabel').textContent = t ? t.topic : '이번에 함께 보는 주제';
-    var label = 'AI-PDS 워크숍 · 사전 준비' + (t ? ' · ' + t.name : '');
-    $('eyebrow').textContent = label;
-    $('barTitle').textContent = 'AI-PDS 워크숍 · 사전 입력지' + (t ? ' · ' + t.name : '');
-    $('footer').textContent = 'AI-PDS 워크숍 · 사전 입력지' + (t ? ' · ' + t.name : '');
+    lead.textContent = t ? tt(t, 'lead') : '';
+    $('topicLabel').textContent = t ? tt(t, 'topic') : T('이번에 함께 보는 주제');
+    var suffix = t ? ' · ' + tt(t, 'name') : '';
+    $('eyebrow').textContent = T('AI-PDS 워크숍 · 사전 준비') + suffix;
+    $('barTitle').textContent = T('AI-PDS 워크숍 · 사전 입력지') + suffix;
+    $('footer').textContent = T('AI-PDS 워크숍 · 사전 입력지') + suffix;
     var base = [cfg('customer'), cfg('team')].filter(Boolean).join(' ');
-    document.title = (base ? base + ' · ' : '') + 'AI-PDS 사전 입력지' + (t ? ' · ' + t.name : '');
+    document.title = (base ? base + ' · ' : '') + L('AI-PDS 사전 입력지', 'AI-PDS pre-workshop form') + suffix;
 
     var toc = $('toc');
     while (toc.firstChild) { toc.removeChild(toc.firstChild); }
@@ -683,10 +967,10 @@ window.FORM_CONFIG = {
     if (!storageOk) { return; }
     try {
       localStorage.setItem(STORE, JSON.stringify(collectState()));
-      setStatus('자동 저장됨 ' + hhmm(new Date()));
+      setStatus(L('자동 저장됨 ', 'Saved automatically ') + hhmm(new Date()));
     } catch (e) {
       storageOk = false;
-      setStatus(NO_STORAGE);
+      setStatus(noStorage());
     }
   }
   function scheduleSave() { clearTimeout(timer); timer = setTimeout(save, 400); }
@@ -696,11 +980,11 @@ window.FORM_CONFIG = {
       var raw = localStorage.getItem(STORE);
       if (raw) {
         var st = cleanState(JSON.parse(raw));
-        if (st && Object.keys(st).length) { applyState(st); setStatus('이전에 입력한 내용을 불러왔습니다'); }
+        if (st && Object.keys(st).length) { applyState(st); setStatus(L('이전에 입력한 내용을 불러왔습니다', 'Restored what you entered earlier')); }
       }
     } catch (e) {
       storageOk = false;
-      setStatus(NO_STORAGE);
+      setStatus(noStorage());
     }
   }
 
@@ -720,7 +1004,7 @@ window.FORM_CONFIG = {
 
   function roleValue() {
     var r = document.querySelector('input[name="P1.role"]:checked');
-    return r ? r.value : '';
+    return r ? T(r.value) : '';
   }
 
   // ---- export ----
@@ -737,7 +1021,7 @@ window.FORM_CONFIG = {
       var inputs = el.querySelectorAll('input[type=checkbox], input[type=radio]');
       var opts = [];
       var sel = [];
-      each(inputs, function (i) { opts.push(i.value); if (i.checked) { sel.push(i.value); } });
+      each(inputs, function (i) { opts.push(T(i.value)); if (i.checked) { sel.push(T(i.value)); } });
       var etc = el.querySelector('input.etc');
       var etcVal = etc ? etc.value.trim() : '';
       if (sel.length || etcVal) { any = true; }
@@ -771,11 +1055,13 @@ window.FORM_CONFIG = {
     var etc = document.querySelector('input[name="P1.role.etc"]');
     return {
       schema: SCHEMA,
-      document: 'AI-PDS 워크숍 사전 입력지',
-      form: { type: type, type_name: type ? TYPES[type].name : '', type_fixed: !!FIXED,
+      document: L('AI-PDS 워크숍 사전 입력지', 'AI-PDS workshop pre-workshop form'),
+      lang: LANG,
+      form: { type: type, type_name: type ? tt(TYPES[type], 'name') : '', type_fixed: !!FIXED,
               customer: cfg('customer'), team: cfg('team'), due: cfg('due'), workshop: cfg('workshop'), topic: TOPIC },
       saved_at: new Date().toISOString(),
-      source_note: '고객이 직접 작성한 서면 답변입니다. 사전 인터뷰를 대신하며, 인터뷰 녹취가 아닙니다.',
+      source_note: L('고객이 직접 작성한 서면 답변입니다. 사전 인터뷰를 대신하며, 인터뷰 녹취가 아닙니다.',
+        'Written answers entered by the customer. They replace a pre-workshop interview and are not an interview transcript.'),
       respondent: {
         id: respondentId,
         role: roleValue(),
@@ -801,43 +1087,45 @@ window.FORM_CONFIG = {
 
   function exportJson() {
     var data = buildExport();
-    if (!data.sections_answered.length && !window.confirm('아직 입력한 내용이 없습니다. 빈 파일로 저장할까요?')) { return; }
-    if (!data.form.type && !window.confirm('입력지 종류를 고르지 않으셨습니다.\n종류를 고르지 않으면 핵심 질문이 나오지 않아 공통 질문의 답만 저장됩니다.\n그래도 저장할까요?')) { return; }
+    if (!data.sections_answered.length && !window.confirm(L('아직 입력한 내용이 없습니다. 빈 파일로 저장할까요?', 'You have not entered anything yet. Save an empty file?'))) { return; }
+    if (!data.form.type && !window.confirm(L('입력지 종류를 고르지 않으셨습니다.\n종류를 고르지 않으면 핵심 질문이 나오지 않아 공통 질문의 답만 저장됩니다.\n그래도 저장할까요?',
+      'You have not chosen a form type.\nWithout a type, the key questions do not appear and only the answers to the common questions are saved.\nSave anyway?'))) { return; }
     var label = safe(cfg('team') || cfg('customer'));
     var kind = data.form.type ? safe(data.form.type_name) + '_' : '';
-    download('AI-PDS_사전입력_' + kind + (label ? label + '_' : '') + stamp(new Date()) + '.json',
+    download(L('AI-PDS_사전입력_', 'AI-PDS_pre-interview_') + kind + (label ? label + '_' : '') + stamp(new Date()) + '.json',
       JSON.stringify(data, null, 2), 'application/json;charset=utf-8');
-    setStatus('답변 파일을 저장했습니다');
+    setStatus(L('답변 파일을 저장했습니다', 'Answer file saved'));
   }
 
   function importJson(file) {
     if (!file) { return; }
-    if (file.size > 2 * 1024 * 1024) { window.alert('파일이 너무 큽니다. 이 문서에서 저장한 답변 파일인지 확인해 주세요.'); return; }
+    if (file.size > 2 * 1024 * 1024) { window.alert(L('파일이 너무 큽니다. 이 문서에서 저장한 답변 파일인지 확인해 주세요.', 'The file is too large. Please check that it is an answer file saved from this form.')); return; }
     var reader = new FileReader();
     reader.onload = function () {
       var data;
       try { data = JSON.parse(String(reader.result)); } catch (e) { data = null; }
       var st = data && COMPAT.indexOf(data.schema) !== -1 ? cleanState(data.state) : null;
-      if (!st) { window.alert('이 문서에서 저장한 답변 파일이 아닙니다.'); return; }
+      if (!st) { window.alert(L('이 문서에서 저장한 답변 파일이 아닙니다.', 'This is not an answer file saved from this form.')); return; }
       var ft = data.form && typeof data.form.type === 'string' ? data.form.type : '';
       if (FIXED && ft && ft !== FIXED &&
-          !window.confirm('다른 종류(' + (TYPES[ft] ? TYPES[ft].name : ft) + ') 입력지에서 저장한 파일입니다. 이 화면에 없는 질문의 답은 보이지 않습니다. 계속할까요?')) { return; }
+          !window.confirm(L('다른 종류(' + (TYPES[ft] ? tt(TYPES[ft], 'name') : ft) + ') 입력지에서 저장한 파일입니다. 이 화면에 없는 질문의 답은 보이지 않습니다. 계속할까요?',
+            'This file was saved from a different form type (' + (TYPES[ft] ? tt(TYPES[ft], 'name') : ft) + '). Answers to questions that are not on this page will not be shown. Continue?'))) { return; }
       if (!FIXED && ft && TYPES[ft] && !st['T0.type']) { st['T0.type'] = [ft]; }
-      if (Object.keys(collectState()).length && !window.confirm('지금 화면에 입력된 내용을 불러온 파일 내용으로 바꿀까요?')) { return; }
+      if (Object.keys(collectState()).length && !window.confirm(L('지금 화면에 입력된 내용을 불러온 파일 내용으로 바꿀까요?', 'Replace what is on this page with the contents of the opened file?'))) { return; }
       applyState(st);
       save();
-      setStatus('불러왔습니다: ' + file.name);
+      setStatus(L('불러왔습니다: ', 'Opened: ') + file.name);
     };
-    reader.onerror = function () { window.alert('파일을 읽지 못했습니다.'); };
+    reader.onerror = function () { window.alert(L('파일을 읽지 못했습니다.', 'Could not read the file.')); };
     reader.readAsText(file, 'utf-8');
   }
 
   function clearAll() {
-    if (!window.confirm('입력한 내용을 모두 지울까요? 저장하지 않은 내용은 되돌릴 수 없습니다.')) { return; }
+    if (!window.confirm(L('입력한 내용을 모두 지울까요? 저장하지 않은 내용은 되돌릴 수 없습니다.', 'Clear everything you have entered? Unsaved answers cannot be recovered.'))) { return; }
     applyState({});
     try { localStorage.removeItem(STORE); } catch (e) { /* storage unavailable */ }
     loadRespondentId(true);
-    setStatus('입력을 지웠습니다');
+    setStatus(L('입력을 지웠습니다', 'Answers cleared'));
   }
 
   function on(id, fn) { var el = $(id); if (el) { el.addEventListener('click', fn); } }
@@ -850,6 +1138,7 @@ window.FORM_CONFIG = {
   on('btnExport2', exportJson);
   on('btnClear', clearAll);
   on('btnPrint', function () { window.print(); });
+  on('btnLang', function () { setLang(LANG === 'en' ? 'ko' : 'en', true); });
   var fileInput = $('importFile');
   on('btnImport', function () { if (fileInput) { fileInput.click(); } });
   if (fileInput) {
@@ -881,7 +1170,7 @@ window.FORM_CONFIG = {
   applyType();
   loadRespondentId(false);
   load();
-  growIn(document);
+  setLang(LANG, false);
 })();
 </script>
 </body>
