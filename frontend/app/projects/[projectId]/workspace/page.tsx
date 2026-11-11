@@ -27,7 +27,8 @@ import {
   checkUpload, problemFromError, uploadProblemText, type UploadProblem,
 } from "@/lib/uploads";
 
-// The workspace screen — grid ratio 1:5:5 (left stages : chat : context). The
+// The workspace screen — grid ratio 1:5:5 (left stages : chat : context); the stage
+// sidebar can collapse to a 3rem rail, and chat and context then split the rest 1:1. The
 // generated document opens in a drawer (WorkspaceDocPanel) laid OVER the grid
 // rather than taking a column: as a 4th column (1:3.5:3.5:4) it left the
 // question form 412px at 1440px (AI-PDS team feedback, 2026-10). The grid keeps a
@@ -40,6 +41,8 @@ import {
 // bottom-sheet that reuses the SAME QuestionForm widget the right panel would
 // otherwise show (mode priority: questions > preview > artifacts). The drawer
 // opens at every width — full width on a narrow screen.
+const STAGES_COLLAPSED_KEY = "aipds.workspace.stagesCollapsed";
+
 export default function WorkspacePage({ params }: { params: Promise<{ projectId: string }> }) {
   const { projectId } = use(params);
   const state = useAsync(() => getState(projectId), [projectId]);
@@ -63,6 +66,23 @@ export default function WorkspacePage({ params }: { params: Promise<{ projectId:
   // Do not show the start card to read-only members — that button sends the first turn.
   const showWelcome = !readOnly && !historyLoading && items.length === 0 && !pendingQuestions
     && !streaming;
+  // Stage sidebar collapsed to a rail. Remembered per browser; read after mount so the first
+  // paint matches the server HTML (same reason as the ?draft= effect below).
+  const [stagesCollapsed, setStagesCollapsed] = useState(false);
+  useEffect(() => {
+    try {
+      if (window.localStorage.getItem(STAGES_COLLAPSED_KEY) === "1") setStagesCollapsed(true);
+    } catch { /* storage unavailable — stay expanded */ }
+  }, []);
+  const toggleStages = useCallback(() => {
+    setStagesCollapsed((prev) => {
+      const next = !prev;
+      try {
+        window.localStorage.setItem(STAGES_COLLAPSED_KEY, next ? "1" : "0");
+      } catch { /* storage unavailable — the toggle still works for this visit */ }
+      return next;
+    });
+  }, []);
   const [sheetOpen, setSheetOpen] = useState(false);
   const sheetRef = useRef<HTMLDivElement>(null);
   // Document drawer. Closed at first — the width for answering questions is the default.
@@ -231,9 +251,10 @@ export default function WorkspacePage({ params }: { params: Promise<{ projectId:
           (measured — the preventScroll comment in WorkspaceDocPanel). Why clip rather than
           hidden: hidden allows programmatic scrolling (focus, scrollIntoView), while clip does
           not create a scroll box at all. */}
-      <div className="relative flex-1 grid min-h-0 grid-cols-1 pr-9 overflow-clip lg:grid-cols-[1fr_5fr_5fr]">
+      <div className={`relative flex-1 grid min-h-0 grid-cols-1 pr-9 overflow-clip ${stagesCollapsed ? "lg:grid-cols-[3rem_1fr_1fr]" : "lg:grid-cols-[1fr_5fr_5fr]"}`}>
         <StageSidebar state={state.data} events={stages}
-                      onRequest={readOnly ? undefined : draftStageRequest} busy={streaming} />
+                      onRequest={readOnly ? undefined : draftStageRequest} busy={streaming}
+                      collapsed={stagesCollapsed} onToggle={toggleStages} />
 
         <main
           className="relative flex flex-col min-w-0 min-h-0 bg-slate-50"
