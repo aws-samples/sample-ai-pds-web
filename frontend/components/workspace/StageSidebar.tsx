@@ -44,6 +44,21 @@ function RequestButton({ label, title, onClick, disabled }: {
   );
 }
 
+// The status circle alone, for the collapsed rail — same colors as the full rows.
+function CapabilityMarker({ cap, index }: { cap: CapabilityState; index: number }) {
+  const base = "w-5 h-5 rounded-full flex items-center justify-center text-[10px]";
+  if (cap.status === "completed") {
+    return <span className={`${base} bg-emerald-100 text-emerald-600`} aria-hidden="true">✓</span>;
+  }
+  if (cap.status === "in_progress") {
+    return <span className={`${base} bg-violet-600 text-white font-bold animate-pulse`} aria-hidden="true">●</span>;
+  }
+  if (cap.status === "not_applicable") {
+    return <span className={`${base} border border-dashed border-slate-200 text-slate-300`} aria-hidden="true">–</span>;
+  }
+  return <span className={`${base} bg-slate-100 text-slate-400`} aria-hidden="true">{index + 1}</span>;
+}
+
 // Completed/in_progress/pending/not-on-this-path row chrome — kept private to
 // this module since the workspace sidebar is the only consumer.
 function CapabilityRow({ cap, index, onRequest, busy }: {
@@ -131,6 +146,8 @@ export const StageSidebar = memo(function StageSidebar({
   events,
   onRequest,
   busy = false,
+  collapsed = false,
+  onToggle,
 }: {
   state: ProjectState | null;
   events: StagePayload[];
@@ -138,18 +155,69 @@ export const StageSidebar = memo(function StageSidebar({
   onRequest?: OnRequest;
   // A turn is running — drafting into a disabled input would be lost.
   busy?: boolean;
+  // Collapsed to a narrow rail so the chat and context columns get the width. The page owns
+  // this state because the grid column width has to change with it.
+  collapsed?: boolean;
+  // Omitted → no toggle button (the panel stays expanded).
+  onToggle?: () => void;
 }) {
   const t = useT();
   const capabilities = latestCapabilities(state, events);
   const pct = progressPercent({ capabilities });
   const { completed, total } = stageCounts({ capabilities });
+  if (collapsed) {
+    // The rail keeps the at-a-glance status: one marker per capability (name in the tooltip)
+    // and the completed count, so collapsing never hides where the project stands.
+    return (
+      <aside
+        className="hidden lg:flex flex-col items-center min-h-0 bg-white border-r border-slate-200 py-3 gap-3"
+        aria-label={t("canvas.stageProgressLabel")}
+      >
+        {onToggle && (
+          <button
+            type="button"
+            onClick={onToggle}
+            aria-label={t("canvas.stageSidebarExpand")}
+            aria-expanded={false}
+            title={t("canvas.stageSidebarExpand")}
+            className="w-7 h-7 rounded-md text-slate-400 hover:bg-slate-100 hover:text-violet-600 flex items-center justify-center"
+          >
+            <span aria-hidden="true">»</span>
+          </button>
+        )}
+        <ol className="flex flex-col items-center gap-2">
+          {capabilities.map((cap, i) => (
+            <li key={cap.key} title={cap.name}>
+              <CapabilityMarker cap={cap} index={i} />
+              <span className="sr-only">{cap.name}</span>
+            </li>
+          ))}
+        </ol>
+        <p className="text-[10px] text-slate-400">{completed}/{total}</p>
+      </aside>
+    );
+  }
   return (
     <aside
       className="hidden lg:flex flex-col min-h-0 bg-white border-r border-slate-200"
       aria-label={t("canvas.stageProgressLabel")}
     >
       <div className="px-4 py-3 border-b border-slate-100">
-        <p className="text-xs font-bold text-slate-400 uppercase tracking-wide">{t("canvas.discoveryProgress")}</p>
+        <div className="flex items-center justify-between gap-2">
+          <p className="text-xs font-bold text-slate-400 uppercase tracking-wide">{t("canvas.discoveryProgress")}</p>
+          {onToggle && (
+            <button
+              type="button"
+              onClick={onToggle}
+              aria-label={t("canvas.stageSidebarCollapse")}
+              aria-expanded={true}
+              title={t("canvas.stageSidebarCollapse")}
+              className="shrink-0 w-6 h-6 -mr-1 rounded-md text-slate-400 hover:bg-slate-100 hover:text-violet-600 flex items-center justify-center"
+            >
+              <span aria-hidden="true">«</span>
+            </button>
+          )}
+        </div>
         <div className="mt-2 h-1.5 rounded-full bg-slate-100 overflow-hidden">
           <div className="h-full bg-violet-500 rounded-full" style={{ width: `${pct}%` }} />
         </div>

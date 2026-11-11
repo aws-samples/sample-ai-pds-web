@@ -116,6 +116,28 @@ describe("Workspace page", () => {
     expect(screen.getByRole("button", { name: "생성된 문서 열기" })).toHaveAttribute("aria-expanded", "false");
   });
 
+  it("collapses the stage sidebar to a rail, widens the other columns, and remembers it", async () => {
+    window.localStorage.removeItem("aipds.workspace.stagesCollapsed");
+    server.use(http.get(`${API_BASE_URL}/projects/p1/state`, () => HttpResponse.json(projectState)));
+    mockWorkspaceStream();
+    const { unmount } = await act(async () => render(<WorkspacePage params={params} />));
+    await screen.findByLabelText("단계 진행 상황");
+    const grid = () => screen.getByLabelText("컨텍스트 패널").parentElement!;
+
+    await userEvent.click(screen.getByRole("button", { name: "단계 패널 접기" }));
+    expect(grid().className).toContain("lg:grid-cols-[3rem_1fr_1fr]");
+    expect(window.localStorage.getItem("aipds.workspace.stagesCollapsed")).toBe("1");
+
+    unmount();
+    await act(async () => {
+      render(<WorkspacePage params={params} />);
+    });
+    expect(await screen.findByRole("button", { name: "단계 패널 펼치기" })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "단계 패널 펼치기" }));
+    expect(grid().className).toContain("lg:grid-cols-[1fr_5fr_5fr]");
+    expect(window.localStorage.getItem("aipds.workspace.stagesCollapsed")).toBe("0");
+  });
+
   // A round where a document must be read before answering, like an approval gate — open it
   // right above the question form.
   it("offers a 'View {document}' button above the question form that opens the drawer", async () => {

@@ -70,6 +70,8 @@ export const en: Record<keyof typeof ko, string> = {
   "canvas.stageReopen": "Reopen",
   "canvas.stageRestart": "Redo",
   "canvas.scopeChange": "Request a scope change",
+  "canvas.stageSidebarCollapse": "Collapse the phase panel",
+  "canvas.stageSidebarExpand": "Expand the phase panel",
   "canvas.stageRequestHint": "Fills the chat input with a request. Add your reason and send it — the impact is confirmed with you before anything changes.",
   "canvas.tabDocument": "Document",
   "canvas.tabPreview": "Preview",

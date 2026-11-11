@@ -107,4 +107,26 @@ describe("StageSidebar", () => {
     render(<StageSidebar state={projectState} events={[]} onRequest={vi.fn()} busy />);
     for (const b of screen.getAllByRole("button")) expect(b).toBeDisabled();
   });
+
+  it("collapses to a rail that keeps each capability's status and the count", async () => {
+    const user = userEvent.setup();
+    const onToggle = vi.fn();
+    const { rerender } = render(<StageSidebar state={projectState} events={[]} onToggle={onToggle} />);
+    await user.click(screen.getByRole("button", { name: "단계 패널 접기" }));
+    expect(onToggle).toHaveBeenCalledTimes(1);
+
+    rerender(<StageSidebar state={projectState} events={[]} onToggle={onToggle} collapsed onRequest={vi.fn()} />);
+    expect(screen.getByLabelText("단계 진행 상황")).toBeInTheDocument();
+    for (const c of projectState.capabilities) expect(screen.getByTitle(c.name)).toBeInTheDocument();
+    // The rail has no room for the stage-request buttons or hints.
+    expect(screen.queryByRole("button", { name: "다시 열기" })).toBeNull();
+    expect(screen.queryByText("이 경로에 없음")).toBeNull();
+    await user.click(screen.getByRole("button", { name: "단계 패널 펼치기" }));
+    expect(onToggle).toHaveBeenCalledTimes(2);
+  });
+
+  it("shows no collapse toggle without a handler", () => {
+    render(<StageSidebar state={projectState} events={[]} />);
+    expect(screen.queryByRole("button", { name: "단계 패널 접기" })).toBeNull();
+  });
 });
