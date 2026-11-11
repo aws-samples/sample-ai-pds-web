@@ -106,7 +106,8 @@ describe("Workspace page", () => {
     });
     await screen.findByLabelText("단계 진행 상황");
     const grid = screen.getByLabelText("컨텍스트 패널").parentElement!;
-    expect(grid.className).toContain("lg:grid-cols-[1fr_5fr_5fr]");
+    // The stage sidebar starts collapsed; chat and questions split the rest evenly.
+    expect(grid.className).toContain("lg:grid-cols-[3rem_1fr_1fr]");
     const tab = screen.getByRole("button", { name: "생성된 문서 열기" });
     expect(tab).toHaveAttribute("aria-expanded", "false");
 
@@ -116,26 +117,27 @@ describe("Workspace page", () => {
     expect(screen.getByRole("button", { name: "생성된 문서 열기" })).toHaveAttribute("aria-expanded", "false");
   });
 
-  it("collapses the stage sidebar to a rail, widens the other columns, and remembers it", async () => {
+  it("starts with the stage sidebar collapsed, and remembers an expand", async () => {
     window.localStorage.removeItem("aipds.workspace.stagesCollapsed");
     server.use(http.get(`${API_BASE_URL}/projects/p1/state`, () => HttpResponse.json(projectState)));
     mockWorkspaceStream();
     const { unmount } = await act(async () => render(<WorkspacePage params={params} />));
     await screen.findByLabelText("단계 진행 상황");
     const grid = () => screen.getByLabelText("컨텍스트 패널").parentElement!;
-
-    await userEvent.click(screen.getByRole("button", { name: "단계 패널 접기" }));
     expect(grid().className).toContain("lg:grid-cols-[3rem_1fr_1fr]");
-    expect(window.localStorage.getItem("aipds.workspace.stagesCollapsed")).toBe("1");
+
+    await userEvent.click(screen.getByRole("button", { name: "단계 패널 펼치기" }));
+    expect(grid().className).toContain("lg:grid-cols-[1fr_5fr_5fr]");
+    expect(window.localStorage.getItem("aipds.workspace.stagesCollapsed")).toBe("0");
 
     unmount();
     await act(async () => {
       render(<WorkspacePage params={params} />);
     });
-    expect(await screen.findByRole("button", { name: "단계 패널 펼치기" })).toBeInTheDocument();
-    await userEvent.click(screen.getByRole("button", { name: "단계 패널 펼치기" }));
-    expect(grid().className).toContain("lg:grid-cols-[1fr_5fr_5fr]");
-    expect(window.localStorage.getItem("aipds.workspace.stagesCollapsed")).toBe("0");
+    expect(await screen.findByRole("button", { name: "단계 패널 접기" })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "단계 패널 접기" }));
+    expect(grid().className).toContain("lg:grid-cols-[3rem_1fr_1fr]");
+    expect(window.localStorage.getItem("aipds.workspace.stagesCollapsed")).toBe("1");
   });
 
   // A round where a document must be read before answering, like an approval gate — open it

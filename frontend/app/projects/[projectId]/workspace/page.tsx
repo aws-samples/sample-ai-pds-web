@@ -27,8 +27,8 @@ import {
   checkUpload, problemFromError, uploadProblemText, type UploadProblem,
 } from "@/lib/uploads";
 
-// The workspace screen — grid ratio 1:5:5 (left stages : chat : context); the stage
-// sidebar can collapse to a 3rem rail, and chat and context then split the rest 1:1. The
+// The workspace screen — the stage sidebar starts collapsed to a 3rem rail with chat and
+// context splitting the rest 1:1; expanded, the grid is 1:5:5 (left stages : chat : context). The
 // generated document opens in a drawer (WorkspaceDocPanel) laid OVER the grid
 // rather than taking a column: as a 4th column (1:3.5:3.5:4) it left the
 // question form 412px at 1440px (AI-PDS team feedback, 2026-10). The grid keeps a
@@ -66,13 +66,14 @@ export default function WorkspacePage({ params }: { params: Promise<{ projectId:
   // Do not show the start card to read-only members — that button sends the first turn.
   const showWelcome = !readOnly && !historyLoading && items.length === 0 && !pendingQuestions
     && !streaming;
-  // Stage sidebar collapsed to a rail. Remembered per browser; read after mount so the first
-  // paint matches the server HTML (same reason as the ?draft= effect below).
-  const [stagesCollapsed, setStagesCollapsed] = useState(false);
+  // Stage sidebar collapsed to a rail — collapsed by default so chat and context get the width.
+  // An explicit expand is remembered per browser; read after mount so the first paint matches
+  // the server HTML (same reason as the ?draft= effect below).
+  const [stagesCollapsed, setStagesCollapsed] = useState(true);
   useEffect(() => {
     try {
-      if (window.localStorage.getItem(STAGES_COLLAPSED_KEY) === "1") setStagesCollapsed(true);
-    } catch { /* storage unavailable — stay expanded */ }
+      if (window.localStorage.getItem(STAGES_COLLAPSED_KEY) === "0") setStagesCollapsed(false);
+    } catch { /* storage unavailable — stay collapsed */ }
   }, []);
   const toggleStages = useCallback(() => {
     setStagesCollapsed((prev) => {
