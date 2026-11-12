@@ -24,7 +24,7 @@ from __future__ import annotations
 
 from pathlib import PurePosixPath
 
-from aipds.proto.layout import CHANGE_HISTORY
+from aipds.proto.layout import CHANGE_HISTORY, DEMO_NOTES
 
 #: Supported languages. Must be the same set as workspace_rules._LANGUAGES.
 _LANGUAGES = ("ko", "en")
@@ -373,6 +373,16 @@ def web_owned_doc(language: str, path: str) -> str:
         return (f"거부됨 — '{path}'는 AI-PDS Web이 관리하는 파일이다. 빌드 세션마다 "
                 "바꾼 것을 덧붙이고, 다음 빌드 세션이 입력으로 읽는다. 명세 정합성 "
                 "패스의 근거로 읽고, 결론은 같은 디렉터리의 'spec-as-built.md'에 쓸 것.")
+    if PurePosixPath(path).name == DEMO_NOTES:
+        if _lang(language) == "en":
+            return (f"Refused — '{path}' is maintained by AI-PDS Web and is "
+                    "rewritten from the demo records in the Prototypes tab, so "
+                    "anything written there is lost. Read it as the demo feedback "
+                    "Step 6 imports, and write your synthesis to "
+                    "'validation-results.md' in the same directory.")
+        return (f"거부됨 — '{path}'는 AI-PDS Web이 관리하는 파일이며 Prototypes 탭의 "
+                "시연 기록으로 다시 쓰이므로, 여기에 쓴 내용은 사라진다. Step 6이 가져오는 "
+                "시연 피드백으로 읽고, 종합은 같은 디렉터리의 'validation-results.md'에 쓸 것.")
     if _lang(language) == "en":
         return (f"Refused — '{path}' is maintained by AI-PDS Web and is "
                 "rewritten from the survey responses on every 'Synthesize "

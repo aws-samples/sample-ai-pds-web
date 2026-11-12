@@ -43,6 +43,7 @@ from aipds.proto.source import newest_source_mtime, source_entries
 # create a cycle.
 from aipds.routes.proto_public import access_url_path
 from aipds.survey.store import survey_summary
+from aipds.proto import demo_notes
 from aipds.proto import layout as proto_layout
 
 _log = logging.getLogger(__name__)
@@ -730,6 +731,48 @@ async def reset_prototype(pid: str, slug: str):
         raise HTTPException(
             status_code=502,
             detail=f"{ec.INIT_INCOMPLETE}:{','.join(failures)}")
+    return Response(status_code=204)
+
+
+# ---- demo records (proto/demo_notes.py) ----
+
+@router.get("/projects/{pid}/prototypes/{slug}/demo-records")
+async def list_demo_records(pid: str, slug: str):
+    import aipds.app as app_module
+    _require_registered(pid)
+    records = await demo_notes.load(app_module.s3_store_factory(pid), slug)
+    return {"records": [r.model_dump() for r in records],
+            "path": demo_notes.notes_key(slug) if records else None}
+
+
+@router.post("/projects/{pid}/prototypes/{slug}/demo-records", status_code=201)
+async def add_demo_record(pid: str, slug: str, body: demo_notes.DemoRecordIn):
+    import aipds.app as app_module
+    _require_registered(pid)
+    s3 = app_module.s3_store_factory(pid)
+    # A record for a prototype that has no spec would render next to nothing Discovery reads.
+    try:
+        await s3.get(proto_layout.spec_key(slug))
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="prototype spec not found")
+    record = await demo_notes.add(s3, slug, body,
+                                  language=app_module.project_language(pid))
+    return {"record": record.model_dump(), "path": demo_notes.notes_key(slug)}
+
+
+@router.delete("/projects/{pid}/prototypes/{slug}/demo-records/{record_id}",
+               status_code=204)
+async def delete_demo_record(pid: str, slug: str, record_id: str):
+    import aipds.app as app_module
+    _require_registered(pid)
+    try:
+        reject_unsafe_segment(record_id)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="invalid record id")
+    removed = await demo_notes.remove(app_module.s3_store_factory(pid), slug, record_id,
+                                      language=app_module.project_language(pid))
+    if not removed:
+        raise HTTPException(status_code=404, detail="no such record")
     return Response(status_code=204)
 
 

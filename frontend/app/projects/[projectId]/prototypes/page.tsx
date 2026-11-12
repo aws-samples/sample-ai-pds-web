@@ -7,6 +7,7 @@ import { AppHeader } from "@/components/AppHeader";
 import { PrototypeCard } from "@/components/prototypes/PrototypeCard";
 import { BuildPanel } from "@/components/prototypes/BuildPanel";
 import { SurveyPanel } from "@/components/prototypes/SurveyPanel";
+import { DemoPanel } from "@/components/prototypes/DemoPanel";
 import {
   listPrototypes,
   prototypeArchiveUrl,
@@ -284,6 +285,11 @@ export default function PrototypesPage({ params }: { params: Promise<{ projectId
         {surveySlug && (
           <div className="mt-8 border-t border-slate-200 pt-6">
             <SurveyPanel projectId={projectId} slug={surveySlug} readOnly={readOnly} />
+            {/* The in-person route for the same Step 5, shown with the survey because both are
+                validation feedback for this prototype. */}
+            <div className="mt-8 border-t border-slate-100 pt-6">
+              <DemoPanel projectId={projectId} slug={surveySlug} readOnly={readOnly} />
+            </div>
           </div>
         )}
       </main>
