@@ -1563,6 +1563,65 @@ async def test_a_session_that_decided_nothing_has_no_decisions_block(tmp_path):
     assert "빌더 결정" not in s3.blobs[HISTORY_KEY]
 
 
+async def test_what_the_user_typed_is_quoted_in_the_history_entry(tmp_path):
+    """Observed (a workshop run): a business rule and a design change were asked for in the
+    build chat, and the history recorded only what the builder did — Discovery could not tell
+    the user's decision from the builder's guess."""
+    s3 = FakeS3Store()
+    s3.blobs[SPEC_KEY] = "# spec"
+    builder = FakeBuilder()
+    session = _session(s3, tmp_path, builder)
+    await session.start()
+
+    builder.script([AgentEvent(kind="message", text="ok"), AgentEvent(kind="done")])
+    [ev async for ev in session.send_message("wrapped opening", user_text="정렬을 최신순으로")]
+    builder.script([_complete_event(changes="정렬 변경"), AgentEvent(kind="done")])
+    [ev async for ev in session.send_message("회사 색을 입혀 줘\n## 이건 제목이 아님",
+                                             user_text="회사 색을 입혀 줘\n## 이건 제목이 아님")]
+
+    history = s3.blobs[HISTORY_KEY]
+    assert "**사용자 요청 (빌드 대화 원문)**" in history
+    assert "> - 정렬을 최신순으로" in history
+    assert "> - 회사 색을 입혀 줘" in history
+    # The wrapped opening prompt is what the agent got, not what the user said.
+    assert "wrapped opening" not in history
+    # A user line that looks like an entry heading is quoted, so it cannot start an entry.
+    assert ">   ## 이건 제목이 아님" in history
+    assert history.index("**사용자 요청") < history.index("**변경**")
+
+
+async def test_a_session_with_no_typed_request_has_no_requests_block(tmp_path):
+    """The automatic first turn (no user text) leaves the entry in its old shape."""
+    s3 = FakeS3Store()
+    s3.blobs[SPEC_KEY] = "# spec"
+    builder = FakeBuilder()
+    session = _session(s3, tmp_path, builder)
+    await session.start()
+
+    builder.script([_complete_event(changes="첫 빌드"), AgentEvent(kind="done")])
+    [ev async for ev in session.send_message("opening prompt", user_text=None)]
+
+    assert "사용자 요청" not in s3.blobs[HISTORY_KEY]
+
+
+def test_the_requests_block_keeps_builder_decisions_readable():
+    """Readers find the decisions block by its bold label; quoted requests must not hide it."""
+    from aipds.proto.prompts import change_history_entry
+    from aipds.survey.inputs import builder_decisions
+    entry = change_history_entry("ko", at="2026-01-01 00:00 UTC", gen=2, summary="s",
+                                 changes="c", decisions="기본값 7일",
+                                 requests=["**굵게** 쓴 요청", "두 번째"])
+    assert builder_decisions(entry) == "기본값 7일"
+
+
+def test_long_sessions_keep_their_latest_requests():
+    from aipds.proto.prompts import change_history_entry
+    entry = change_history_entry("en", at="t", gen=None, summary="s", changes="c",
+                                 requests=[f"request {i}" for i in range(20)])
+    assert "request 19" in entry and "request 0\n" not in entry
+    assert "(8 earlier)" in entry
+
+
 async def test_the_change_history_accumulates_across_sessions(tmp_path):
     s3 = FakeS3Store()
     s3.blobs[SPEC_KEY] = "# spec"
