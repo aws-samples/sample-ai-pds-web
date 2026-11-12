@@ -12,7 +12,7 @@ export const workspace: ManualSection = {
     },
     {
       kind: "md",
-      md: `- **Left column · phases** — the six AI-PDS phases (Envision · Use Case Intake · Prioritize · Prototype · Product Strategy · Go-to-Market) and where you are. A phase the path you took does not pass through reads *Not on this path* and is left out of the count.
+      md: `- **Left column · phases** — the six AI-PDS phases (Envision · Use Case Intake · Prioritize · Prototype · Product Strategy · Go-to-Market) and where you are. A phase the path you took does not pass through reads *Not on this path* and is left out of the count. When a validation survey is open in the Prototypes tab, the Prototype phase shows *validation survey(s) open · N responses* with a link to the tab, so a survey still collecting responses is not forgotten and reported as "validated without a survey".
 - **Middle column · the conversation** — what you and the AI say to each other. This is where you direct the work and where decisions are made.
 - **Right column · answering questions** — where you answer the question sheets the AI raises. When there is no question, the prototype preview or the list of recent artifacts takes its place.
 - **The generated document** — not a column. It opens in a drawer that slides over the right side when you press the **Generated documents** tab at the right edge of the screen ([below](/manual#doc-drawer)).
@@ -142,6 +142,10 @@ the types, drop files straight onto the conversation instead.
 - Meeting transcripts: \`.vtt\` · \`.srt\` (captions downloaded from Teams, Zoom or Chime)
 - Images: \`.png\` · \`.jpg\` · \`.gif\` · \`.webp\` — screenshots, whiteboard photos, sketches
 - Size: up to 10MB per file
+
+The AI reads what you attach and may quote it in the Discovery documents, and it travels with the project
+export and the developer handoff package. For confidential originals or material with personal names or
+contact details, keep only the parts needed or mask them before attaching.
 
 Documents are **converted to text** before they reach the conversation. Formatting and
 pictures inside a document are dropped, and anything past 50,000 characters is cut. Images
