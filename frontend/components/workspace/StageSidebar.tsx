@@ -1,10 +1,12 @@
 "use client";
 // frontend/components/workspace/StageSidebar.tsx
 import { memo } from "react";
+import Link from "next/link";
 import type { CapabilityState, ProjectState, StagePayload } from "@/lib/api/types";
 import type { StageRequestKind } from "@/lib/stageRequests";
 import { progressPercent, stageCounts } from "@/lib/stageProgress";
 import { useT } from "@/lib/i18n/provider";
+import type { SurveyStatus } from "@/lib/surveyStatus";
 
 // The six capabilities to show: the newest snapshot a live "stage" event
 // carried, else the server's (GET /state — aiplc-state.md's parsed snapshot,
@@ -148,6 +150,8 @@ export const StageSidebar = memo(function StageSidebar({
   busy = false,
   collapsed = false,
   onToggle,
+  survey = null,
+  prototypesHref,
 }: {
   state: ProjectState | null;
   events: StagePayload[];
@@ -160,6 +164,10 @@ export const StageSidebar = memo(function StageSidebar({
   collapsed?: boolean;
   // Omitted → no toggle button (the panel stays expanded).
   onToggle?: () => void;
+  // A validation survey running in the Prototypes tab (lib/surveyStatus.ts). Shown under the
+  // Prototype stage, because that tab is where it lives and this screen otherwise never says so.
+  survey?: SurveyStatus | null;
+  prototypesHref?: string;
 }) {
   const t = useT();
   const capabilities = latestCapabilities(state, events);
@@ -227,7 +235,24 @@ export const StageSidebar = memo(function StageSidebar({
       </div>
       <nav className="flex-1 overflow-y-auto p-3 text-sm space-y-0.5">
         {capabilities.map((cap, i) => (
-          <CapabilityRow key={cap.key} cap={cap} index={i} onRequest={onRequest} busy={busy} />
+          <div key={cap.key}>
+            <CapabilityRow cap={cap} index={i} onRequest={onRequest} busy={busy} />
+            {cap.key === "prototype" && survey && (
+              <p className="ml-9 -mt-0.5 mb-1 text-[11px] text-amber-700" role="status">
+                {t("canvas.surveyRunning")
+                  .replace("{open}", String(survey.open))
+                  .replace("{n}", String(survey.responses))}
+                {prototypesHref && (
+                  <>
+                    {" · "}
+                    <Link href={prototypesHref} className="underline hover:text-violet-700">
+                      {t("canvas.surveyOpenTab")}
+                    </Link>
+                  </>
+                )}
+              </p>
+            )}
+          </div>
         ))}
       </nav>
       <div className="p-3 border-t border-slate-100 text-[11px] text-slate-400 leading-relaxed">

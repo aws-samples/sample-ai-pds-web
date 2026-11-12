@@ -71,6 +71,8 @@ export const ko = {
   "canvas.discoveryProgress": "Discovery 진행",
   "canvas.stageUnit": "단계",
   "canvas.capabilityNotApplicable": "이 경로에 없음",
+  "canvas.surveyRunning": "검증 설문 진행 중 {open}개 · 응답 {n}건",
+  "canvas.surveyOpenTab": "Prototypes 탭에서 보기",
   "canvas.sidebarAdaptive": "워크플로우는 작업에 적응합니다.",
   "canvas.sidebarHintPrefix": "채팅으로",
   "canvas.sidebarHintBold": "되돌아가기·건너뛰기",

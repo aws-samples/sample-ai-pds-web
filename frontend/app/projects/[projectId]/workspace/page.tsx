@@ -16,6 +16,8 @@ import { AttachFilesModal } from "@/components/workspace/AttachFilesModal";
 import { QuestionForm } from "@/components/questions/QuestionForm";
 import { HandoffReadyBanner } from "@/components/handoff/HandoffReadyBanner";
 import { getState, uploadFile } from "@/lib/api/client";
+import { listPrototypes } from "@/lib/api/prototypes";
+import { surveyStatus } from "@/lib/surveyStatus";
 import { useAsync } from "@/lib/useAsync";
 import { useProjectMeta } from "@/lib/useProjectModel";
 import { useWorkspaceStream } from "@/lib/useWorkspaceStream";
@@ -54,6 +56,10 @@ export default function WorkspacePage({ params }: { params: Promise<{ projectId:
   // ends, and that judgment is made by the state file (capability), not live events
   // (HandoffReadyBanner header).
   const reloadState = state.reload;
+  // Re-read after each turn so a survey opened in the Prototypes tab shows up here without a
+  // reload. A failure only hides the line — the sidebar never depends on it.
+  const prototypes = useAsync(() => listPrototypes(projectId), [projectId, turnSeq]);
+  const survey = surveyStatus(prototypes.data?.prototypes ?? []);
   useEffect(() => {
     if (stages.length) reloadState();
   }, [stages.length, reloadState]);
@@ -255,7 +261,8 @@ export default function WorkspacePage({ params }: { params: Promise<{ projectId:
       <div className={`relative flex-1 grid min-h-0 grid-cols-1 pr-9 overflow-clip ${stagesCollapsed ? "lg:grid-cols-[3rem_1fr_1fr]" : "lg:grid-cols-[1fr_5fr_5fr]"}`}>
         <StageSidebar state={state.data} events={stages}
                       onRequest={readOnly ? undefined : draftStageRequest} busy={streaming}
-                      collapsed={stagesCollapsed} onToggle={toggleStages} />
+                      collapsed={stagesCollapsed} onToggle={toggleStages}
+                      survey={survey} prototypesHref={`/projects/${projectId}/prototypes`} />
 
         <main
           className="relative flex flex-col min-w-0 min-h-0 bg-slate-50"
