@@ -188,6 +188,11 @@ def change_history_key(prototype_id: str) -> str:
 SURVEY_AGGREGATE = "survey-aggregate.md"
 
 
+#: Demo sessions recorded in the Prototypes tab, rendered for Step 6 (proto/demo_notes.py). Web-owned
+#: like the survey aggregate: rewritten from the records on every change.
+DEMO_NOTES = "demo-notes.md"
+
+
 def survey_aggregate_key(prototype_id: str) -> str:
     """id → survey aggregate path. Same directory as the spec (same reason as the questionnaire copy)."""
     return f"{artifact_dir(prototype_id)}/{SURVEY_AGGREGATE}"

@@ -91,7 +91,8 @@ def write_denial(path: str | None, workspace: str) -> str | None:
 #: for the same reason as the prototype-side gate, this is blocked by a hook, not prose. Deciding by
 #: name works because these names are used only by the web app (they are not in the upstream
 #: rules). Files whose names could collide are not put here.
-WEB_OWNED_NAMES = frozenset({layout.SURVEY_AGGREGATE, layout.CHANGE_HISTORY})
+WEB_OWNED_NAMES = frozenset({layout.SURVEY_AGGREGATE, layout.CHANGE_HISTORY,
+                             layout.DEMO_NOTES})
 
 
 def web_owned_denial(path: str | None, workspace: str) -> str | None:

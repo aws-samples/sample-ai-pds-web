@@ -17,7 +17,7 @@ export const survey: ManualSection = {
     },
     {
       kind: "md",
-      md: `Surveys start from the **Survey** button on a prototype card. One prototype carries one survey.`,
+      md: `Surveys start from the **Validation** button on a prototype card. One prototype carries one survey.`,
     },
     {
       kind: "mockup",
@@ -121,6 +121,20 @@ never erases it. If you heard feedback outside the survey or have interview note
 
 If a hypothesis was contradicted, the point of the loop is not to stop at editing the document —
 change the prototype too ([continue improving](/manual#complete-card)) and ask again.`,
+    },
+    { kind: "heading", id: "demo-notes", text: "Demo notes" },
+    {
+      kind: "md",
+      md: `In a one-day workshop with no time for a survey, show the screens to 3–5 target users in person and
+record it under **Demo notes** in the **Validation** area. Record participants by role and count
+(no names), each task they tried with an outcome (done, stuck, not tried) and a note, and what
+you observed.
+
+Every save is written next to the spec as \`demo-notes.md\`, with the build generation that was
+shown. **Bring into Discovery** fills a request into the workspace input, and the agent reads the
+file as the "interviews or demos" feedback the validation rule describes and synthesizes it into
+\`validation-results.md\`. Records survive a prototype reset. Recording is optional; skipping
+validation is still possible.`,
     },
   ],
 };

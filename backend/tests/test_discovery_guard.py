@@ -315,3 +315,10 @@ def test_notebook_edit_is_judged_like_a_write():
     assert write_denial(tool_write_path("NotebookEdit", {"notebook_path": "/ws/x.ipynb"}),
                         WS) == "x.ipynb"
     assert tool_write_path("Read", {"file_path": "/ws/a"}) is None
+
+
+def test_the_demo_notes_are_web_owned():
+    """Rewritten from the Prototypes tab's records on every change, like the survey aggregate."""
+    for layout_dir in ("aiplc-docs/discovery/prototype", "aiplc-docs/discovery/prototypes/x"):
+        path = f"{layout_dir}/demo-notes.md"
+        assert web_owned_denial(f"/ws/{path}", "/ws") == path

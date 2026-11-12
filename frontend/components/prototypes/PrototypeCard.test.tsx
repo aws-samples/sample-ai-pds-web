@@ -554,7 +554,7 @@ describe("PrototypeCard — 설문 표시", () => {
                      shareUrl="https://example.com/proto/t/x" />,
     );
     const names = screen.getAllByRole("button").map((b) => b.textContent);
-    expect(names).toEqual(["프리뷰 열기", "링크 복사", "로그", "설문"]);
+    expect(names).toEqual(["프리뷰 열기", "링크 복사", "로그", "검증"]);
     expect(screen.getByRole("link", { name: "다운로드" })).toBeInTheDocument();
   });
 

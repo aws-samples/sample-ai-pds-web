@@ -240,7 +240,7 @@ describe("survey panel reachability", () => {
     expect(await screen.findByText("todo-app")).toBeInTheDocument();
     expect(screen.queryByText("검증 설문")).not.toBeInTheDocument();
 
-    const surveyButtons = screen.getAllByRole("button", { name: "설문" });
+    const surveyButtons = screen.getAllByRole("button", { name: "검증" });
     await userEvent.click(surveyButtons[0]);
 
     // The panel is now rendered in the page body — NOT behind the build
@@ -260,7 +260,7 @@ describe("survey panel reachability", () => {
     );
     render(<PrototypesPage params={params} />);
 
-    await userEvent.click((await screen.findAllByRole("button", { name: "설문" }))[0]);
+    await userEvent.click((await screen.findAllByRole("button", { name: "검증" }))[0]);
     await screen.findByText("검증 설문");
     // No build session was started, and the drawer's own controls are absent.
     expect(startBuild).not.toHaveBeenCalled();
@@ -276,7 +276,7 @@ describe("survey panel reachability", () => {
     );
     render(<PrototypesPage params={params} />);
 
-    const btn = (await screen.findAllByRole("button", { name: "설문" }))[0];
+    const btn = (await screen.findAllByRole("button", { name: "검증" }))[0];
     await userEvent.click(btn);
     expect(await screen.findByText("검증 설문")).toBeInTheDocument();
     await userEvent.click(btn);

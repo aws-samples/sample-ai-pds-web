@@ -2424,3 +2424,44 @@ def test_an_auto_start_turn_records_that_there_was_nothing_to_show(proto_env, mo
 
 def test_history_for_an_unknown_project_is_404(proto_env):
     assert client.get(f"/projects/nope/prototypes/{SLUG}/history").status_code == 404
+
+
+# ---- demo records ----
+
+_DEMO = {"participants": [{"role": "store manager", "count": 2}],
+         "tasks": [{"task": "find today's work", "outcome": "done", "note": ""}],
+         "notes": "asked for a bigger font"}
+
+
+def test_demo_records_round_trip_and_render_for_step_6(proto_env):
+    s3 = proto_env["s3"]
+    _seed_spec(s3)
+    resp = client.post(f"/projects/{PID}/prototypes/{SLUG}/demo-records", json=_DEMO)
+    assert resp.status_code == 201
+    rid = resp.json()["record"]["id"]
+    notes = f"aiplc-docs/discovery/prototypes/{SLUG}/demo-notes.md"
+    assert resp.json()["path"] == notes
+    assert "store manager 2" in s3.blobs[notes]
+
+    listed = client.get(f"/projects/{PID}/prototypes/{SLUG}/demo-records").json()
+    assert [r["id"] for r in listed["records"]] == [rid]
+
+    assert client.delete(
+        f"/projects/{PID}/prototypes/{SLUG}/demo-records/{rid}").status_code == 204
+    assert notes not in s3.blobs
+    assert client.get(f"/projects/{PID}/prototypes/{SLUG}/demo-records").json() == {
+        "records": [], "path": None}
+
+
+def test_a_demo_record_needs_a_spec_and_participants(proto_env):
+    assert client.post(f"/projects/{PID}/prototypes/{SLUG}/demo-records",
+                       json=_DEMO).status_code == 404
+    _seed_spec(proto_env["s3"])
+    assert client.post(f"/projects/{PID}/prototypes/{SLUG}/demo-records",
+                       json={**_DEMO, "participants": []}).status_code == 422
+
+
+def test_deleting_an_unknown_demo_record_is_404(proto_env):
+    _seed_spec(proto_env["s3"])
+    assert client.delete(
+        f"/projects/{PID}/prototypes/{SLUG}/demo-records/nope").status_code == 404
