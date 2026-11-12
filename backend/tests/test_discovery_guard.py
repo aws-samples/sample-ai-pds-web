@@ -29,6 +29,7 @@ from __future__ import annotations
 import pytest
 
 from aipds.agent.discovery_guard import (audit_overwrite_denial, bash_denial,
+                                         bash_write_denial,
                                          web_owned_denial, write_denial)
 
 WS = "/ws"
@@ -189,23 +190,88 @@ def test_dev_servers_are_denied():
 def test_redirection_outside_aiplc_docs_is_denied():
     """Blocking Write is not enough: one line of Bash bypasses the gate, so the same
     boundary is checked here too."""
-    assert bash_denial("echo '<html>' > prototype/index.html") is not None
-    assert bash_denial("cat <<EOF >> app.js") is not None
-    assert bash_denial("echo x | tee prototype/style.css") is not None
+    assert bash_write_denial("echo '<html>' > prototype/index.html") is not None
+    assert bash_write_denial("cat <<EOF >> app.js") is not None
+    assert bash_write_denial("echo x | tee prototype/style.css") is not None
 
 
 def test_redirection_into_aiplc_docs_is_allowed():
     """There is no reason to block writing an artifact through the shell as such."""
-    assert bash_denial("echo '# note' > aiplc-docs/audit.md") is None
-    assert bash_denial("echo x >> aiplc-docs/discovery/notes.md") is None
+    assert bash_write_denial("echo '# note' > aiplc-docs/audit.md") is None
+    assert bash_write_denial("echo x >> aiplc-docs/discovery/notes.md") is None
 
 
 def test_fd_redirections_are_not_mistaken_for_files():
     """`2>&1` is fd duplication, not a file. Reading it as a file would block every common
     idiom, which in turn creates pressure to turn the gate off."""
-    assert bash_denial("grep -r foo aiplc-docs/ 2>&1") is None
-    assert bash_denial("ls -la 2>/dev/null") is None
-    assert bash_denial("find . -name '*.md' 2>/dev/null | head") is None
+    assert bash_write_denial("grep -r foo aiplc-docs/ 2>&1") is None
+    assert bash_write_denial("ls -la 2>/dev/null") is None
+    assert bash_write_denial("find . -name '*.md' 2>/dev/null | head") is None
+
+
+SHELL_WS = "/opt/aipds/workspaces/sample"
+
+
+def test_a_redirection_after_cd_into_aiplc_docs_is_allowed():
+    """Observed (a workshop run): `cd <ws>/aiplc-docs; cat >> discovery/<doc>.md` was
+    refused because the target was read as workspace-relative. It resolves from the
+    directory the shell is in at that point."""
+    assert bash_write_denial(
+        f"cd {SHELL_WS}/aiplc-docs; cat >> discovery/discovery-document.md <<'EOF'\nx\nEOF",
+        SHELL_WS) is None
+    assert bash_write_denial("cd aiplc-docs && echo x > discovery/notes.md", SHELL_WS) is None
+    assert bash_write_denial("cd aiplc-docs/discovery && echo x >> ../audit.md", SHELL_WS) is None
+
+
+def test_cd_does_not_open_a_way_out():
+    """Following cd must not turn a write outside into an allowed one."""
+    assert bash_write_denial("cd aiplc-docs && echo x > ../prototype/index.html", SHELL_WS) is not None
+    assert bash_write_denial("cd prototype && echo x > index.html", SHELL_WS) is not None
+    assert bash_write_denial("cd /tmp && echo x > aiplc-docs/notes.md", SHELL_WS) is not None
+    assert bash_write_denial("cd .. && echo x > aiplc-docs/notes.md", SHELL_WS) is not None
+
+
+def test_a_subshell_cd_ends_at_its_parenthesis():
+    assert bash_write_denial("(cd aiplc-docs && echo x > a.md) && echo y > b.md", SHELL_WS) == "b.md"
+    assert bash_write_denial("(cd aiplc-docs && echo x > a.md)", SHELL_WS) is None
+
+
+def test_an_unfollowable_cd_falls_back_to_the_workspace():
+    """`cd -`, `~` or a variable cannot be placed; targets read as workspace-relative,
+    the same as before cd was followed."""
+    assert bash_write_denial('cd "$DIR" && echo x > aiplc-docs/a.md', SHELL_WS) is None
+    assert bash_write_denial("cd - && echo x > notes.md", SHELL_WS) is not None
+
+
+def test_absolute_targets_inside_aiplc_docs_are_allowed():
+    assert bash_write_denial(f"echo x >> {SHELL_WS}/aiplc-docs/discovery/notes.md", SHELL_WS) is None
+    assert bash_write_denial(f"echo x > {SHELL_WS}/prototype/index.html", SHELL_WS) is not None
+    assert bash_write_denial("echo x > /tmp/out.md", SHELL_WS) is not None
+    # Without a workspace an absolute target cannot be placed, so it is refused.
+    assert bash_write_denial(f"echo x > {SHELL_WS}/aiplc-docs/a.md") is not None
+
+
+def test_heredoc_bodies_are_text_not_shell():
+    """A markdown quote line (`> note`) or an apostrophe in a document body is not a
+    redirection or a quote; the opening line still decides by its own target."""
+    body = "# Title\n> a quoted note\nthe user's view\nnpm run dev is how they start it"
+    cmd = f"cat >> aiplc-docs/discovery/notes.md <<'EOF'\n{body}\nEOF\necho done"
+    assert bash_write_denial(cmd, SHELL_WS) is None
+    assert bash_denial(cmd) is None
+    assert bash_write_denial(f"cat > prototype/index.html <<EOF\n{body}\nEOF", SHELL_WS) is not None
+
+
+def test_a_heredoc_fed_to_a_shell_is_still_checked():
+    """`bash <<EOF` runs its body, so the body is commands and stays in the decision."""
+    assert bash_denial("bash <<'EOF'\nnpm install\nEOF") == "npm"
+    assert bash_write_denial("sh <<EOF\necho x > prototype/a.html\nEOF", SHELL_WS) is not None
+
+
+def test_build_commands_and_writes_are_reported_separately():
+    """A refused write must not carry the build wording (see claude_driver): the two
+    checks are separate functions."""
+    assert bash_denial("echo x > prototype/index.html") is None
+    assert bash_write_denial("npm run dev") is None
 
 
 def test_ordinary_read_only_commands_are_allowed():
@@ -220,6 +286,8 @@ def test_ordinary_read_only_commands_are_allowed():
 def test_an_empty_command_is_not_denied():
     assert bash_denial("") is None
     assert bash_denial(None) is None
+    assert bash_write_denial("") is None
+    assert bash_write_denial(None) is None
 
 
 def test_the_denial_names_what_was_refused():
@@ -227,7 +295,7 @@ def test_the_denial_names_what_was_refused():
     otherwise the model retries the same command in a different form and gets stuck in a
     loop."""
     assert "npm" in bash_denial("npm run dev")
-    assert "prototype/index.html" in bash_denial("echo x > prototype/index.html")
+    assert "prototype/index.html" in bash_write_denial("echo x > prototype/index.html")
 
 
 # ---- CLI settings files and notebooks ----

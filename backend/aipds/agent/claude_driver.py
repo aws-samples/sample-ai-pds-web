@@ -70,7 +70,7 @@ from aipds.agent.answer_store import save_answers
 from aipds.agent.delta_buffer import WhitespaceBoundaryBuffer
 from aipds.agent.discovery_guard import (NOTEBOOK_TOOL, WRITE_TOOLS,
                                               audit_overwrite_denial, bash_denial,
-                                              settings_denial, tool_write_path,
+                                              bash_write_denial, settings_denial, tool_write_path,
                                               web_owned_denial, write_denial)
 from aipds.agent.pending_store import (clear_pending, load_pending,
                                               load_pending_file, save_pending,
@@ -1026,11 +1026,18 @@ class ClaudeDriver:
                 reason = (None if offender is None
                           else prompts.audit_overwrite(self._language, offender))
         elif name == "Bash":
-            offender = bash_denial(tool_input.get("command"))
+            command = tool_input.get("command")
+            offender = bash_denial(command)
             reason = (None if offender is None
                       else prompts.build_command_refused(self._language, offender))
             if offender is None:
-                offender = settings_denial(tool_input.get("command"))
+                # A write outside aiplc-docs/ gets the write wording, not the build wording:
+                # told "this builds a prototype", the model hunts for a build it never started.
+                offender = bash_write_denial(command, self._workspace)
+                reason = (None if offender is None
+                          else prompts.write_outside_docs(self._language, offender))
+            if offender is None:
+                offender = settings_denial(command)
                 reason = (None if offender is None
                           else prompts.cli_settings_refused(self._language, offender))
         else:
