@@ -16,6 +16,7 @@ function info(overrides: Partial<PrototypeInfo>): PrototypeInfo {
     access_url: null,
     response_count: 0,
     has_survey: false,
+    spec_as_built: false,
     ...overrides,
   };
 }
@@ -484,6 +485,7 @@ const BUILT_Q: PrototypeInfo = {
   access_url: null,
   response_count: 0,
   has_survey: false,
+  spec_as_built: false,
 };
 
 describe("호스팅 시작 중 진행 표시", () => {

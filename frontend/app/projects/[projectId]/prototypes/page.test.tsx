@@ -313,7 +313,26 @@ describe("reset confirmation", () => {
 
     const dialog = await screen.findByRole("dialog", { name: "프로토타입 초기화 확인" });
     expect(dialog).toHaveTextContent("응답 3건");
-    expect(dialog).toHaveTextContent("되돌릴 수 없습니다");
+    expect(dialog).toHaveTextContent("되살릴 수 없습니다");
+    // The change history is deleted too, and the dialog says what is kept aside first.
+    expect(dialog).toHaveTextContent("변경 이력");
+    expect(dialog).toHaveTextContent("사본을 따로 보관합니다");
+    // No spec-as-built in this listing, so no reconcile warning.
+    expect(dialog).not.toHaveTextContent("spec-as-built");
+  });
+
+  it("warns that spec-as-built needs reconciling when Discovery already wrote one", async () => {
+    const { handler } = trackedListingHandler(
+      PROTOTYPES.map((p) => ({ ...p, spec_as_built: true })));
+    server.use(handler);
+    mockStream();
+    render(<PrototypesPage params={params} />);
+    await screen.findByText("chat-widget");
+
+    await userEvent.click(await screen.findByRole("button", { name: "chat-widget 초기화" }));
+
+    const dialog = await screen.findByRole("dialog", { name: "프로토타입 초기화 확인" });
+    expect(dialog).toHaveTextContent("spec-as-built를 다시 맞춰야 합니다");
   });
 
   it("warns that responses may be unrecoverable when the click-time refetch fails", async () => {
@@ -343,10 +362,10 @@ describe("reset confirmation", () => {
 
     const dialog = await screen.findByRole("dialog", { name: "프로토타입 초기화 확인" });
     expect(dialog).toHaveTextContent("현재 응답 수를 확인하지 못했습니다");
-    expect(dialog).toHaveTextContent("되돌릴 수 없이 삭제됩니다");
+    expect(dialog).toHaveTextContent("화면에서 되살릴 수 없습니다");
     // And NOT the confident wording: the stale list said 3, but a count that
     // could not be verified must not be presented as if it had been.
-    expect(dialog).not.toHaveTextContent("응답 3건은 되돌릴 수 없습니다");
+    expect(dialog).not.toHaveTextContent("응답 3건은 설문에서 지워지며");
   });
 
   it("cancel closes the dialog without calling DELETE", async () => {

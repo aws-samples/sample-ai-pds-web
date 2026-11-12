@@ -53,7 +53,7 @@ export default function PrototypesPage({ params }: { params: Promise<{ projectId
   // 0→N transition between page-load and click silently drops the
   // irreversibility warning. `null` means the refetch itself failed — treated
   // as "unknown, assume the worst" rather than as zero.
-  const [resetTarget, setResetTarget] = useState<{ slug: string; answers: number | null } | null>(
+  const [resetTarget, setResetTarget] = useState<{ slug: string; answers: number | null; asBuilt: boolean } | null>(
     null,
   );
   const [resetError, setResetError] = useState<string | null>(null);
@@ -167,13 +167,16 @@ export default function PrototypesPage({ params }: { params: Promise<{ projectId
   async function handleReset(slug: string) {
     setResetError(null);
     let answers: number | null;
+    let asBuilt = false;
     try {
       const fresh = await listPrototypes(projectId);
-      answers = fresh.prototypes.find((p) => p.slug === slug)?.response_count ?? 0;
+      const card = fresh.prototypes.find((p) => p.slug === slug);
+      answers = card?.response_count ?? 0;
+      asBuilt = card?.spec_as_built ?? false;
     } catch {
       answers = null;
     }
-    setResetTarget({ slug, answers });
+    setResetTarget({ slug, answers, asBuilt });
   }
 
   async function confirmReset() {
@@ -345,7 +348,14 @@ export default function PrototypesPage({ params }: { params: Promise<{ projectId
               <li>{t("page.resetItemBuild")}</li>
               <li>{t("page.resetItemChat")}</li>
               <li>{t("page.resetItemSurvey")}</li>
+              <li>{t("page.resetItemHistory")}</li>
             </ul>
+            {/* What is kept aside before the purge (backend proto/reset_evidence.py). Stated
+                before the warnings so the irreversibility sentence still comes last. */}
+            <p className="text-xs text-slate-500 mt-3">{t("page.resetSnapshotNote")}</p>
+            {resetTarget.asBuilt && (
+              <p className="text-sm text-amber-700 mt-3">{t("page.resetAsBuiltWarn")}</p>
+            )}
             {/* Irreversibility gets its OWN sentence, placed last, with
                 nothing after it to soften it — matching ProjectList.tsx's
                 weighting. It only appears when there is something

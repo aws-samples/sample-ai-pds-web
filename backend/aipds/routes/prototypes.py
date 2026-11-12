@@ -29,6 +29,7 @@ from aipds.parsers.proto_spec import spec_name
 from aipds.parsers.redaction import redact_credentials
 from aipds.launcher import LauncherUnavailable
 from aipds.pathsafe import reject_unsafe_segment
+from aipds.proto.reset_evidence import snapshot_before_reset
 from aipds.proto.session import has_build_output, purge_session_state
 from aipds.proto.history import load_context, load_history, record_opening
 from aipds.turn_job import TurnBusy, subscribe
@@ -44,6 +45,9 @@ from aipds.proto.source import newest_source_mtime, source_entries
 from aipds.routes.proto_public import access_url_path
 from aipds.survey.store import survey_summary
 from aipds.proto import layout as proto_layout
+
+#: Discovery's reconciled spec of record (discovery-config/CLAUDE.md, "spec-as-built").
+_SPEC_AS_BUILT = "spec-as-built.md"
 
 _log = logging.getLogger(__name__)
 
@@ -242,7 +246,9 @@ async def list_prototypes(pid: str):
     _require_registered(pid)
     s3 = app_module.s3_store_factory(pid)
 
-    slugs = proto_layout.discover(await s3.list(proto_layout.DISCOVERY_PREFIX))
+    discovery_keys = await s3.list(proto_layout.DISCOVERY_PREFIX)
+    slugs = proto_layout.discover(discovery_keys)
+    discovery_key_set = set(discovery_keys)
 
     host = app_module.proto_host()
     ordered = sorted(slugs.items())
@@ -371,7 +377,13 @@ async def list_prototypes(pid: str):
                     "preview_stale": preview_stale,
                     "access_url": access_url,
                     "response_count": survey.responses,
-                    "has_survey": survey.exists})
+                    "has_survey": survey.exists,
+                    # Whether Discovery has written a `spec-as-built.md` for this build. The
+                    # reset dialog warns with it: a rebuild after reset needs that spec
+                    # reconciled again, or the handoff ships a spec of a build that is gone.
+                    # Read from the listing above, so it costs no round trip.
+                    "spec_as_built": (f"{proto_layout.artifact_dir(slug)}/{_SPEC_AS_BUILT}"
+                                      in discovery_key_set)})
     # Capacity travels with the list so a card can explain a 429 before the
     # user clicks (the cap is new -- MicroVM builds had no ceiling).
     return {"prototypes": out, **app_module.build_semaphore.snapshot()}
@@ -687,11 +699,21 @@ async def reset_prototype(pid: str, slug: str):
         else:
             del app_module.proto_sessions[(pid, slug)]
 
-    try:
-        await app_module.survey_store_factory(pid, slug).purge()
-    except Exception:
-        _log.exception("reset: survey purge failed: %s/%s", pid, slug)
-        failures.append("survey")
+    # Keep what Discovery cites (survey, change history, the validated source) before any of it
+    # is deleted; if that copy fails, nothing is deleted (proto/reset_evidence.py header).
+    if not failures:
+        try:
+            await snapshot_before_reset(app_module.s3_store_factory(pid), slug)
+        except Exception:
+            _log.exception("reset: evidence snapshot failed: %s/%s", pid, slug)
+            failures.append("snapshot")
+
+    if not failures:
+        try:
+            await app_module.survey_store_factory(pid, slug).purge()
+        except Exception:
+            _log.exception("reset: survey purge failed: %s/%s", pid, slug)
+            failures.append("survey")
 
     # The preview token's root index (proto/store.py) is in the same position: the
     # token is read from prototypes/{slug}/access-token, so it must be reclaimed

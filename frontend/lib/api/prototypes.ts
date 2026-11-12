@@ -68,6 +68,10 @@ export interface PrototypeInfo {
    *  single pass in which the server already queries the survey tree (`survey_summary` in
    *  backend survey/store.py). */
   has_survey: boolean;
+  /** Whether Discovery has written `spec-as-built.md` for this prototype. The reset dialog
+   *  warns with it: after a reset and rebuild, that spec describes a build that is gone until
+   *  Discovery reconciles it again. */
+  spec_as_built: boolean;
 }
 
 // Mirrors backend/aipds/proto/host.py's HostState Literal exactly.
