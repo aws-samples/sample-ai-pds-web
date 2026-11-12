@@ -1877,6 +1877,27 @@ async def test_the_gate_denies_build_and_serve_commands(tmp_path):
         assert out["hookSpecificOutput"]["permissionDecision"] == "deny", command
 
 
+async def test_a_shell_write_outside_docs_gets_the_write_wording(tmp_path):
+    """A refused shell write used to carry the build/serve wording, which sent the model
+    looking for a build it never started. It now gets the same reason as a Write tool."""
+    d, _, _ = _driver(tmp_path, {"text": ["ok"]})
+    d._language = "en"
+    out = await _pre(d, "Bash", {"command": "echo x > prototype/index.html"})
+    reason = out["hookSpecificOutput"]["permissionDecisionReason"]
+    assert "prototype/index.html" in reason
+    assert "aiplc-docs/" in reason
+    assert "builds or serves" not in reason
+
+
+async def test_a_shell_append_after_cd_into_docs_passes(tmp_path):
+    """Observed (a workshop run): a document append after `cd <ws>/aiplc-docs` was refused
+    because its target was read as workspace-relative."""
+    d, ws, _ = _driver(tmp_path, {"text": ["ok"]})
+    command = (f"cd {ws}/aiplc-docs; cat >> discovery/discovery-document.md <<'EOF'\n"
+               "# Part 2\n> note\nEOF")
+    assert await _pre(d, "Bash", {"command": command}) == {}
+
+
 async def test_the_gate_passes_by_returning_an_empty_dict(tmp_path):
     """A pass must be an empty dict — returning "allow" skips can_use_tool and kills the
     AskUserQuestion interception in that callback (the same rationale as the test above)."""

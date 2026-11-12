@@ -33,6 +33,7 @@
 from __future__ import annotations
 
 import os
+import posixpath
 import re
 from pathlib import PurePosixPath
 
@@ -148,28 +149,38 @@ _SERVERS = re.compile(
     r"\b(http\.server|SimpleHTTPServer|uvicorn|gunicorn|flask\s+run"
     r"|php\s+-S|vite|next\s+(?:dev|start))\b")
 
-#: Redirections to files. `(?<![0-9&])` excludes fd forms (`2>`, `>&`) —
-#: `2>/dev/null` and `2>&1` are idioms, not file creation.
-_REDIR = re.compile(r"(?<![0-9&])>{1,2}\s*(?!&)([^\s;|&<>]+)")
-
-#: tee also creates files. Blocking only redirection would let writes go straight out this way.
-_TEE = re.compile(r"\btee\b\s+(?:-a\s+)?([^\s;|&<>]+)")
-
 #: Targets that are devices, not files. Excluded from the redirection check.
 _DEVICES = ("/dev/null", "/dev/stdout", "/dev/stderr")
 
+#: A heredoc opener: `<<EOF`, `<<-EOF`, `<<'EOF'`, `<<"EOF"`. Group 2 is the delimiter word.
+_HEREDOC = re.compile(r"<<-?\s*(['\"]?)([A-Za-z_][A-Za-z0-9_]*)\1")
+
+#: A heredoc fed to a shell, whose body is commands rather than document text.
+_SHELL_HEREDOC = re.compile(r"\b(?:ba|z|da|k)?sh\b(?:\s+-[a-z]+)*\s*<<")
+
+#: One step of the shell walk in `bash_write_denial`, in source order: a subshell boundary, a `cd`
+#: in command position, a redirection target, or a tee target.
+_SHELL_STEP = re.compile(
+    r"(?P<open>\()|(?P<close>\))"
+    r"|(?P<cd>(?:^|(?<=[;&|(\n]))\s*cd\b(?:[ \t]+(?P<cd_arg>[^\s;|&<>()]+))?)"
+    r"|(?<![0-9&<])>{1,2}\s*(?!&)(?P<redir>[^\s;|&<>()]+)"
+    r"|\btee\b\s+(?:-a\s+)?(?P<tee>[^\s;|&<>()]+)")
+
 
 def bash_denial(command: str | None) -> str | None:
-    """The denied fragment for a build, a server start, or file creation outside `aiplc-docs/`, otherwise None.
+    """The denied fragment for a package manager or a server start, otherwise None.
 
     This is a deny**list** (not an allowlist). Discovery has a legitimate path of exploring rule
-    files with `ls`/`grep`/`find`, and an allowlist would block all of that.
+    files with `ls`/`grep`/`find`, and an allowlist would block all of that. File creation through
+    the shell is decided separately by `bash_write_denial`, because the model needs a different
+    reason for it: a refused document write that is told "this builds a prototype" looks for a
+    build it never started instead of fixing the path.
     """
     if not command or not isinstance(command, str):
         return None
-    # Decide on a copy with quoted contents removed. The original is not reported —
-    # the fragment caught below is what gets named.
-    scrubbed = _QUOTED.sub(" ", command)
+    # Decide on a copy with quoted contents and heredoc bodies removed. The original is not
+    # reported — the fragment caught below is what gets named.
+    scrubbed = _QUOTED.sub(" ", _strip_heredoc_bodies(command))
 
     pkg = _PKG.search(scrubbed)
     if pkg:
@@ -178,17 +189,93 @@ def bash_denial(command: str | None) -> str | None:
     server = _SERVERS.search(scrubbed)
     if server:
         return server.group(1)
+    return None
 
-    for pattern in (_REDIR, _TEE):
-        for match in pattern.finditer(scrubbed):
-            target = match.group(1)
+
+def bash_write_denial(command: str | None, workspace: str | None = None) -> str | None:
+    """The first redirection/tee target outside `aiplc-docs/`, otherwise None.
+
+    **Targets resolve against the shell's directory at that point, not the workspace.** Observed
+    (a workshop run): the agent ran `cd <workspace>/aiplc-docs; cat >> discovery/<doc>.md`. Read
+    as workspace-relative, `discovery/<doc>.md` falls outside `aiplc-docs/` and a legitimate
+    document append was refused. So `cd` steps are followed in order, and absolute targets are made
+    workspace-relative with `workspace` (without it they cannot be placed and are refused).
+
+    A directory this cannot follow (`cd` with no argument, `~`, `-`, a variable, a quoted path)
+    falls back to the workspace — the same reading as before `cd` was followed.
+    """
+    if not command or not isinstance(command, str):
+        return None
+    scrubbed = _QUOTED.sub(" ", _strip_heredoc_bodies(command))
+    cwd: str | None = "."          # workspace-relative; None = unknown, _OUTSIDE = left the workspace
+    stack: list[str | None] = []   # cwd saved at each "(" — a subshell's cd ends at ")"
+    for m in _SHELL_STEP.finditer(scrubbed):
+        if m.group("open"):
+            stack.append(cwd)
+        elif m.group("close"):
+            if stack:
+                cwd = stack.pop()
+        elif m.group("cd") is not None:
+            cwd = _follow_cd(cwd, m.group("cd_arg"), workspace)
+        else:
+            target = m.group("redir") or m.group("tee")
             if target in _DEVICES:
                 continue
-            # Redirection targets arrive as workspace-relative paths (cwd is the workspace).
-            if PurePosixPath(target).parts[:1] == (DOCS_ROOT,):
-                continue
-            return target
+            if not _inside_docs(target, cwd, workspace):
+                return target
     return None
+
+
+#: The marker that left the workspace (`cd /tmp`, `cd ..`). Relative writes from there are outside.
+_OUTSIDE = "\0outside"
+
+
+def _follow_cd(cwd: str | None, arg: str | None, workspace: str | None) -> str | None:
+    if not arg or arg in ("~", "-") or arg.startswith("~") or "$" in arg or "`" in arg:
+        return None
+    if arg.startswith("/"):
+        rel = workspace_relative(arg, workspace) if workspace else None
+        return _OUTSIDE if rel is None else (rel or ".")
+    if cwd == _OUTSIDE:
+        return _OUTSIDE
+    joined = posixpath.normpath(posixpath.join(cwd or ".", arg))
+    return _OUTSIDE if joined == ".." or joined.startswith("../") else joined
+
+
+def _inside_docs(target: str, cwd: str | None, workspace: str | None) -> bool:
+    if target.startswith("/"):
+        rel = workspace_relative(target, workspace) if workspace else None
+        if rel is None:
+            return False
+    else:
+        if cwd == _OUTSIDE:
+            return False
+        rel = posixpath.normpath(posixpath.join(cwd or ".", target))
+        if rel == ".." or rel.startswith("../"):
+            return False
+    # A segment comparison, not a string prefix ("aiplc-docs-backup/x" is outside).
+    return PurePosixPath(rel).parts[:1] == (DOCS_ROOT,)
+
+
+def _strip_heredoc_bodies(command: str) -> str:
+    """The command with heredoc bodies removed; the line that opens each heredoc stays.
+
+    A body is document text, not shell: a markdown quote (`> note`) in it read as a redirection,
+    and an apostrophe in it paired with a quote lines later, hiding real commands. The opening line
+    keeps its redirection, so `cat <<EOF > app.js` is still decided by its target. A body fed to
+    a shell (`bash <<EOF`) is commands, not text, so it is kept and checked like any other line.
+    """
+    out: list[str] = []
+    pending: list[str] = []
+    for line in command.split("\n"):
+        if pending:
+            if line.strip() == pending[0]:
+                pending.pop(0)
+            continue
+        out.append(line)
+        if not _SHELL_HEREDOC.search(line):
+            pending.extend(m.group(2) for m in _HEREDOC.finditer(line))
+    return "\n".join(out)
 
 
 def settings_denial(command: str | None) -> str | None:

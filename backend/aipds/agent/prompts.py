@@ -404,7 +404,11 @@ def audit_overwrite(language: str, path: str) -> str:
 
 
 def build_command_refused(language: str, fragment: str) -> str:
-    """The reason given when refusing a command that builds, starts a server, or creates files outside the workspace."""
+    """The reason given when refusing a command that runs a package manager or starts a server.
+
+    Shell writes outside `aiplc-docs/` get `write_outside_docs` instead: this wording sends the model
+    looking for a build it never started.
+    """
     if _lang(language) == "en":
         return (f"Refused — '{fragment}' builds or serves a prototype, which "
                 "Discovery does not do. Only the Prototypes tab can allocate a "
