@@ -205,6 +205,10 @@ class PrototypeSession:
         # at once: (1) this session has finished its work, (2) the idle timer
         # must use the short grace period (see _arm_idle_timer).
         self._completion: dict | None = None
+        # What the user typed into this session (messages and question answers), in order.
+        # Written into the change-history entry at completion, so a business rule or design
+        # change asked for in the build chat keeps its origin when Discovery reconciles.
+        self._requests: list[str] = []
         self._idle_handle: asyncio.TimerHandle | None = None
         self._closed = False
         #: This session's turn jobs. Turns belong to the session, not the request
@@ -399,7 +403,8 @@ class PrototypeSession:
             gen=gen,
             summary=completion["summary"],
             changes=completion.get("changes") or "",
-            decisions=completion.get("decisions") or "")
+            decisions=completion.get("decisions") or "",
+            requests=self._requests)
         await self._s3.put(layout.change_history_key(self.slug), existing + entry)
 
     async def _write_handoff(self, completion: dict) -> None:
@@ -568,6 +573,8 @@ class PrototypeSession:
             )
             return
         self._allow_user_urls(user_text)
+        if user_text:
+            self._requests.append(user_text)
         self._arm_idle_timer()
         # This message consumes the opening turn. Setting it **after** passing the
         # completion guard (above) is intentional: the error turn a completed session
@@ -673,6 +680,7 @@ class PrototypeSession:
         # The "기타" (Other) field of the question card is also text the user wrote
         # themselves.
         self._allow_user_urls("\n".join(answers.values()))
+        self._requests.extend(f"{q}: {a}" for q, a in answers.items() if a)
         # Record the answer in the turn log **first**. The build turn continues past the
         # question without breaking, so the answer is an event inside the turn -- it
         # must be recorded so that a reattached screen restores the answer bubble after

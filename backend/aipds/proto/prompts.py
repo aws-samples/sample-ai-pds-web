@@ -77,21 +77,61 @@ def has_decisions(decisions: str) -> bool:
     return decisions.strip().strip(".").lower() not in _NO_DECISIONS
 
 
+#: Label of the block that quotes what the user typed in the build session.
+USER_REQUESTS_HEADING = {"ko": "**사용자 요청 (빌드 대화 원문)**",
+                         "en": "**User requests (verbatim, from the build chat)**"}
+
+#: Bounds on the quoted requests: one long paste must not swamp the history the next build
+#: session reads as input, and a long session keeps its latest requests, not its first.
+_REQUEST_CHARS = 800
+_REQUEST_COUNT = 12
+
+
+def _requests_block(lang: str, requests: list[str]) -> str:
+    """The quoted user requests, or "" when there were none.
+
+    **Why quote them.** Observed (a workshop run): a business rule and a design change were
+    asked for in the build chat; the history recorded only what the builder did, so Discovery,
+    reconciling the spec later, could not tell the user's decision from the builder's guess.
+
+    Every line is a `>` quote. The history's readers split on bold labels and `## ` entry
+    headings (survey/inputs.builder_decisions, handoff/readiness); a user line starting with
+    either would otherwise end or forge a block.
+    """
+    kept = [r.strip() for r in requests if r and r.strip()]
+    if not kept:
+        return ""
+    dropped = max(0, len(kept) - _REQUEST_COUNT)
+    kept = kept[-_REQUEST_COUNT:]
+    lines: list[str] = []
+    if dropped:
+        lines.append(f"> ({dropped} earlier)" if lang == "en" else f"> (앞선 {dropped}건 생략)")
+    for r in kept:
+        text = r if len(r) <= _REQUEST_CHARS else r[:_REQUEST_CHARS] + " …"
+        body = text.splitlines()
+        lines.append(f"> - {body[0]}")
+        lines.extend(f">   {line}" for line in body[1:])
+    return f"{USER_REQUESTS_HEADING[lang]}\n" + "\n".join(lines) + "\n\n"
+
+
 def change_history_entry(language: str, *, at: str, gen: int | None,
-                         summary: str, changes: str, decisions: str = "") -> str:
+                         summary: str, changes: str, decisions: str = "",
+                         requests: list[str] | None = None) -> str:
     """One change history entry. One session (= one build_complete) is one entry.
 
     The decisions block appears only when the builder named something — an entry from a
-    session that decided nothing (or from before the field existed) keeps the old shape.
+    session that decided nothing (or from before the field existed) keeps the old shape. The
+    requests block likewise appears only when the user typed something in the session.
     """
     where = f" · gen {gen}" if gen is not None else ""
     lang = _lang(language)
+    asked = _requests_block(lang, requests or [])
     block = (f"{BUILDER_DECISIONS_HEADING[lang]}\n{decisions.strip()}\n\n"
              if has_decisions(decisions) else "")
     if lang == "en":
-        return (f"\n## {at}{where}\n\n**Changes**\n{changes}\n\n"
+        return (f"\n## {at}{where}\n\n{asked}**Changes**\n{changes}\n\n"
                 f"{block}**Summary**\n{summary}\n")
-    return (f"\n## {at}{where}\n\n**변경**\n{changes}\n\n"
+    return (f"\n## {at}{where}\n\n{asked}**변경**\n{changes}\n\n"
             f"{block}**요약**\n{summary}\n")
 
 
