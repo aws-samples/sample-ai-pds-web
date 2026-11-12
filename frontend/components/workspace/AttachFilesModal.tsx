@@ -85,6 +85,12 @@ export function AttachFilesModal({ onClose, onUpload }: {
           <li>{t("upload.howRead")}</li>
           <li>{t("upload.limit").replace("{mb}", String(MAX_UPLOAD_BYTES / (1024 * 1024)))}</li>
         </ul>
+        {/* Observed (workshop runs): confidential originals and documents carrying people's real
+            names were attached whole. What is attached is read by the AI, can be quoted in the
+            Discovery documents, and travels with the project export and the handoff package. */}
+        <p className="mt-3 text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+          {t("upload.dataNotice")}
+        </p>
 
         <div
           data-testid="attach-drop-zone"

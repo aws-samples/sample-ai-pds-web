@@ -571,6 +571,7 @@ export const en: Record<keyof typeof ko, string> = {
   "upload.groupImages": "Images",
   "upload.howRead": "Documents reach the AI as text (formatting and pictures inside them are dropped, and anything past 50,000 characters is cut). Images reach it as pictures, and a PDF as both its text and the original.",
   "upload.limit": "Up to {mb}MB per file. Save legacy formats (.doc, .ppt, .xls, .hwp) in the newer format first.",
+  "upload.dataNotice": "The AI reads what you attach and may quote it in the Discovery documents, and it travels with the project export and the developer handoff package. For confidential originals or material with personal names or contact details, keep only the parts needed or mask them before attaching.",
   "upload.dropHere": "Drop files here, or",
   "upload.pick": "Choose files",
   "upload.listLabel": "Attached files",

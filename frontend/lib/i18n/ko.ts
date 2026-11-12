@@ -613,6 +613,7 @@ export const ko = {
   "upload.groupImages": "이미지",
   "upload.howRead": "문서는 텍스트로 바뀌어 전달됩니다(서식과 문서 속 그림은 빠지고, 50,000자를 넘으면 뒷부분이 잘립니다). 이미지는 그림 그대로, PDF는 텍스트와 원본이 함께 전달됩니다.",
   "upload.limit": "파일당 {mb}MB까지. 예전 형식(.doc·.ppt·.xls·.hwp)은 새 형식으로 다시 저장해 붙이세요.",
+  "upload.dataNotice": "붙인 자료는 AI가 읽고 Discovery 문서에 인용할 수 있으며, 프로젝트 내보내기와 개발팀 전달 패키지에도 함께 들어갑니다. 대외비 원문이나 개인 이름·연락처가 담긴 자료는 필요한 부분만 남기거나 가린 뒤 붙이세요.",
   "upload.dropHere": "여기에 파일을 끌어다 놓거나",
   "upload.pick": "파일 선택",
   "upload.listLabel": "첨부한 파일",
