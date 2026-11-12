@@ -27,6 +27,19 @@ export function QuestionForm({
 
   const answered = Object.values(answers).filter((v) => v.trim() !== "").length;
 
+  const total = file.questions.length;
+  // Shown in the sticky submit bar for editors so it stays visible while scrolling.
+  const progress = (
+    <div className="flex items-center gap-2 shrink-0">
+      <div className="w-24 h-2 rounded-full bg-slate-200 overflow-hidden" role="progressbar" aria-valuenow={answered} aria-valuemin={0} aria-valuemax={total}>
+        <div className="h-full bg-violet-500 rounded-full transition-all" style={{ width: `${total ? (answered / total) * 100 : 0}%` }} />
+      </div>
+      <p className="text-sm text-slate-500 whitespace-nowrap">
+        <b className="text-violet-700">{answered}</b> / {total} {t("q.answeredCount")}
+      </p>
+    </div>
+  );
+
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     const filled: Record<string, string> = {};
@@ -36,17 +49,9 @@ export function QuestionForm({
 
   return (
     <form onSubmit={handleSubmit} className="space-y-6">
-      <div className="flex items-end justify-between gap-3">
-        <div>
-          <h1 className="text-2xl font-bold">{file.name}</h1>
-        </div>
-        <p className="text-sm text-slate-500">
-          <b className="text-violet-700">{answered}</b> / {file.questions.length} {t("q.answeredCount")}
-        </p>
-      </div>
-      <div className="h-2 rounded-full bg-slate-200 overflow-hidden" role="progressbar" aria-valuenow={answered} aria-valuemin={0} aria-valuemax={file.questions.length}>
-        <div className="h-full bg-violet-500 rounded-full transition-all" style={{ width: `${file.questions.length ? (answered / file.questions.length) * 100 : 0}%` }} />
-      </div>
+      <h1 className="text-2xl font-bold">{file.name}</h1>
+      {/* Read-only members have no submit bar, so their progress stays at the top. */}
+      {readOnly && progress}
 
       {file.preamble && (
         <div className="flex gap-3 bg-sky-50 border border-sky-200 rounded-xl p-4 text-sm">
@@ -77,14 +82,17 @@ export function QuestionForm({
           {t("readOnly.answers")}
         </p>
       ) : (
-        <div className="sticky bottom-0 bg-white border border-slate-200 rounded-xl p-4 flex items-center justify-between gap-3 shadow-lg shadow-slate-200/50">
-          <div className="text-xs text-slate-500 flex items-center gap-2">
-            <span className="w-2 h-2 rounded-full bg-emerald-500" aria-hidden="true" />
+        <div className="sticky bottom-0 bg-white border border-slate-200 rounded-xl p-4 flex flex-wrap items-center justify-between gap-3 shadow-lg shadow-slate-200/50">
+          <div className="text-xs text-slate-500 flex items-center gap-2 min-w-0">
+            <span className="w-2 h-2 rounded-full bg-emerald-500 shrink-0" aria-hidden="true" />
             {t("q.auditNotice")}
           </div>
-          <button type="submit" disabled={submitting} className="px-5 py-2.5 text-sm rounded-lg bg-violet-600 hover:bg-violet-700 disabled:opacity-50 text-white font-bold">
-            {t("q.submitAnswers")}
-          </button>
+          <div className="flex items-center gap-4 ml-auto">
+            {progress}
+            <button type="submit" disabled={submitting} className="px-5 py-2.5 text-sm rounded-lg bg-violet-600 hover:bg-violet-700 disabled:opacity-50 text-white font-bold">
+              {t("q.submitAnswers")}
+            </button>
+          </div>
         </div>
       )}
     </form>
