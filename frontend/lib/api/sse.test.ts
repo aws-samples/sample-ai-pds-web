@@ -3,7 +3,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { http, HttpResponse } from "msw";
 import { server } from "@/test/msw/server";
 import { API_BASE_URL, ApiError } from "./client";
-import { streamEvents, streamAnswers, watchTurn } from "./sse";
+import { streamEvents, streamAnswers, streamFileAnswers, watchTurn } from "./sse";
 
 // Minimal fake EventSource: records the URL, lets the test push data/error.
 class FakeEventSource {
@@ -184,6 +184,27 @@ describe("긴 입력은 URL이 아니라 본문으로 간다", () => {
       `${API_BASE_URL}/projects/p1/events?turn=def456`);
     expect(posted).toEqual({ answers });
     stop();
+  });
+
+  it("streamFileAnswers carries form attachments only when there are some", async () => {
+    const posted: unknown[] = [];
+    server.use(
+      http.post(`${API_BASE_URL}/projects/p1/questions/aiplc-docs/q.md/answers`, async ({ request }) => {
+        posted.push(await request.json());
+        return HttpResponse.json({ turn_id: "f1" });
+      }),
+    );
+    const att = [{ path: "uploads/ab12cd34/figures.pdf.md", original: "uploads/ab12cd34/figures.pdf" }];
+    const stop1 = streamFileAnswers("p1", "aiplc-docs/q.md", { "1": "A" }, att,
+      { onEvent: () => {}, onDone: () => {} });
+    await vi.waitFor(() => expect(posted).toHaveLength(1));
+    stop1();
+    const stop2 = streamFileAnswers("p1", "aiplc-docs/q.md", { "1": "A" }, [],
+      { onEvent: () => {}, onDone: () => {} });
+    await vi.waitFor(() => expect(posted).toHaveLength(2));
+    stop2();
+    expect(posted[0]).toEqual({ answers: { "1": "A" }, attachments: att });
+    expect(posted[1]).toEqual({ answers: { "1": "A" } });
   });
 
   it("개시 요청이 실패하면 원인을 알 수 있는 오류를 넘긴다", async () => {

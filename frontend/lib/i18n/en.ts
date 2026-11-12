@@ -580,6 +580,8 @@ export const en: Record<keyof typeof ko, string> = {
   "upload.problemFailed": "Upload failed. Try again in a moment.",
   "q.answeredCount": "answered",
   "q.auditNotice": "Every answer is recorded verbatim in audit.md",
+  "q.attach": "Attach files",
+  "q.attachedWithAnswers": "{n} attached file(s) go with these answers",
   "q.submitAnswers": "Submit answers → AI review",
   "q.freeformLabel": "Your own answer",
   "q.freeformPlaceholder": "Answer in your own words — there is no length limit.",

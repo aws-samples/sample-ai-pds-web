@@ -155,7 +155,10 @@ earlier copy is used.** A notice above the input says so and only one chip stays
 read the same document twice. Same name with changed content is stored as a new version; the earlier
 file is not overwritten.
 
-Interview notes, requirement lists and market research go here, and the AI writes from them.`,
+Interview notes, requirement lists and market research go here, and the AI writes from them.
+
+While answering a question form, use **Attach files** in its submit bar. Files attached there go
+with the answers, so answering "I will attach the data" needs no separate chat message.`,
     },
     { kind: "heading", id: "audit", text: "What gets recorded" },
     {

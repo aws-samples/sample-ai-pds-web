@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useT } from "@/lib/i18n/provider";
 import { streamEvents, streamAnswers, streamFileAnswers, watchTurn } from "@/lib/api/sse";
-import type { StreamHandlers, TurnCreated } from "@/lib/api/sse";
+import type { AnswerAttachment, StreamHandlers, TurnCreated } from "@/lib/api/sse";
 import { ApiError, getContext, getPending, getHistory, getTurn, interruptTurn } from "@/lib/api/client";
 import { answerSummary } from "@/lib/answerSummary";
 import { redirectIfSessionExpired } from "@/lib/auth/sessionRecovery";
@@ -75,7 +75,8 @@ export interface WorkspaceStream {
   items: ChatItem[];
   streaming: boolean;
   send: (text: string) => void;
-  submitAnswers: (answers: Record<string, string>) => void;
+  /** `attachments` go with a question-file round only (the parked-turn path has no place for them). */
+  submitAnswers: (answers: Record<string, string>, attachments?: AnswerAttachment[]) => void;
   interrupt: () => Promise<void>;
   pendingQuestions: QuestionsPayload | null;
   stages: StagePayload[];
@@ -450,7 +451,7 @@ export function useWorkspaceStream(projectId: string, initial: ChatItem[] = []):
   );
 
   const submitAnswers = useCallback(
-    (answers: Record<string, string>) => {
+    (answers: Record<string, string>, attachments: AnswerAttachment[] = []) => {
       if (stopRef.current) return;
       liveTurnStartedRef.current = true;
       // Which path to send through is decided **now** — because setPendingQuestions(null) below
@@ -495,7 +496,7 @@ export function useWorkspaceStream(projectId: string, initial: ChatItem[] = []):
       runTurn(
         (handlers) =>
           file
-            ? streamFileAnswers(projectId, file, answers, { ...handlers, onCreated })
+            ? streamFileAnswers(projectId, file, answers, attachments, { ...handlers, onCreated })
             : streamAnswers(projectId, answers, { ...handlers, onCreated }),
         aiId,
       );

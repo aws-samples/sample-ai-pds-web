@@ -292,3 +292,39 @@ def test_the_submit_response_carries_the_same_text_it_recorded(monkeypatch):
     # The recorded turn text has model instructions appended, so it **contains** the summary.
     assert body["summary"] in recorded, (body["summary"], recorded)
     assert "플랫폼(Platform)" in body["summary"]
+
+
+# ---- Attachments sent with the answers ----
+
+def test_files_attached_from_the_form_ride_with_the_answers(monkeypatch):
+    """Observed (a workshop run): a user answered "I will attach the file", uploaded it in a
+    separate turn, and the agent spent a turn waiting. Attached from the form, it comes with
+    the answers — named in the turn text and in the summary the bubble and audit log use."""
+    _seed(monkeypatch, "fqa1")
+    r = client.post(
+        "/projects/fqa1/questions/aiplc-docs/strategy-questions.md/answers",
+        json={"answers": {"1": "B"},
+              "attachments": [{"path": "uploads/ab12cd34/figures.pdf.md",
+                               "original": "uploads/ab12cd34/figures.pdf"}]})
+    assert r.status_code == 200, r.text
+    text = _turn("fqa1")["text"]
+    assert "uploads/ab12cd34/figures.pdf.md" in text
+    assert "uploads/ab12cd34/figures.pdf" in text
+    assert text.index("첨부 파일") < text.index("strategy-questions.md")
+    assert "uploads/ab12cd34/figures.pdf.md" in r.json()["summary"]
+
+
+def test_an_attachment_outside_uploads_is_refused_before_anything_is_written(monkeypatch):
+    _seed(monkeypatch, "fqa2")
+    for bad in ("aiplc-docs/audit.md", "uploads/../aiplc-docs/x.md", "/etc/passwd", "uploads/x.md"):
+        r = client.post(
+            "/projects/fqa2/questions/aiplc-docs/strategy-questions.md/answers",
+            json={"answers": {"1": "B"}, "attachments": [{"path": bad}]})
+        assert r.status_code == 400, bad
+    assert not registry.get("fqa2").runner.sent
+
+
+def test_answers_without_attachments_are_unchanged(monkeypatch):
+    _seed(monkeypatch, "fqa3")
+    assert _submit("fqa3", {"1": "B"}).status_code == 200
+    assert "첨부 파일" not in _turn("fqa3")["text"]

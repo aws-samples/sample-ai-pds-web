@@ -175,6 +175,31 @@ def file_questions_stop(language: str, path: str) -> str:
 # detection was merged there too). This file only wraps that result in instructions for the model.
 
 
+def answer_attachments(language: str, attachments: list[tuple[str, str | None]]) -> str:
+    """Lines naming files the user attached while answering a question form, or "".
+
+    Observed (a workshop run): a question asked for the figures behind an estimate; the user
+    answered "I will attach the file", uploaded it in a separate chat turn, and the agent spent a
+    turn waiting for it. Attaching from the form sends the file with the answers instead.
+
+    Each item is (workspace path of the text copy, path of the original or None). The original
+    exists for a PDF, whose figures and scans the text copy loses.
+    """
+    lines: list[str] = []
+    for path, original in attachments:
+        if _lang(language) == "en":
+            line = (f"[Attached file: {path} — provided by the user with these answers; "
+                    "read it as context.")
+            if original:
+                line += f" Figures and scanned pages are in the original {original}."
+        else:
+            line = f"[첨부 파일: {path} — 사용자가 이 답변과 함께 제공한 파일이다. 컨텍스트로 읽을 것."
+            if original:
+                line += f" 도표·그림·스캔 페이지는 원본 {original}에 있다."
+        lines.append(line + "]")
+    return "\n".join(lines)
+
+
 def file_answers_recorded(language: str, path: str, summary: str) -> str:
     """Text of the turn that calls the agent again after answers are recorded in a question file.
 

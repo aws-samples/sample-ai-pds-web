@@ -183,17 +183,23 @@ export function streamEvents(pid: string, text: string, handlers: StreamHandlers
 //
 // The backend builds the sentence for the continuing turn (file_answers_recorded in
 // agent/prompts.py): text the agent reads must follow the project language, not the UI language.
+/** A file uploaded through the attach dialog, sent with a question form's answers. `original` is
+ *  set when the upload kept its original next to the text copy (a PDF). */
+export interface AnswerAttachment { path: string; original: string | null }
+
 export function streamFileAnswers(
   pid: string,
   file: string,
   answers: Record<string, string>,
+  // Before `handlers`: callers and tests rely on handlers being the last argument.
+  attachments: AnswerAttachment[],
   handlers: StreamHandlers,
 ): () => void {
   const p = encodeURIComponent(pid);
   const path = file.split("/").map(encodeURIComponent).join("/");
   return openViaHandle(
     `/projects/${p}/questions/${path}/answers`,
-    { answers },
+    attachments.length ? { answers, attachments } : { answers },
     (turnId) => `${API_BASE_URL}/projects/${p}/events?turn=${encodeURIComponent(turnId)}`,
     handlers,
   );
