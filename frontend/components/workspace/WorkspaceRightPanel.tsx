@@ -65,6 +65,8 @@ export const WorkspaceRightPanel = memo(function WorkspaceRightPanel({
   readOnly = false,
   currentDocName,
   onOpenDoc,
+  onAttach,
+  attachedCount = 0,
 }: {
   projectId: string;
   pendingQuestions: QuestionsPayload | null;
@@ -78,6 +80,9 @@ export const WorkspaceRightPanel = memo(function WorkspaceRightPanel({
   // `onOpenDoc` is pinned by the parent with useCallback — this panel is memo'd.
   currentDocName: string | null;
   onOpenDoc: () => void;
+  // Attach from the question form (QuestionForm). `onAttach` is pinned with useCallback too.
+  onAttach?: () => void;
+  attachedCount?: number;
 }) {
   const t = useT();
   const mode = deriveMode(pendingQuestions, stages, busy);
@@ -90,7 +95,8 @@ export const WorkspaceRightPanel = memo(function WorkspaceRightPanel({
         <div className="flex-1 min-h-0 overflow-y-auto p-6">
           {currentDocName && <OpenDocButton name={currentDocName} onClick={onOpenDoc} />}
           <QuestionForm file={pendingQuestions.questions} onSubmit={onSubmitAnswers} submitting={busy}
-                        readOnly={readOnly} />
+                        readOnly={readOnly} onAttach={readOnly ? undefined : onAttach}
+                        attachedCount={attachedCount} />
         </div>
       )}
       {mode === "preview" && (

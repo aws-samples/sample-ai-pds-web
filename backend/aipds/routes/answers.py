@@ -1,5 +1,6 @@
 # backend/aipds/routes/answers.py
 import logging
+from pathlib import PurePosixPath
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
@@ -13,8 +14,35 @@ from aipds.routes.turns import ensure_idle, start_turn
 
 router = APIRouter()
 
+class Attachment(BaseModel):
+    path: str
+    original: str | None = None
+
+
 class AnswersBody(BaseModel):
     answers: dict[str, str]
+    #: Files the user attached from the form (uploads made through POST /uploads). Optional;
+    #: an old client that sends none behaves as before.
+    attachments: list[Attachment] = []
+
+
+#: Where uploads land in the workspace (parsers/uploads.py). An attachment naming anything else
+#: is refused rather than passed on — the agent would otherwise be told to read an arbitrary path.
+_UPLOADS = "uploads/"
+
+
+def _attachment_pairs(items: list[Attachment]) -> list[tuple[str, str | None]]:
+    pairs: list[tuple[str, str | None]] = []
+    for item in items:
+        for path in (item.path, item.original):
+            if path is None:
+                continue
+            parts = PurePosixPath(path).parts
+            if (not path.startswith(_UPLOADS) or ".." in parts or "\\" in path
+                    or len(parts) < 3):
+                raise HTTPException(status_code=400, detail="attachment outside uploads/")
+        pairs.append((item.path, item.original))
+    return pairs
 
 
 def _numbers(answers: dict[str, str]) -> dict[int, str]:
@@ -45,6 +73,7 @@ async def submit_file_answers(pid: str, name: str, body: AnswersBody):
     ws = await ensure_workspace(pid)
     ensure_idle(ws)
     numbered = _numbers(body.answers)
+    attachments = _attachment_pairs(body.attachments)
     try:
         qfile = await ws.put_answers(name, numbered)
     except FileNotFoundError:
@@ -73,6 +102,12 @@ async def submit_file_answers(pid: str, name: str, body: AnswersBody):
     # lexicographically ("12" < "2"). Question numbers must be numeric to match the question list.
     summary = answer_summary(qfile, numbered, language)
     text = prompts.file_answers_recorded(language, name, summary)
+    if attachments:
+        # Ahead of the instructions, like a chat message's attachment lines; the bubble and the
+        # audit log (`summary`) name the files too, so the record shows what came with the answers.
+        mentions = prompts.answer_attachments(language, attachments)
+        text = f"{mentions}\n\n{text}"
+        summary = f"{summary}\n\n{mentions}"
     # If the state file does not exist yet, point the resume turn at it.
     #
     # The hook and turn-boundary reconciliation (agent/reconcile.py) bring the file to the

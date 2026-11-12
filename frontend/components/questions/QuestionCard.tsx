@@ -242,7 +242,7 @@ export function QuestionCard({
                 </label>
                 <textarea
                   aria-label={t("q.otherAria")}
-                  rows={2}
+                  rows={4}
                   value={otherActive ? value : ""}
                   onFocus={() => setOtherActive(true)}
                   onChange={(e) => { setOtherActive(true); onChange(e.target.value); }}

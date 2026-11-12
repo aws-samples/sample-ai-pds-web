@@ -35,4 +35,22 @@ describe("QuestionForm", () => {
     expect(screen.getByText(/답은 프로젝트 소유자가 합니다/)).toBeInTheDocument();
     for (const input of screen.queryAllByRole("radio")) expect(input).toBeDisabled();
   });
+
+  it("offers attaching files that go with the answers", async () => {
+    const user = userEvent.setup();
+    const onAttach = vi.fn();
+    const { rerender } = render(
+      <QuestionForm file={strategyQuestions} onSubmit={vi.fn()} submitting={false} onAttach={onAttach} />);
+    await user.click(screen.getByRole("button", { name: "파일 첨부" }));
+    expect(onAttach).toHaveBeenCalledTimes(1);
+    expect(screen.queryByText(/답변과 함께 전달됩니다/)).not.toBeInTheDocument();
+    rerender(<QuestionForm file={strategyQuestions} onSubmit={vi.fn()} submitting={false}
+                           onAttach={onAttach} attachedCount={2} />);
+    expect(screen.getByText("첨부 2개가 답변과 함께 전달됩니다")).toBeInTheDocument();
+  });
+
+  it("has no attach button without a handler (read-only members)", () => {
+    render(<QuestionForm file={strategyQuestions} onSubmit={vi.fn()} submitting={false} readOnly />);
+    expect(screen.queryByRole("button", { name: "파일 첨부" })).not.toBeInTheDocument();
+  });
 });

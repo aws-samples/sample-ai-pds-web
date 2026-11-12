@@ -11,12 +11,20 @@ export function QuestionForm({
   onSubmit,
   submitting,
   readOnly = false,
+  onAttach,
+  attachedCount = 0,
 }: {
   file: QuestionFile;
   onSubmit: (answers: Record<string, string>) => void;
   submitting: boolean;
   /** Read-only member. The questions and answers so far are visible; no input or submit. */
   readOnly?: boolean;
+  /** Opens the attach dialog. Files attached there go with these answers (backend
+   *  routes/answers.py), so an answer like "I will attach the figures" needs no separate turn.
+   *  Omitted → no attach button. */
+  onAttach?: () => void;
+  /** Files currently waiting to go with the next submission. */
+  attachedCount?: number;
 }) {
   const t = useT();
   const [answers, setAnswers] = useState<Record<string, string>>(() => {
@@ -88,6 +96,19 @@ export function QuestionForm({
             {t("q.auditNotice")}
           </div>
           <div className="flex items-center gap-4 ml-auto">
+            {onAttach && (
+              <div className="flex items-center gap-2">
+                <button type="button" onClick={onAttach}
+                        className="px-3 py-2 text-xs rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50">
+                  {t("q.attach")}
+                </button>
+                {attachedCount > 0 && (
+                  <span className="text-xs text-slate-500" role="status">
+                    {t("q.attachedWithAnswers").replace("{n}", String(attachedCount))}
+                  </span>
+                )}
+              </div>
+            )}
             {progress}
             <button type="submit" disabled={submitting} className="px-5 py-2.5 text-sm rounded-lg bg-violet-600 hover:bg-violet-700 disabled:opacity-50 text-white font-bold">
               {t("q.submitAnswers")}

@@ -159,7 +159,9 @@ export default function WorkspacePage({ params }: { params: Promise<{ projectId:
 
   function submitAnswersFromSheet(answers: Record<string, string>) {
     setStickSignal((n) => n + 1);
-    submitAnswers(answers);
+    submitAnswers(answers, attachments);
+    setAttachments([]);
+    setUploadNotice(null);
     setSheetOpen(false);
   }
 
@@ -224,10 +226,18 @@ export default function WorkspacePage({ params }: { params: Promise<{ projectId:
 
   // useCallback: this is the only callback passed down to the right panel (memo). If it were
   // a new function on every render, that panel would redraw on every frame while streaming.
+  // Files attached while a question form is open go with its answers, the same chips the chat
+  // input sends with a message (backend routes/answers.py names them in the turn).
   const submitAnswersAndStick = useCallback((answers: Record<string, string>) => {
     setStickSignal((n) => n + 1);
-    submitAnswers(answers);
-  }, [submitAnswers]);
+    submitAnswers(answers, attachments);
+    setAttachments([]);
+    setUploadNotice(null);
+  }, [submitAnswers, attachments]);
+  const openAttach = useCallback(() => {
+    setUploadError(null);
+    setAttachOpen(true);
+  }, []);
 
   // Minimal accessibility for the mobile bottom-sheet: move focus into the
   // dialog when it opens (so screen-reader/keyboard users land inside it,
@@ -426,6 +436,8 @@ export default function WorkspacePage({ params }: { params: Promise<{ projectId:
           readOnly={readOnly}
           currentDocName={currentDocName}
           onOpenDoc={openDoc}
+          onAttach={openAttach}
+          attachedCount={attachments.length}
         />
 
         <WorkspaceDocPanel projectId={projectId} activeDoc={activeDoc} turnSeq={turnSeq}
@@ -473,6 +485,8 @@ export default function WorkspacePage({ params }: { params: Promise<{ projectId:
               onSubmit={submitAnswersFromSheet}
               submitting={streaming}
               readOnly={readOnly}
+              onAttach={readOnly ? undefined : openAttach}
+              attachedCount={attachments.length}
             />
           </div>
         </div>

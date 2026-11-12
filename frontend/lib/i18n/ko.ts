@@ -661,6 +661,8 @@ export const ko = {
   "upload.problemFailed": "업로드하지 못했습니다. 잠시 뒤 다시 시도하세요.",
   "q.answeredCount": "답변 완료",
   "q.auditNotice": "모든 답변은 audit.md에 원문 그대로 기록됩니다",
+  "q.attach": "파일 첨부",
+  "q.attachedWithAnswers": "첨부 {n}개가 답변과 함께 전달됩니다",
   "q.submitAnswers": "답변 제출 → AI 검증",
   "q.freeformLabel": "자유 답변",
   "q.freeformPlaceholder": "선택지 없이 자유롭게 답해 주세요 — 길이 제한은 없습니다.",
