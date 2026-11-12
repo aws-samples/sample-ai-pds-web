@@ -11,6 +11,12 @@ describe("QuestionForm", () => {
     expect(screen.getByText(/13 답변/)).toBeInTheDocument();
   });
 
+  it("shows the progress bar inside the sticky submit bar", () => {
+    render(<QuestionForm file={strategyQuestions} onSubmit={vi.fn()} submitting={false} />);
+    const submit = screen.getByRole("button", { name: /답변 제출/ });
+    expect(submit.parentElement).toContainElement(screen.getByRole("progressbar"));
+  });
+
   it("submits an answers map keyed by question number", async () => {
     const user = userEvent.setup();
     const onSubmit = vi.fn();
