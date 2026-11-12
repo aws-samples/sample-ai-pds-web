@@ -54,6 +54,14 @@ send with it. Nothing is summarized or edited, and the files are read in this br
 - Files about a different topic, customer, or team cannot be mixed. Different chosen types (work
   improvement / something to build / a problem to solve) are fine — that is a split in how the team frames
   the work, so similar questions are grouped side by side.
+- The **Answers per Envision mandatory area** table near the top of the collected file shows how many
+  respondents answered each area Envision must cover, and which areas the form never asks about (for
+  example, willingness to pay). It only counts whether there is an answer; use it before the workshop to see
+  where more questions are needed. The prompt carries only what the table can prove: the areas the form
+  never asks about, and those it asked that nobody answered.
+- In "something to build" answers, the idea and its must-haves are marked **the team's idea · an
+  unvalidated hypothesis**. So that the team's solution is not read as the customer's need, the prompt also
+  asks the agent to draw the customer's problem from the other answers and record the idea as a hypothesis.
 
 Use them after starting AI-PLC in the Workspace with **Path A** and answering **A (describe it in your own
 words)** when asked how you want to provide business context. In your next message, attach the collected
