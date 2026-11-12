@@ -73,6 +73,15 @@ in the spec)* block. Validation participants see these values on screen as if th
 but nobody chose them on purpose, so \`spec-as-built.md\` carries them as **open questions** rather
 than requirements, and the [survey](/manual#survey) checks them as well.
 
+What **you asked for in the build chat** goes the other way: it is quoted at the top of that entry as a
+*User requests (verbatim, from the build chat)* block. Discovery can then tell a rule you decided from a
+value the builder picked, and where a request departs from an approved decision (a new business rule, a
+different design direction) it raises that at the gate.
+
+Data entered during a demo **stays** through improvement builds. When the data model changes the builder
+carries the existing rows over, and resets the data only when it truly has to, noting that in the
+history. Ask for fresh data if you want it.
+
 You can press it while the prototype is running. The server stays up and the link you sent to
 participants keeps working, but what that link shows is the **previous version** — the card says
 *Preview shows the previous version* and offers a **Re-host** button there. Re-hosting closes the
@@ -115,7 +124,12 @@ conversation, so the indicator is blank until the first reply brings it back.`,
 - **Close** — collapses the card. **Open session** brings you back later.
 
 The buttons may be briefly unavailable (*Finishing the build*). They become active a few
-seconds later.`,
+seconds later.
+
+Once a build is done and its session is closed, the list shows the next steps — check the preview,
+show it to 3–5 target users or open a [validation survey](/manual#survey), then report the results in
+Discovery. Its **Back to Discovery** link takes you to the workspace. None of it is required; skipping
+validation is still possible.`,
     },
     { kind: "heading", id: "share", text: "Sharing the preview" },
     {
