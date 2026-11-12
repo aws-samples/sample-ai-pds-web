@@ -507,3 +507,30 @@ describe("Prototypes page — 수정 진입", () => {
     await waitFor(() => expect(startBuild).toHaveBeenCalled());
   });
 });
+
+describe("Prototypes page — next step after a build", () => {
+  it("points back to Discovery once a prototype is built and no session is open", async () => {
+    server.use(
+      http.get(`${API_BASE_URL}/projects/p1/prototypes`, () => HttpResponse.json(listing())),
+    );
+    mockStream();
+    render(<PrototypesPage params={params} />);
+    const note = await screen.findByRole("note");
+    expect(note).toHaveTextContent("빌드가 끝났습니다");
+    expect(screen.getByRole("link", { name: "Discovery로 돌아가기" }))
+      .toHaveAttribute("href", "/projects/p1/workspace");
+  });
+
+  it("stays quiet while nothing is built or a session is still open", async () => {
+    server.use(
+      http.get(`${API_BASE_URL}/projects/p1/prototypes`, () => HttpResponse.json({
+        ...listing(),
+        prototypes: [PROTOTYPES[0], { ...PROTOTYPES[1], session_open: true }],
+      })),
+    );
+    mockStream();
+    render(<PrototypesPage params={params} />);
+    await screen.findByText("chat-widget");
+    expect(screen.queryByRole("note")).not.toBeInTheDocument();
+  });
+});

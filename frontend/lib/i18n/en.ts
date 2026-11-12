@@ -271,6 +271,8 @@ export const en: Record<keyof typeof ko, string> = {
   "page.resetIncomplete": "The reset did not finish. Please try again.",
   "page.logsLoadFailed": "Could not load the logs.",
   "page.prototypesTitle": "Prototypes",
+  "page.nextStepAfterBuild": "The build is done. Next: check the screens in the preview, show it to 3–5 target users or open a validation survey, then report the results in Discovery.",
+  "page.nextStepBackToDiscovery": "Back to Discovery",
   "page.prototypeListFailed": "Could not load the list. Check the backend connection.",
   "page.buildCapReached": "The concurrent-build limit ({max}) has been reached — you can start a new build once one finishes.",
   "page.noPrototypeSpecs": "There are no prototype specs yet.",
