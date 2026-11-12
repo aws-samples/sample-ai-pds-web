@@ -307,6 +307,8 @@ export const ko = {
   "page.resetIncomplete": "초기화가 완료되지 않았습니다. 다시 시도해 주세요.",
   "page.logsLoadFailed": "로그를 불러오지 못했습니다.",
   "page.prototypesTitle": "프로토타입",
+  "page.nextStepAfterBuild": "빌드가 끝났습니다. 다음 순서: 미리보기로 화면을 확인하고, 현업 사용자 3~5명에게 보여 주거나 검증 설문을 연 뒤, 그 결과를 Discovery에 알려 주세요.",
+  "page.nextStepBackToDiscovery": "Discovery로 돌아가기",
   "page.prototypeListFailed": "목록을 불러오지 못했습니다. 백엔드 연결을 확인하세요.",
   "page.buildCapReached": "동시 빌드 상한({max}건)에 도달했습니다 — 진행 중인 빌드가 끝나면 새 빌드를 시작할 수 있습니다.",
   "page.noPrototypeSpecs": "아직 프로토타입 명세가 없습니다.",

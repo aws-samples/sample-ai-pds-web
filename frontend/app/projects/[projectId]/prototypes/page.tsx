@@ -2,6 +2,7 @@
 // a grid of PrototypeCard (Task 8) driven by GET /prototypes, opening
 // BuildPanel (Task 9) for the build chat + hosting controls per card.
 "use client";
+import Link from "next/link";
 import { use, useEffect, useState } from "react";
 import { AppHeader } from "@/components/AppHeader";
 import { PrototypeCard } from "@/components/prototypes/PrototypeCard";
@@ -243,6 +244,20 @@ export default function PrototypesPage({ params }: { params: Promise<{ projectId
           <p className="mb-4 text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
             {t("page.buildCapReached").replace("{max}", String(list.data.max_builds))}
           </p>
+        )}
+
+        {/* Where to go once a build is done. Observed (workshop runs): teams finished a build and
+            then sat on this page for over an hour before returning to Discovery, and validation was
+            skipped for lack of time. The steps mirror the feedback routes the validation rule
+            offers (show it to users or run a survey, then report back); none is forced. */}
+        {list.data && list.data.prototypes.some(
+          (p) => (p.state === "built" || p.state === "running") && !p.session_open) && (
+          <div role="note" className="mb-4 text-sm text-emerald-900 bg-emerald-50 border border-emerald-200 rounded-lg px-3 py-2">
+            {t("page.nextStepAfterBuild")}{" "}
+            <Link href={`/projects/${projectId}/workspace`} className="underline font-medium hover:text-emerald-700">
+              {t("page.nextStepBackToDiscovery")}
+            </Link>
+          </div>
         )}
 
         {list.data && list.data.prototypes.length === 0 && (
