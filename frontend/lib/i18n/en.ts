@@ -63,6 +63,8 @@ export const en: Record<keyof typeof ko, string> = {
   "canvas.discoveryProgress": "Discovery progress",
   "canvas.stageUnit": "phases",
   "canvas.capabilityNotApplicable": "Not on this path",
+  "canvas.surveyRunning": "{open} validation survey(s) open · {n} responses",
+  "canvas.surveyOpenTab": "View in the Prototypes tab",
   "canvas.sidebarAdaptive": "The workflow adapts to the work.",
   "canvas.sidebarHintPrefix": "Ask in chat to",
   "canvas.sidebarHintBold": "go back or skip ahead",

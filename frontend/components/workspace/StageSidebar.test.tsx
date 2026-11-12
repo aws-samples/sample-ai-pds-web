@@ -130,3 +130,28 @@ describe("StageSidebar", () => {
     expect(screen.queryByRole("button", { name: "단계 패널 접기" })).toBeNull();
   });
 });
+
+describe("StageSidebar survey status", () => {
+  // Observed (a workshop run): a survey was collecting responses in the Prototypes tab while
+  // the user told the Discovery chat there was none. The sidebar now says so.
+  it("shows a running survey under the Prototype stage, with a link to its tab", () => {
+    render(
+      <LocaleProvider locale="ko">
+        <StageSidebar state={projectState} events={[]}
+                      survey={{ open: 1, responses: 5 }} prototypesHref="/projects/p1/prototypes" />
+      </LocaleProvider>,
+    );
+    expect(screen.getByRole("status")).toHaveTextContent("검증 설문 진행 중 1개 · 응답 5건");
+    expect(screen.getByRole("link", { name: "Prototypes 탭에서 보기" }))
+      .toHaveAttribute("href", "/projects/p1/prototypes");
+  });
+
+  it("says nothing when no survey is running", () => {
+    render(
+      <LocaleProvider locale="ko">
+        <StageSidebar state={projectState} events={[]} survey={null} />
+      </LocaleProvider>,
+    );
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+  });
+});
