@@ -336,3 +336,13 @@ def test_the_contract_does_not_depend_on_the_localized_brand_heading():
     text = _text(PROTO_CONFIG / "CLAUDE.md")
     assert "Brand design profile" not in text, (
         "지역화되는 헤딩을 지목한다 — 마커를 쓸 것")
+
+
+def test_an_improvement_session_keeps_the_data_users_entered():
+    """Observed (a workshop run): each improvement build regenerated the sample data, so what
+    had been entered during demos vanished — and the team planned to pilot on the prototype.
+    The contract keeps the seed apart from the store and asks for a reset to be declared."""
+    text = _text(PROTO_CONFIG / "CLAUDE.md")
+    assert "## Data the running prototype collected" in text
+    assert "only when the store does not exist yet" in text
+    assert "Sample data reset" in text

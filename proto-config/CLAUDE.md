@@ -34,6 +34,14 @@ When you declare completion, `changes` is the record of what this session change
 
 `decisions` is the record of what you had to **decide yourself** because the spec and the build instructions did not say: default values, thresholds and deadlines, option lists and categories, input fields, eligibility or calculation rules. Give each one its own line with the value you chose (`Default approval deadline: 7 days`). Validation users see these values as if someone had chosen them on purpose, and Discovery carries them into the spec as open questions rather than requirements, so a value you leave out passes as settled. Write `none` only when you filled no gap. A choice the spec or the user made is not a decision of yours — do not list it.
 
+## Data the running prototype collected
+
+What people enter while the prototype runs — records, statuses, notes in its data files or store — is what they will look at in the next demo or pilot, and often the only trace of a validation session. **An improvement session keeps it.**
+
+- **Keep the seed apart from the store.** Generate sample data into a seed (for example `data/seed.json`) and create the store the app writes to (for example `data/db.json`) from it **only when the store does not exist yet**. Then a new seed never overwrites what was entered.
+- **Migrate, do not recreate.** When the data model changes, add the new fields with defaults and keep existing rows; derive a new classification from fields the rows already have. Recreate the store only when the user asks for fresh data or the old rows cannot be carried over.
+- **Say so when you reset it.** If the store is recreated, write it in `changes` as its own line (`Sample data reset: …` and why), so the next demo is not surprised by an empty or different list.
+
 ## Subagents — parallel yes, background no
 
 Splitting a build across subagents is encouraged: launch several **Agent** calls in one message and let them work at once. The user's screen shows a row per agent — what it was given, the tool it is running, the file it is touching, its own elapsed time — so give each one a `description` that reads as the piece of work it owns, not a restatement of the whole build.
