@@ -152,8 +152,13 @@ frees up when a running build finishes, so pressing the button again shortly wor
       md: `**Reset** on a card returns that prototype to **Not built**. The spec stays.
 
 Deleted — the build output and any running server · the build conversation · the validation
-survey and its responses.
+survey and its responses · the change history.
 Kept — the design document (\`PROTOTYPE-*.md\`), which is why you can build again.
+
+Before deleting, a copy of the survey responses, the change history and the source of the last
+build is kept aside, so records the Discovery documents cite do not vanish; the copy goes into the
+project export file. If Discovery already wrote \`spec-as-built.md\`, reconcile it again after
+the rebuild.
 
 Use it when the direction changed enough that starting over is cleaner. For smaller changes,
 **Modify** is the right button, not Reset — it keeps what was built.`,
@@ -161,9 +166,9 @@ Use it when the direction changed enough that starting over is cleaner. For smal
     {
       kind: "callout",
       tone: "warn",
-      md: `**Survey responses are destroyed by a reset and cannot be recovered.** Export the CSV before
-resetting a prototype that has collected responses. The confirmation dialog tells you the current
-response count.`,
+      md: `**A reset removes survey responses from the survey, and they cannot be restored from the
+screen.** The copy lives only in the export file, so export the CSV before resetting a prototype
+that has collected responses. The confirmation dialog tells you the current response count.`,
     },
     { kind: "heading", id: "download", text: "Downloading" },
     {

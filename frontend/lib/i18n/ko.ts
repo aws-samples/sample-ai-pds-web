@@ -319,8 +319,11 @@ export const ko = {
   "page.resetItemBuild": "빌드 결과와 실행 중인 서버",
   "page.resetItemChat": "빌드 대화 기록",
   "page.resetItemSurvey": "검증 설문",
-  "page.resetResponsesWarn": "응답 {n}건은 되돌릴 수 없습니다.",
-  "page.resetResponsesUnknown": "현재 응답 수를 확인하지 못했습니다 — 응답이 있다면 되돌릴 수 없이 삭제됩니다.",
+  "page.resetItemHistory": "변경 이력(change-history.md)",
+  "page.resetSnapshotNote": "지우기 전에 설문 응답, 변경 이력, 마지막 빌드 소스의 사본을 따로 보관합니다. 사본은 프로젝트 내보내기 파일에 들어갑니다.",
+  "page.resetAsBuiltWarn": "Discovery의 spec-as-built.md가 지금 빌드를 설명하고 있습니다. 초기화하고 다시 빌드하면 Discovery에서 spec-as-built를 다시 맞춰야 합니다.",
+  "page.resetResponsesWarn": "응답 {n}건은 설문에서 지워지며 화면에서 되살릴 수 없습니다.",
+  "page.resetResponsesUnknown": "현재 응답 수를 확인하지 못했습니다 — 응답이 있다면 설문에서 지워지며 화면에서 되살릴 수 없습니다.",
   "page.cancel": "취소",
   "page.reset": "초기화",
   // 프로젝트 생성·목록

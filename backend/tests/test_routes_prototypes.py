@@ -325,7 +325,7 @@ def test_list_state_none(proto_env):
                                    "preview_stale": False,
                                    "access_url": None,
                                    "response_count": 0,
-                                   "has_survey": False}]
+                                   "has_survey": False, "spec_as_built": False}]
 
 
 def _seed_source_generation(s3, files=None):
@@ -778,9 +778,10 @@ def test_list_counts_archived_responses_because_a_reset_destroys_them(proto_env)
 
 
 def test_list_response_count_matches_what_the_reset_actually_destroys(proto_env):
-    """The number the dialog shows and the number that disappears have to be
-    the same one. Both rounds present -- live and archived -- then reset, and
-    nothing under any responses/ survives."""
+    """The number the dialog shows and the number that leaves the survey have to
+    be the same one. Both rounds present -- live and archived -- then reset, and
+    nothing under the prototype's responses/ survives (the evidence snapshot keeps
+    copies outside it -- see the reset snapshot tests)."""
     _seed_spec(proto_env["s3"])
     s3 = proto_env["s3"]
     s3.blobs[f"prototypes/{SLUG}/survey/responses/r1.json"] = "{}"
@@ -796,7 +797,10 @@ def test_list_response_count_matches_what_the_reset_actually_destroys(proto_env)
     assert client.delete(f"/projects/{PID}/prototypes/{SLUG}").status_code == 204
 
     assert reported == destroyed == 3
-    assert [k for k in s3.blobs if "/responses/" in k] == []
+    assert [k for k in s3.blobs
+            if k.startswith(f"prototypes/{SLUG}/") and "/responses/" in k] == []
+    assert len([k for k in s3.blobs
+                if k.startswith("prototype-resets/") and "/responses/" in k]) == 3
 
 
 # ---- session lifecycle ----
@@ -1022,6 +1026,95 @@ def test_reset_clears_everything_but_keeps_the_spec(proto_env, monkeypatch):
     assert s3.blobs["prototypes/other/session.json"] == '{"session_id": "y"}'
 
 
+def test_list_says_when_discovery_wrote_a_spec_as_built(proto_env):
+    """The reset dialog warns with this: after a reset and rebuild, that spec describes a
+    build that is gone until Discovery reconciles it again."""
+    s3 = proto_env["s3"]
+    _seed_spec(s3)
+    card = client.get(f"/projects/{PID}/prototypes").json()["prototypes"][0]
+    assert card["spec_as_built"] is False
+    s3.blobs[f"aiplc-docs/discovery/prototypes/{SLUG}/spec-as-built.md"] = "# as built"
+    card = client.get(f"/projects/{PID}/prototypes").json()["prototypes"][0]
+    assert card["spec_as_built"] is True
+
+
+def _snapshot_keys(s3):
+    return sorted(k for k in s3.blobs if k.startswith(f"prototype-resets/{SLUG}/"))
+
+
+def test_reset_keeps_the_evidence_discovery_cites(proto_env, monkeypatch):
+    """Observed (a workshop run): a reset after approval wiped the survey and the change
+    history that `validation-results.md` and `spec-as-built.md` still cited. The reset
+    copies them aside first, under a prefix it does not delete."""
+    _seed_everything(proto_env, monkeypatch)
+    s3 = proto_env["s3"]
+    s3.blobs[f"aiplc-docs/discovery/prototypes/{SLUG}/change-history.md"] = "# history gen 1-3"
+    s3.blobs[f"prototypes/{SLUG}/source/current.json"] = json.dumps({"gen": 3})
+    s3.blobs[f"prototypes/{SLUG}/source/000003/app/page.tsx"] = "export default 1"
+    s3.blobs[f"prototypes/{SLUG}/source/000002/app/page.tsx"] = "old"
+
+    assert client.delete(f"/projects/{PID}/prototypes/{SLUG}").status_code == 204
+
+    keys = _snapshot_keys(s3)
+    names = {k.split("/", 3)[3] for k in keys}
+    assert names == {"survey-records/definition.json", "survey-records/responses/r1.json",
+                     "change-history.md", "validation-questionnaire.md",
+                     "survey-aggregate.md", "source/app/page.tsx"}
+    by_name = {k.split("/", 3)[3]: k for k in keys}
+    assert s3.blobs[by_name["change-history.md"]] == "# history gen 1-3"
+    # Only the current generation's source -- the one users last saw.
+    assert s3.blobs[by_name["source/app/page.tsx"]] == "export default 1"
+    # The live tree is still wiped.
+    assert [k for k in s3.blobs if k.startswith(f"prototypes/{SLUG}/")] == []
+
+
+def test_the_reset_snapshot_carries_no_live_survey_link(proto_env, monkeypatch):
+    """A questionnaire holds the survey token, and project import re-registers any
+    `/survey/questionnaire.json` as a live link. The copy drops the token and is renamed
+    so it can never come back as one."""
+    _seed_everything(proto_env, monkeypatch)
+    s3 = proto_env["s3"]
+
+    assert client.delete(f"/projects/{PID}/prototypes/{SLUG}").status_code == 204
+
+    keys = _snapshot_keys(s3)
+    assert not any(k.endswith("/survey/questionnaire.json") for k in keys)
+    definition = next(k for k in keys if k.endswith("definition.json"))
+    assert "token" not in json.loads(s3.blobs[definition])
+    assert "tok-1" not in "".join(str(s3.blobs[k]) for k in keys)
+
+
+def test_a_reset_with_nothing_cited_leaves_no_snapshot(proto_env):
+    """A prototype never surveyed and never changed after approval has nothing
+    Discovery points at; copying its source on every reset would only pile up storage."""
+    s3 = proto_env["s3"]
+    _seed_spec(s3)
+    s3.blobs[f"prototypes/{SLUG}/source/current.json"] = json.dumps({"gen": 1})
+    s3.blobs[f"prototypes/{SLUG}/source/000001/app/page.tsx"] = "x"
+
+    assert client.delete(f"/projects/{PID}/prototypes/{SLUG}").status_code == 204
+
+    assert _snapshot_keys(s3) == []
+
+
+def test_reset_deletes_nothing_when_the_snapshot_fails(proto_env, monkeypatch):
+    """Deleting evidence that could not be kept is the loss the snapshot prevents, so a
+    failed copy stops the reset before any purge (502, retryable)."""
+    _seed_everything(proto_env, monkeypatch)
+    s3 = proto_env["s3"]
+
+    async def boom(*a, **k):
+        raise RuntimeError("s3 down")
+    import aipds.routes.prototypes as routes_module
+    monkeypatch.setattr(routes_module, "snapshot_before_reset", boom)
+
+    resp = client.delete(f"/projects/{PID}/prototypes/{SLUG}")
+    assert resp.status_code == 502
+    assert "snapshot" in resp.json()["detail"]
+    assert f"prototypes/{SLUG}/survey/responses/r1.json" in s3.blobs
+    assert "surveys/by-token/tok-1.json" in proto_env["root_s3"].blobs
+
+
 def test_reset_unlinks_the_preview_token_before_wiping_the_prefix(proto_env, monkeypatch):
     """The root index of preview tokens (proto/store.py) can only be found by reading the
     token from prototypes/{slug}/access-token — unless it is reclaimed **before** that tree
@@ -1054,7 +1147,7 @@ def test_reset_leaves_the_card_listable_as_none(proto_env, monkeypatch):
                                    "preview_stale": False,
                                    "access_url": None,
                                    "response_count": 0,
-                                   "has_survey": False}]
+                                   "has_survey": False, "spec_as_built": False}]
 
 
 def test_reset_closes_a_live_session_and_frees_its_build_slot(proto_env, monkeypatch):
