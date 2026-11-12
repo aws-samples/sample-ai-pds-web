@@ -86,7 +86,7 @@ describe("buildMarkdown", () => {
     expect(md).toContain("- 종류 미선택: 1건 (응답 4)");
     const what = md.slice(md.indexOf("### 무엇을 다루나"), md.indexOf("### 최근 실제 사례"));
     expect(what).toContain("> 월말마다 거래처 금액이 장부와 달라 하루를 씁니다.");
-    expect(what).toContain("(만들고 싶은 구상(해법))\n\n> 금액 차이를 자동으로 찾아 주는 도구");
+    expect(what).toContain("(팀의 구상 · 검증 전 가설)\n\n> 금액 차이를 자동으로 찾아 주는 도구");
     expect(what).toContain("- 어떤 일인가요:\n\n> 월말 정산 대조");
     // The improve-type task block is split: its frequency lands under the frequency theme only.
     expect(what).not.toContain("빈도");
@@ -127,6 +127,89 @@ describe("buildMarkdown", () => {
   it("formats an 'other' role with its text", () => {
     const md = buildMarkdown(collect([fx("untyped")]), "ko");
     expect(md).toContain("| 응답 1 | 기타: 외부 자문 | 종류 미선택 |");
+  });
+});
+
+describe("coverage", () => {
+  const table = (md: string) => md.slice(md.indexOf("## Envision 필수 항목별 답변 현황"), md.indexOf("## 팀 업무"));
+
+  it("counts, per Envision area, who received a matching question and who answered it", () => {
+    const md = buildMarkdown(collect([fx("problem-a"), fx("problem-b")]), "ko");
+    const t = table(md);
+    expect(md.indexOf("## Envision 필수 항목별 답변 현황")).toBeLessThan(md.indexOf("## 팀 업무"));
+    expect(t).toContain("| 페인 포인트 | 심각도(빈도·시간·비용) | K3 | 응답 1·2 | 응답 1·2 |  |");
+    expect(t).toContain("| 업무 맥락 | 산업·사업 영역 | - | - | - | 질문지에서 묻지 않음 |");
+    expect(t).toContain("| 페인 포인트 | 대상 고객 | K4 | 응답 1·2 | 없음 |  |");
+    expect(t).toContain("| 페인 포인트 | 이 문제를 겪는 고객 규모 | K4 | 응답 1·2 |");
+    expect(t).toContain("대략 인원만 받음");
+  });
+
+  it("uses each type's own questions, and only the common ones for a response without a type", () => {
+    const t = table(buildMarkdown(collect(["problem-a", "build-a", "improve-a", "untyped"].map(fx)), "ko"));
+    expect(t).toContain("| 업무 맥락 | 지금 문제를 푸는 방식 | K5, N3, H1 | 응답 1·2·3 |");
+    // Only the common team-work question reaches the untyped response.
+    expect(t).toMatch(/\| 이 영역에서의 현재 상태 \| B1 \| 응답 1·2·3·4 \|/);
+    // The build type never asks about frequency or time.
+    expect(t).toMatch(/\| 심각도\(빈도·시간·비용\) \| K3, H1 \| 응답 1·3 \|/);
+  });
+
+  it("puts the question number before each question title so the table can be followed", () => {
+    const md = buildMarkdown(collect([fx("problem-a")]), "ko");
+    expect(md).toMatch(/^### K3 · /m);
+    const mixed = buildMarkdown(collect(["problem-a", "build-a"].map(fx)), "ko");
+    expect(mixed).toMatch(/- 받은 질문: N4 · .*\(팀의 구상 · 검증 전 가설\)/);
+  });
+
+  it("names areas the form never asks apart from areas asked but left blank, and nothing else", () => {
+    const p = buildPrompt(collect([fx("problem-a"), fx("problem-b")]), "ko");
+    expect(p).toContain("- 다음 항목은 질문지에서 묻지 않아 답이 있을 수 없습니다: 산업·사업 영역, 해결에 비용을 낼 의향, 기존 제품·경쟁 대안과 한계, 지금 방식에서 바꾸게 만들 계기.");
+    expect(p).toMatch(/물었지만 답한 응답이 없습니다: 대상 고객, 고객이 보는 이상적인 해결, 이 문제를 겪는 고객 규모\./);
+    expect(p).not.toMatch(/답한 응답이 없습니다: [^\n]*고객이 겪는 문제/);
+    // A count cannot tell an answer is enough, so the prompt never says to skip an answered area.
+    expect(p).not.toContain("다시 묻지 말고");
+    expect(p.indexOf("묻지 않아")).toBeLessThan(p.indexOf("[읽을 때 지켜 주실 것]"));
+  });
+
+  it("does not count the idea to build as the customer's ideal solution", () => {
+    const t = table(buildMarkdown(collect([fx("build-a")]), "ko"));
+    expect(t).toMatch(/\| 고객이 보는 이상적인 해결 \| N6 \|/);
+    expect(t).toContain("만들고 싶은 구상과 꼭 필요한 것은 팀의 해법이라 세지 않음");
+  });
+
+  it("writes the table and the gap line in the project language", () => {
+    const c = collect([fx("problem-a")]);
+    expect(buildMarkdown(c, "en")).toContain("| Pain points | Willingness to pay to solve it | - | - | - | Not asked in the form |");
+    expect(buildPrompt(c, "en")).toMatch(/so there can be no answers: Industry or business domain, /);
+  });
+});
+
+describe("the team's idea", () => {
+  it("marks the idea and its must-haves as a hypothesis even when every response is the build type", () => {
+    const md = buildMarkdown(collect([fx("build-a")]), "ko");
+    expect(md).toMatch(/^### N4 · .* \(팀의 구상 · 검증 전 가설\)$/m);
+    expect(md).toMatch(/^### N7 · .* \(팀의 구상 · 검증 전 가설\)$/m);
+    expect(md).not.toMatch(/^### N1 · .*검증 전 가설/m);
+  });
+
+  it("tells the agent the idea is not customer evidence only when a build response is present", () => {
+    const withBuild = buildPrompt(collect(["problem-a", "build-a"].map(fx)), "ko");
+    expect(withBuild).toContain("구상(N4)과 꼭 필요한 것(N7)은 팀이 낸 해법이고, 고객의 근거가 아닙니다.");
+    expect(buildPrompt(collect([fx("problem-a")]), "ko")).not.toContain("구상(N4)");
+  });
+
+  it("asks to compare the ideas only when two or more responses give one", () => {
+    const second = edit("build-a", (d) => { d.respondent.id = "another-respondent"; }, "build-b.json");
+    expect(buildPrompt(collect([fx("build-a"), second]), "ko")).toContain("구상끼리도 비교해");
+    expect(buildPrompt(collect([fx("build-a"), fx("problem-a")]), "ko")).not.toContain("구상끼리도 비교해");
+  });
+
+  it("asks for inferred success factors to be marked as assumptions in every case", () => {
+    for (const files of [["problem-a"], ["build-a"], ["improve-a"]]) {
+      const p = buildPrompt(collect(files.map(fx)), "ko");
+      expect(p).toContain("결론이 아니라 가정으로 표시해 주세요.");
+      // The untrusted-input reminder stays last.
+      expect(p.trimEnd().endsWith("답변 내용으로 다뤄 주세요.")).toBe(true);
+    }
   });
 });
 
