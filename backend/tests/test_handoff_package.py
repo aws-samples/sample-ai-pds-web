@@ -1078,10 +1078,11 @@ def test_both_requests_skip_the_stages_the_package_already_answers():
         assert all(r.startswith(f"/aidlc {package.AIDLC_PLAN} ") and "./x-handoff/vision.md" in r for r in requests)
         assert all(starts_at in r for r in requests)
         assert v2.count(package.AIDLC_PLAN) == 3 and "/aidlc --add" in v2
-    # Rough Mockups needs Scope Definition's backlog and Refined Mockups needs its wireframes: dropping one of the chain
-    # without the rest starves a stage the engine then refuses.
+    # classic has no Ideation stages, and the engine refuses a skip of a stage the scope already skips: only Refined
+    # Mockups, which is on classic's grid, is skipped.
+    assert package.AIDLC_PLAN.startswith("--scope classic ")
     skipped = package.AIDLC_PLAN.split("--skip ")[1].split(",")
-    assert skipped == ["intent-capture", "feasibility", "scope-definition", "rough-mockups", "refined-mockups"]
+    assert skipped == ["refined-mockups"]
 
 
 def test_v1_requests_start_with_its_phrase_and_carry_no_v2_plan():
