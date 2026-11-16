@@ -41,7 +41,7 @@ from aipds.project_import import (
     WARN_MODEL_UNAVAILABLE,
     apply_bundle,
 )
-from aipds.auth.deps import require_user
+from aipds.auth.deps import require_writer
 from aipds.auth.models import Principal
 from aipds.project_access import normalize, require_project_owner
 from aipds.project_store import write_manifest
@@ -183,7 +183,8 @@ def _staging():
 
 
 @router.post("/project-imports/uploads", status_code=201)
-async def create_import_upload(body: ImportUploadRequest):
+async def create_import_upload(body: ImportUploadRequest,
+                               _: Principal = Depends(require_writer)):
     """Presigned PUT URL to upload the bundle to. The upload does not pass through this
     process."""
     if body.size_bytes <= 0 or body.size_bytes > MAX_IMPORT_BYTES:
@@ -198,7 +199,7 @@ async def create_import_upload(body: ImportUploadRequest):
 
 
 @router.post("/project-imports", status_code=201)
-async def import_project(body: ImportRequest, me: Principal = Depends(require_user)):
+async def import_project(body: ImportRequest, me: Principal = Depends(require_writer)):
     """Restore a staged bundle into a project.
 
     **The order is load-bearing.** Contents → `project.json` → registration. `project.json` is the

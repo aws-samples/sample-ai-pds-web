@@ -7,6 +7,7 @@ import { ImportProjectButton } from "@/components/ImportProjectButton";
 import { ProjectList } from "@/components/ProjectList";
 import { listProjects } from "@/lib/api/client";
 import { useAsync } from "@/lib/useAsync";
+import { useRole } from "@/lib/auth/useRole";
 import { useT } from "@/lib/i18n/provider";
 
 export default function Home() {
@@ -14,6 +15,8 @@ export default function Home() {
   const router = useRouter();
   const [page, setPage] = useState(1);
   const { data, error, loading, reload } = useAsync(() => listProjects(page), [page]);
+  // The viewer role reads every project and creates none (backend auth/deps.require_writer).
+  const viewer = useRole() === "viewer";
   return (
     <>
       <AppHeader activeTab="projects" />
@@ -30,13 +33,20 @@ export default function Home() {
           </div>
           {/* Import follows the same flow as create — it goes straight to the restored project's
               dashboard. */}
-          <ImportProjectButton
-            onImported={(r) => router.push(`/projects/${r.project_id}/dashboard`)}
-          />
+          {!viewer && (
+            <ImportProjectButton
+              onImported={(r) => router.push(`/projects/${r.project_id}/dashboard`)}
+            />
+          )}
         </div>
         {/* Successful create = go straight to that project's dashboard — a more natural start to the
             workshop than just adding it to the list. */}
-        <CreateProjectForm onCreated={(p) => router.push(`/projects/${p.project_id}/dashboard`)} />
+        {viewer
+          ? <p className="mb-6 rounded-lg bg-slate-50 px-4 py-3 text-sm text-slate-600">
+              {t("list.viewerNotice")}
+            </p>
+          : <CreateProjectForm
+              onCreated={(p) => router.push(`/projects/${p.project_id}/dashboard`)} />}
         {loading && <p className="text-sm text-slate-400">{t("page.loading")}</p>}
         {error && (
           <p className="text-sm text-rose-600">

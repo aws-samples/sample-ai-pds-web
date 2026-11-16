@@ -8,6 +8,9 @@
 
 export const SEED_ADMIN_EMAIL = 'admin@aipds.local';
 export const SEED_PM_EMAIL = 'pm@aipds.local';
+// Shared read-only account for workshop participants who follow along while one person types.
+// It belongs to GROUP_VIEWER, which reads every project and writes none.
+export const SEED_VIEWER_EMAIL = 'reader@aipds.local';
 
 // The seed password is **not here.** This module knows no password at all.
 //
@@ -21,6 +24,7 @@ export const SEED_PM_EMAIL = 'pm@aipds.local';
 
 export const GROUP_ADMIN = 'admin';
 export const GROUP_PM = 'pm';
+export const GROUP_VIEWER = 'viewer';
 
 // Must match the actual paths of the frontend route handler / sign-in screen.
 export const CALLBACK_PATH = '/api/auth/callback';

@@ -22,6 +22,8 @@ OWNER = Principal(username="kim", sub="s-kim", role="pm")
 MEMBER = Principal(username="lee", sub="s-lee", role="pm")
 STRANGER = Principal(username="park", sub="s-park", role="pm")
 ADMIN = Principal(username="ops", sub="s-ops", role="admin")
+# The shared read-only workshop account (role, not membership).
+VIEWER = Principal(username="reader", sub="s-reader", role="viewer")
 
 
 @pytest.fixture()
@@ -390,3 +392,70 @@ def test_the_seed_admin_matches_the_infra_seed_account():
     m = re.search(r"SEED_ADMIN_EMAIL\s*=\s*'([^']+)'", src)
     assert m and m.group(1) == project_access.SEED_ADMIN_EMAIL
     assert project_access.SEED_ADMIN == "admin"
+
+
+# ---- Viewer role: reads every project, writes none ----
+
+def test_a_viewer_reads_a_project_it_is_not_a_member_of(project, as_user):
+    body = as_user(VIEWER).get("/projects/pa-1").json()
+    assert body["access"] == "member" and body["owner"] == "kim"
+    assert "members" not in body
+
+
+def test_a_viewer_cannot_write_anywhere(project, as_user):
+    # Same sweep as for a member: every non-read project route is a 403 project_read_only.
+    client = as_user(VIEWER)
+    wrong = []
+    for m, p in _project_routes():
+        if m in ("GET", "HEAD") and not p.endswith("/export"):
+            continue
+        r = client.request(m, _fill(p))
+        if r.status_code != 403 or r.json()["detail"] != "project_read_only":
+            wrong.append((m, p, r.status_code))
+    assert wrong == []
+
+
+def test_a_viewer_stays_read_only_on_a_project_it_owns(monkeypatch, as_user):
+    # A pm demoted to viewer keeps their old projects visible but can no longer change them.
+    monkeypatch.delenv("AIPDS_S3_BUCKET", raising=False)
+    app_module.registry.register("pv-own", owner="reader")
+    client = as_user(VIEWER)
+    assert client.get("/projects/pv-own").json()["access"] == "member"
+    r = client.put("/projects/pv-own/members", json={"members": []})
+    assert r.status_code == 403 and r.json()["detail"] == "project_read_only"
+
+
+def test_a_viewer_lists_every_project(monkeypatch, as_user):
+    monkeypatch.delenv("AIPDS_S3_BUCKET", raising=False)
+    app_module.registry.register("pv-1", owner="kim", created_at="2026-10-01")
+    app_module.registry.register("pv-2", owner="park", created_at="2026-10-02")
+    assert project_access.visible_ids(VIEWER) == app_module.registry.list_ids()
+    body = as_user(VIEWER).get("/projects?size=50").json()
+    assert body["total"] == len(app_module.registry.list_ids())
+    assert {p["access"] for p in body["projects"]} == {"member"}
+
+
+@pytest.mark.parametrize("method,path,body", [
+    ("POST", "/projects", {"project_id": "pv-new"}),
+    ("POST", "/project-imports/uploads", {"size_bytes": 10}),
+    ("POST", "/project-imports", {"upload_id": "u"}),
+])
+def test_a_viewer_cannot_create_or_import_projects(monkeypatch, as_user, method, path, body):
+    monkeypatch.delenv("AIPDS_S3_BUCKET", raising=False)
+    r = as_user(VIEWER).request(method, path, json=body)
+    assert r.status_code == 403 and r.json()["detail"] == "viewer_read_only"
+    assert not app_module.registry.is_registered("pv-new")
+
+
+def test_a_viewer_cannot_receive_ownership(project, as_user, cognito):
+    cognito.users["reader"] = (True, ["viewer"])
+    r = as_user(ADMIN).put("/admin/projects/pa-1/owner", json={"owner": "reader@aipds.local"})
+    assert r.status_code == 400 and r.json()["detail"] == "owner_not_assignable"
+    assert app_module.registry.get_owner("pa-1") == "kim"
+
+
+def test_the_viewer_matches_the_infra_seed_account():
+    # The seed account's group must be one the backend reads as viewer (infra/lib/auth-client-config.ts).
+    src = (Path(__file__).resolve().parents[2] / "infra/lib/auth-client-config.ts").read_text()
+    assert re.search(r"SEED_VIEWER_EMAIL = 'reader@aipds\.local'", src)
+    assert re.search(r"GROUP_VIEWER = 'viewer'", src)

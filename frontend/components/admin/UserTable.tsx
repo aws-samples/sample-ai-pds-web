@@ -18,6 +18,7 @@ type T = (key: keyof Dict) => string;
 const ROLE_LABEL_KEY: Record<string, keyof Dict> = {
   admin: "admin.roleAdmin",
   pm: "admin.rolePm",
+  viewer: "admin.roleViewer",
 };
 
 function statusLabel(user: AdminUser, t: T): string {
@@ -134,6 +135,7 @@ export function UserTable({
                         {/* Using the same word as the badge ("PM"/"관리자") as the option text
                             would make a text query hit two places (badge, option) in the same
                             row, which is ambiguous. value stays "pm"/"admin", so behavior is the same. */}
+                        <option value="viewer">{t("admin.roleViewerOptionShort")}</option>
                         <option value="pm">{t("admin.rolePmOptionShort")}</option>
                         <option value="admin">{t("admin.roleAdminOptionShort")}</option>
                       </select>

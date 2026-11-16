@@ -3,9 +3,9 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import {
   usernameForEmail,
-  CALLBACK_PATH, COGNITO_ADMIN_SCOPE, GROUP_ADMIN, GROUP_PM, LOCAL_APP_URL,
+  CALLBACK_PATH, COGNITO_ADMIN_SCOPE, GROUP_ADMIN, GROUP_PM, GROUP_VIEWER, LOCAL_APP_URL,
   LOGOUT_PATH, OAUTH_SCOPES,
-  SEED_ADMIN_EMAIL, SEED_PM_EMAIL,
+  SEED_ADMIN_EMAIL, SEED_PM_EMAIL, SEED_VIEWER_EMAIL,
   ACCESS_TOKEN_VALIDITY_MINUTES, ID_TOKEN_VALIDITY_MINUTES,
   REFRESH_TOKEN_VALIDITY_MINUTES,
   callbackUrls, logoutUrls,
@@ -62,6 +62,7 @@ console.log('OK  auth-client-config: token validity outlasts a prototype build')
 
 assert.strictEqual(SEED_ADMIN_EMAIL, 'admin@aipds.local');
 assert.strictEqual(SEED_PM_EMAIL, 'pm@aipds.local');
+assert.strictEqual(SEED_VIEWER_EMAIL, 'reader@aipds.local');
 
 // Task 3 creates the Cognito groups from these values, and Task 4's token verification
 // matches the same strings against the cognito:groups claim — a typo would pass all the
@@ -69,6 +70,7 @@ assert.strictEqual(SEED_PM_EMAIL, 'pm@aipds.local');
 // assert the constants themselves.
 assert.strictEqual(GROUP_ADMIN, 'admin');
 assert.strictEqual(GROUP_PM, 'pm');
+assert.strictEqual(GROUP_VIEWER, 'viewer');
 
 // Callback URLs do not allow wildcards and accept only exact matches — the path must
 // be exactly the same as the frontend route handler path.

@@ -18,7 +18,7 @@ from pydantic import BaseModel, Field
 
 from aipds import error_codes as ec
 from aipds.auth.cognito import CognitoError, change_own_password
-from aipds.auth.deps import access_token, require_user
+from aipds.auth.deps import access_token, require_writer
 from aipds.auth.models import Principal
 
 _log = logging.getLogger(__name__)
@@ -86,7 +86,7 @@ class PasswordBody(BaseModel):
 
 @router.post("/password", status_code=204)
 async def change_password(body: PasswordBody,
-                          me: Principal = Depends(require_user),
+                          me: Principal = Depends(require_writer),
                           token: str = Depends(access_token)) -> None:
     """Changes one's own password.
 

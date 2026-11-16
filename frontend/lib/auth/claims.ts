@@ -28,14 +28,15 @@ export function decodeJwtPayload(token: string): Claims | null {
   }
 }
 
-// Must use the same precedence as the backend verifier (_role_from_groups): a user in both groups
-// is admin. If they diverge, the screen and the actual permissions disagree.
-export function roleFromClaims(c: Claims | null): "admin" | "pm" | null {
+// Must use the same precedence as the backend verifier (_role_from_groups): the widest group wins
+// (admin > pm > viewer). If they diverge, the screen and the actual permissions disagree.
+export function roleFromClaims(c: Claims | null): "admin" | "pm" | "viewer" | null {
   const groups = c?.["cognito:groups"];
   if (!Array.isArray(groups)) return null;
   const names = groups.map(String);
   if (names.includes("admin")) return "admin";
   if (names.includes("pm")) return "pm";
+  if (names.includes("viewer")) return "viewer";
   return null;
 }
 

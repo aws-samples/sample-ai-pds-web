@@ -11,13 +11,14 @@ import { ChangePasswordModal } from "./ChangePasswordModal";
 interface Me {
   authenticated: boolean;
   email?: string | null;
-  role?: "admin" | "pm" | null;
+  role?: "admin" | "pm" | "viewer" | null;
 }
 
 // Same convention as the admin screen (UserTable) — labels are dictionary keys.
 const ROLE_LABEL_KEY: Record<string, keyof Dict> = {
   admin: "admin.roleAdmin",
   pm: "admin.rolePm",
+  viewer: "admin.roleViewer",
 };
 
 // The token is in an httpOnly cookie that JS cannot read, so display info is
@@ -125,16 +126,20 @@ export function UserMenu() {
               </Link>
             </>
           )}
-          {/* Kept outside the role condition — it acts on one's own account, so a pm
+          {/* Kept outside the admin condition — it acts on one's own account, so a pm
               must be able to do it too. Inside the admin block, a pm would be left
-              only with asking an admin for a reset. */}
-          <button
-            type="button"
-            onClick={() => { setOpen(false); setChanging(true); }}
-            className="block w-full rounded-lg px-3 py-2 text-left text-sm hover:bg-slate-50"
-          >
-            {t("user.changePassword")}
-          </button>
+              only with asking an admin for a reset. The viewer account is shared, so it
+              is hidden there: one participant changing it would lock out the rest (the
+              backend refuses it too — auth/deps.require_writer). */}
+          {me.role !== "viewer" && (
+            <button
+              type="button"
+              onClick={() => { setOpen(false); setChanging(true); }}
+              className="block w-full rounded-lg px-3 py-2 text-left text-sm hover:bg-slate-50"
+            >
+              {t("user.changePassword")}
+            </button>
+          )}
           {/* Why POST: a GET logout can be triggered by link prefetching and end
               the session unintentionally. */}
           <form action="/api/auth/logout" method="post">

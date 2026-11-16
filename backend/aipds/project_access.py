@@ -1,8 +1,9 @@
 # backend/aipds/project_access.py — who can do what to which project.
 #
-# Each project has one owner and a list of viewing members. There are three rules:
+# Each project has one owner and a list of viewing members. There are four rules:
 #
 #   admin   reads and writes every project (writing is needed for cleanup and granting ownership).
+#   viewer  (role) is a member of every project — reads all, writes none, even a project it owns.
 #   owner   reads and writes their own projects.
 #   member  only reads. The purpose of membership is viewing, not collaboration — things that move
 #           the project forward, like chat, approvals, and builds, are done by the single owner.
@@ -89,6 +90,10 @@ def access_of(principal: Principal, project_id: str) -> Access | None:
     import aipds.app as app_module
     if principal.role == "admin":
         return "admin"
+    if principal.role == "viewer":
+        # Checked before ownership: a pm demoted to viewer keeps seeing their projects but can no
+        # longer change them. Owner assignment already refuses viewers (routes/admin_users).
+        return "member"
     me = normalize(principal.username)
     if app_module.registry.get_owner(project_id) == me:
         return "owner"
@@ -140,7 +145,7 @@ def visible_ids(principal: Principal) -> list[str]:
     """In list order (registry.list_ids) as is, only those this requester can see."""
     import aipds.app as app_module
     ids = app_module.registry.list_ids()
-    if principal.role == "admin":
+    if principal.role in ("admin", "viewer"):
         return ids
     return [pid for pid in ids if access_of(principal, pid) is not None]
 

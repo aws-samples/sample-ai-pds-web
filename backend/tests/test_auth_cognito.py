@@ -277,6 +277,27 @@ def test_set_group_removes_existing_roles_before_adding(admin):
     a.set_group("u@example.com", "pm")
 
 
+def test_demoting_to_viewer_removes_the_pm_group(admin):
+    # pm beats viewer in the verifier, so a leftover pm group would void the demotion.
+    a, stub = admin
+    stub.add_response("admin_list_groups_for_user", {"Groups": [{"GroupName": "pm"}]},
+                      {"UserPoolId": POOL, "Username": "u@example.com"})
+    stub.add_response("admin_remove_user_from_group", {},
+                      {"UserPoolId": POOL, "Username": "u@example.com", "GroupName": "pm"})
+    stub.add_response("admin_add_user_to_group", {},
+                      {"UserPoolId": POOL, "Username": "u@example.com", "GroupName": "viewer"})
+    a.set_group("u@example.com", "viewer")
+
+
+def test_viewer_group_is_listed_as_viewer(admin):
+    a, stub = admin
+    stub.add_response("list_users", {"Users": [_user("reader", "reader@aipds.local")]},
+                      {"UserPoolId": POOL, "Limit": 60})
+    stub.add_response("admin_list_groups_for_user", {"Groups": [{"GroupName": "viewer"}]},
+                      {"UserPoolId": POOL, "Username": "reader"})
+    assert a.list_users()[0].role == "viewer"
+
+
 def test_set_group_leaves_unrelated_groups_alone(admin):
     # Groups other than admin/pm are not our concern — leave them untouched.
     a, stub = admin
