@@ -263,6 +263,22 @@ def test_a_missing_vision_section_is_flagged():
     assert [term for _, term in _kinds(package.lint(cut), "structure")] == ["Features Out of Scope"]
 
 
+def test_business_constraints_end_with_an_nfr_line():
+    """One line stating the first release's non-functional needs, or that there are none new, keeps the scope from growing
+    quietly, and the classic plan runs NFR Requirements (AI-DLC TTT). The prompt asks for it; the check flags its absence."""
+    prompt = package.build_prompt(language="en", readiness=assess(B, {}), record=supplement.Supplement(), sources={})
+    assert 'starts with "NFR:"' in prompt
+    bare = _OPEN.replace("## Full Scope Vision", "### Business Constraints\n- 개인정보는 국내에만 둔다 [x.md · y]\n\n## Full Scope Vision", 1)
+    assert "## Full Scope Vision" in _OPEN and bare != _OPEN
+    assert [term for _, term in _kinds(package.lint(bare), "structure")] == ["Business Constraints · NFR"]
+    for line in ("NFR: 보안·인증은 현재 체계를 따른다. 새 요구 없음.", "- **NFR**: 재료 없음"):
+        ok = bare.replace("- 개인정보는 국내에만 둔다 [x.md · y]", f"- 개인정보는 국내에만 둔다 [x.md · y]\n{line}")
+        assert _kinds(package.lint(ok), "structure") == []
+    # The line belongs to Business Constraints: one in another section does not count.
+    elsewhere = bare.replace("## Full Scope Vision", "## Full Scope Vision\nNFR: 새 요구 없음", 1)
+    assert [term for _, term in _kinds(package.lint(elsewhere), "structure")] == ["Business Constraints · NFR"]
+
+
 _TRIAGED = _vision("""| ID | 질문 | 답할 사람 | 시점 | 답이 나올 때까지 | 근거 |
 |---|---|---|---|---|---|
 | O-01 | 증빙 기록의 보존 기간은 얼마인가? | PM(외부 확인) | 빌드 전 | — | discovery-document.md · Build Decision |
@@ -340,7 +356,7 @@ def test_steps_write_the_open_decisions_then_the_ledger_and_readme():
     # If the open decisions include a before-build PM decision, options are generated.
     assert [step for step, _ in calls] == ["vision", "options"]
     assert [s.status for s in done.steps] == ["done", "done"]
-    assert done.files == ["README.md", "start-prompt.md", "vision.md", "decisions.md"]
+    assert done.files == ["README.md", "start-prompt.md", "project-rules.md", "vision.md", "decisions.md"]
     assert set(done.sources) == set(package.select_sources(B))
     assert s3.blobs[package.PACKAGE_PREFIX + "vision.md"].startswith("# 샘플몰 안전ON — Vision")
     prompt = s3.blobs[package.PACKAGE_PREFIX + "start-prompt.md"]
@@ -818,7 +834,9 @@ def test_route_generates_views_and_downloads(env):
     # The start prompt shown on screen points to the same folder.
     assert "./pkg-b-handoff/vision.md" in body["files"]["start-prompt.md"]
     names = [n.split("/", 1)[1] for n in zf.namelist()]
-    assert {"README.md", "start-prompt.md", "vision.md", "decisions.md"} <= set(names)
+    assert {"README.md", "start-prompt.md", "project-rules.md", "vision.md", "decisions.md"} <= set(names)
+    assert "./pkg-b-handoff/vision.md" in zf.read("pkg-b-handoff/project-rules.md").decode()
+    assert package.TECH_ENV not in names
     assert "discovery/use-case-intake/use-cases.md" in names
     assert zf.read("pkg-b-handoff/uploads/ab12cd34/동의서.pdf") == b"%PDF-1.7 bytes"   # bytes unchanged
     # Question files, build instructions, design context, prototype source, the audit log, options, and previous-structure documents are excluded.
@@ -952,6 +970,51 @@ def test_route_reset_is_refused_while_generating(env, monkeypatch):
     monkeypatch.setattr(package.jobs, "running", lambda pid: True)
     assert client.delete("/projects/pkg-busy/handoff").status_code == 409
     assert package.PACKAGE_PREFIX + "vision.md" in s3.blobs
+
+
+def test_the_project_rules_carry_the_package_rules_in_the_rule_shape():
+    """The first request is one chat message, while AI-DLC reads every rule file whole at each stage's start — the rules go
+    where every stage reads them. The shape is the seeded project.md's (NEVER/ALWAYS lines under its two headings), which
+    Practices Discovery appends to. Rules about what to build only: technology is the team's document."""
+    for language in ("ko", "en"):
+        text = package.project_rules(language, "x-handoff")
+        assert "{root}" not in text and "./x-handoff/vision.md" in text
+        forbidden = text.split("## Forbidden\n")[1].split("## Mandated")[0]
+        mandated = text.split("## Mandated\n")[1]
+        rules = [l for l in (forbidden + mandated).splitlines() if l.strip()]
+        assert all(l.startswith(("NEVER ", "ALWAYS ")) and l.endswith("(handoff)") for l in rules)
+        assert sum(l.startswith("NEVER ") for l in rules) == forbidden.count("NEVER ") == 4
+        assert "./x-handoff/technical-environment.md" in mandated
+        # The package's own rule checks (technology words) hold for the rules too.
+        assert not [f for f in package.lint(text, language=language) if f.kind == "tech"]
+        # The start request asks for them before the run reaches Requirements Analysis, and the note says why.
+        v2 = package.start_prompt(language, "x-handoff").split("## AI-DLC v1")[0]
+        requests = re.findall(r"```text\n(.+?)\n```", v2, re.DOTALL)
+        assert all("./x-handoff/project-rules.md" in r and "memory/project.md" in r for r in requests)
+        assert "/aidlc --resume" in v2
+    assert "누가 언제 확인했는지와 함께" in package.project_rules("ko", "x")
+    assert "who confirmed it and when" in package.project_rules("en", "x")
+
+
+def test_the_team_technical_document_lives_in_the_package_folder_and_survives_a_new_version():
+    """The team puts its technical environment document in the unpacked folder. The package never ships a file by that
+    name, so a new version unpacked over the folder does not overwrite it."""
+    assert package.TECH_ENV not in package.FILES + (package.OPTIONS,)
+    for language in ("ko", "en"):
+        prompt = package.start_prompt(language, "x-handoff")
+        assert "./technical-environment.md" not in prompt.replace("./x-handoff/technical-environment.md", "")
+        assert "`x-handoff/`" in prompt
+        assert "`technical-environment.md`" in package.readme(language)
+
+
+def test_a_package_built_before_the_project_rules_gets_them_with_its_start_prompt(env):
+    """The start prompt is rewritten on every read and asks for `project-rules.md`, so a package whose manifest predates the
+    file gets it too — otherwise the pasted request would point at a file the zip does not hold."""
+    from aipds.routes import handoff as handoff_route
+    files = {"start-prompt.md": "old", "vision.md": "# v"}
+    handoff_route._fresh_fixed_files("ws-old", files, design=False)
+    assert files["project-rules.md"] == package.project_rules(app_module.project_language("ws-old"), "ws-old-handoff")
+    assert "./ws-old-handoff/project-rules.md" in files["start-prompt.md"]
 
 
 def test_the_zip_and_its_folder_share_one_name():
@@ -1097,7 +1160,9 @@ def test_v1_requests_start_with_its_phrase_and_carry_no_v2_plan():
         assert len(requests) == 2
         assert all(r.startswith(f"{package.AIDLC_V1} ") and "./x-handoff/vision.md" in r for r in requests)
         assert all(starts_at in r and "/aidlc" not in r and "--skip" not in r for r in requests)
-        assert "./technical-environment.md" in requests[1] and "./technical-environment.md" not in requests[0]
+        assert "./x-handoff/technical-environment.md" in requests[1]
+        assert "technical-environment.md" not in requests[0]
+        assert all("./x-handoff/project-rules.md" in r and "memory/project.md" not in r for r in requests)
 
 
 # ---- decisions are the PM's; estimates stay estimates ----

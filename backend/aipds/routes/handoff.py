@@ -195,14 +195,16 @@ async def get_handoff_package(pid: str):
 
 
 def _fresh_fixed_files(pid: str, files: dict[str, str], *, design: bool) -> None:
-    """Rewrites the start prompt and the README from what the zip holds now. What is stored is
+    """Rewrites the start prompt, the project rules and the README from what the zip holds now. What is stored is
     the text at build time, so this keeps them consistent with the downloaded zip — the
     folder name in the start prompt (even for packages built before the naming rule changed)
-    and, in the README, whether there is a `design/` folder to point at. Both are fixed text,
+    and, in the README, whether there is a `design/` folder to point at. All are fixed text,
     with no model."""
     language = app_module.project_language(pid)
     if package.START_PROMPT in files:
         files[package.START_PROMPT] = package.start_prompt(language, package.archive_folder(pid))
+        # The start prompt asks for the project rules, so a package built before they existed gets them too.
+        files[package.PROJECT_RULES] = package.project_rules(language, package.archive_folder(pid))
     if package.README in files:
         files[package.README] = package.readme(language, design=design)
 

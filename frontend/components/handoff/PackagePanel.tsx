@@ -11,7 +11,7 @@ import type { Dict } from "@/lib/i18n";
 import { useT } from "@/lib/i18n/provider";
 
 /** Order of the file list. Same as the reading order (see README). */
-const ORDER = ["README.md", "start-prompt.md", "vision.md", "decisions.md"];
+const ORDER = ["README.md", "start-prompt.md", "project-rules.md", "vision.md", "decisions.md"];
 
 /** AI-DLC versions `start-prompt.md` has a section for, newest first (server package.start_prompt). */
 export const AIDLC_VERSIONS = ["v2", "v1"] as const;
