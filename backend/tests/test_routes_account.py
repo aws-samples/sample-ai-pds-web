@@ -68,6 +68,17 @@ def _fail_with(idp: FakeIdp, code: str) -> None:
     idp.error = CognitoError(code, f"stubbed {code}")
 
 
+# ---- The shared viewer account ----
+
+def test_a_viewer_cannot_change_the_shared_password(idp, client):
+    # One participant changing it would lock everyone else out; an admin reissues it instead.
+    app_module.app.dependency_overrides[require_user] = lambda: Principal(
+        username="reader", sub="s-reader", role="viewer")
+    r = client.post("/me/password", json=BODY, headers=AUTH)
+    assert r.status_code == 403 and r.json()["detail"] == ec.VIEWER_READ_ONLY
+    assert idp.calls == []
+
+
 # ---- Success path ----
 
 def test_the_request_access_token_is_what_authorizes_the_change(idp, client):

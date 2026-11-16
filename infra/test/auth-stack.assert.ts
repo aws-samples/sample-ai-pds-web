@@ -3,7 +3,7 @@ import * as cdk from 'aws-cdk-lib';
 import { Template, Match } from 'aws-cdk-lib/assertions';
 import { AipdsAuthStack } from '../lib/aipds-auth-stack';
 import {
-  COGNITO_ADMIN_SCOPE, GROUP_ADMIN, GROUP_PM, SEED_ADMIN_EMAIL, SEED_PM_EMAIL,
+  COGNITO_ADMIN_SCOPE, GROUP_ADMIN, GROUP_PM, GROUP_VIEWER, SEED_ADMIN_EMAIL, SEED_PM_EMAIL, SEED_VIEWER_EMAIL,
   usernameForEmail,
 } from '../lib/auth-client-config';
 
@@ -61,13 +61,16 @@ t.hasResourceProperties('AWS::Cognito::UserPool', {
   },
 });
 
-// --- 2 groups + precedence. ---
-t.resourceCountIs('AWS::Cognito::UserPoolGroup', 2);
+// --- 3 groups + precedence. ---
+t.resourceCountIs('AWS::Cognito::UserPoolGroup', 3);
 t.hasResourceProperties('AWS::Cognito::UserPoolGroup', {
   GroupName: 'admin', Precedence: 0,
 });
 t.hasResourceProperties('AWS::Cognito::UserPoolGroup', {
   GroupName: 'pm', Precedence: 10,
+});
+t.hasResourceProperties('AWS::Cognito::UserPoolGroup', {
+  GroupName: 'viewer', Precedence: 20,
 });
 
 // --- Hosted UI v2 (managed login). With v1, the old UI shows instead of the branding designer. ---
@@ -145,8 +148,8 @@ function refsIn(field: any): string[] {
 const customResources = t.findResources('Custom::AWS');
 const resourceList = Object.values(customResources);
 assert.strictEqual(
-  resourceList.length, 6,
-  `expected 6 seed custom resources, got ${resourceList.length}`,
+  resourceList.length, 9,
+  `expected 9 seed custom resources (3 accounts × create/password/group), got ${resourceList.length}`,
 );
 
 const calls = resourceList.map((r: any) => ({
@@ -304,6 +307,7 @@ function assertSeeding(email: string, group: string) {
 
 assertSeeding(SEED_ADMIN_EMAIL, GROUP_ADMIN);
 assertSeeding(SEED_PM_EMAIL, GROUP_PM);
+assertSeeding(SEED_VIEWER_EMAIL, GROUP_VIEWER);
 
 // Global invariant: no Admin* call may carry an email-format Username. That is the only condition
 // Cognito rejects, so assert this invariant directly rather than the rule (local part)

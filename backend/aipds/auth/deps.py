@@ -7,7 +7,8 @@ import logging
 
 from fastapi import Depends, HTTPException, Request
 
-from aipds.auth.models import Principal
+from aipds import error_codes as ec
+from aipds.auth.models import ROLE_VIEWER, Principal
 from aipds.auth.verifier import TokenError, verify_access_token
 
 _log = logging.getLogger(__name__)
@@ -30,7 +31,7 @@ def _bearer_token(request: Request) -> str:
 
 
 async def require_user(request: Request) -> Principal:
-    """Both admin and pm pass. If auth is not configured, everyone passes."""
+    """Every role passes (admin, pm, viewer). If auth is not configured, everyone passes."""
     # Import app lazily: app.py includes the routers and the routers import this module,
     # so a top-level module import would be circular.
     import aipds.app as app_module
@@ -81,4 +82,17 @@ async def require_admin(
     """Only admin passes. pm gets 403 — authenticated but not authorized (not 401)."""
     if principal.role != "admin":
         raise HTTPException(status_code=403, detail="admin role required")
+    return principal
+
+
+async def require_writer(
+        principal: Principal = Depends(require_user)) -> Principal:
+    """Everyone except viewer. For writes that are not scoped to one project (creating or importing
+    a project, changing one's own password) — writes inside a project are gated by
+    project_access.require_project_access, which already treats viewer as a read-only member.
+
+    The password is on this list because the viewer account is shared: if one participant changed
+    it, everyone else would be locked out. An admin reissues it from the admin page instead."""
+    if principal.role == ROLE_VIEWER:
+        raise HTTPException(status_code=403, detail=ec.VIEWER_READ_ONLY)
     return principal

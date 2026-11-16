@@ -85,7 +85,9 @@ The frontend middleware is only a UX gate — **the security boundary is the bac
 
 A project has one owner and any number of viewing members. The owner and administrators read and
 change it; members only read; to anyone else it is a 404, the same as a project that does not exist
-(`backend/aipds/project_access.py`). That is the *project* access below.
+(`backend/aipds/project_access.py`). That is the *project* access below. The **viewer** role is a
+member of every project: it reads them all and cannot create, import, or change any — the shared
+account workshop participants use to follow along while one person types.
 
 | Screen | What it does | Access |
 |---|---|---|
@@ -168,7 +170,10 @@ npx cdk deploy --all --require-approval never \
   where share links point, `AipdsHostingStack.InstanceId` is the SSM target. `VpcOriginId` and
   `OriginPrivateDns` are what deploying the instance-side stacks alone takes (`/manual`).
 - **Sign in** as `admin@aipds.local` or `pm@aipds.local` with the `SeedPassword` value. It is a temporary
-  password (valid 30 days) that each user replaces at first login. It must satisfy the pool policy —
+  password (valid 30 days) that each user replaces at first login. `reader@aipds.local` (viewer role,
+  read-only on every project) gets the same temporary password: the facilitator signs in once before
+  the workshop to set the real one and shares it with participants. The viewer cannot change its own
+  password in the app — reissue it from the admin page (`/admin/users`) after the workshop. It must satisfy the pool policy —
   8+ characters with an uppercase letter, a lowercase letter, a digit and a symbol — or CloudFormation
   rejects it before the deployment starts.
 - **MFA is off.** Sign-in is a password alone, which is enough for a workshop sample but not for real

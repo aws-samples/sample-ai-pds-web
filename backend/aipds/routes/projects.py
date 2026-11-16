@@ -7,7 +7,7 @@ from pydantic import BaseModel
 from aipds import app as app_module
 from aipds import error_codes as ec
 from aipds import project_access
-from aipds.auth.deps import require_user
+from aipds.auth.deps import require_user, require_writer
 from aipds.auth.models import Principal
 from aipds.parsers.state import parse_state_file
 from aipds.project_store import write_manifest, delete_project_data
@@ -110,7 +110,7 @@ def _access_view(pid: str, me: Principal) -> dict:
 
 
 @router.post("/projects")
-async def create_project(body: CreateProject, me: Principal = Depends(require_user)):
+async def create_project(body: CreateProject, me: Principal = Depends(require_writer)):
     # A project always has a display name. The form requires one, and an API caller that
     # omits it gets the id instead -- a null name made exported bundles and the project list
     # unidentifiable.

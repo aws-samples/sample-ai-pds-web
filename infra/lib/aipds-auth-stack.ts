@@ -3,9 +3,9 @@ import { Construct } from 'constructs';
 import * as cognito from 'aws-cdk-lib/aws-cognito';
 import {
   ACCESS_TOKEN_VALIDITY_MINUTES, CLIENT_NAME, COGNITO_ADMIN_SCOPE,
-  GROUP_ADMIN, GROUP_PM, ID_TOKEN_VALIDITY_MINUTES,
+  GROUP_ADMIN, GROUP_PM, GROUP_VIEWER, ID_TOKEN_VALIDITY_MINUTES,
   LOCAL_APP_URL, OAUTH_SCOPES, REFRESH_TOKEN_VALIDITY_MINUTES,
-  SEED_ADMIN_EMAIL, SEED_PM_EMAIL,
+  SEED_ADMIN_EMAIL, SEED_PM_EMAIL, SEED_VIEWER_EMAIL,
   callbackUrls, logoutUrls,
 } from './auth-client-config';
 import { seedProviderRole, seedUser } from './seed-users';
@@ -81,8 +81,8 @@ export class AipdsAuthStack extends cdk.Stack {
       maxLength: 256,
       allowedPattern: SEED_PASSWORD_PATTERN,
       description:
-        'Temporary password for the seeded admin/pm accounts. Must satisfy the pool '
-        + 'policy (8+ chars, upper, lower, digit, symbol, no spaces). Both accounts '
+        'Temporary password for the seeded admin/pm/reader accounts. Must satisfy the pool '
+        + 'policy (8+ chars, upper, lower, digit, symbol, no spaces). All accounts '
         + 'are created in FORCE_CHANGE_PASSWORD state, so each user replaces this at '
         + 'first login.',
       constraintDescription:
@@ -151,6 +151,12 @@ export class AipdsAuthStack extends cdk.Stack {
       description: 'AI-PDS PM — 프로젝트 전체 접근, 사용자 관리 제외',
       precedence: 10,
     });
+    new cognito.CfnUserPoolGroup(this, 'ViewerGroup', {
+      userPoolId: this.userPool.userPoolId,
+      groupName: GROUP_VIEWER,
+      description: 'AI-PDS 뷰어 — 모든 프로젝트 읽기 전용',
+      precedence: 20,
+    });
 
     // --- Hosted UI v2 (managed login) ---
     // The domain prefix must be unique within the account and region.
@@ -203,11 +209,11 @@ export class AipdsAuthStack extends cdk.Stack {
 
     // --- Seed accounts: a single cdk deploy must make login possible ---
     //
-    // 'Can log in' does not mean 'the password is finalized'. Both accounts are created with a
+    // 'Can log in' does not mean 'the password is finalized'. Every seed account is created with a
     // temporary password (FORCE_CHANGE_PASSWORD), and on first login the user sets their own
     // password on the screen the Hosted UI shows — same as an invited account.
     //
-    // The role is created once here and shared by both seeds. Creating permissions per seed races
+    // The role is created once here and shared by all seeds. Creating permissions per seed races
     // with IAM eventual consistency, and losing that race actually rolled back the first deploy —
     // see the `seedProviderRole` comment in seed-users.ts for the evidence.
     const seedRole = seedProviderRole(this, this.userPool);
@@ -222,6 +228,17 @@ export class AipdsAuthStack extends cdk.Stack {
       userPool: this.userPool,
       email: SEED_PM_EMAIL,
       group: GROUP_PM,
+      password: seedPassword.valueAsString,
+      role: seedRole,
+    });
+    // The shared reader account. Same temporary-password discipline: the facilitator signs in once
+    // before the workshop to set the real password, then hands it to participants. The viewer role
+    // cannot change its own password from the app (routes/account.py), so one participant cannot
+    // lock the others out; reissuing goes through the admin page.
+    seedUser(this, 'SeedViewer', {
+      userPool: this.userPool,
+      email: SEED_VIEWER_EMAIL,
+      group: GROUP_VIEWER,
       password: seedPassword.valueAsString,
       role: seedRole,
     });

@@ -72,6 +72,7 @@ export function InviteUserModal({
                 className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
               >
                 <option value="pm">{t("admin.rolePmOption")}</option>
+                <option value="viewer">{t("admin.roleViewerOption")}</option>
                 <option value="admin">{t("admin.roleAdminOption")}</option>
               </select>
             </div>

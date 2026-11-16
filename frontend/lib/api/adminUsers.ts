@@ -4,7 +4,7 @@
 // — the two values are currently equal, but the screen must not depend on that equality.
 import { apiFetch } from "./http";
 
-export type UserRole = "admin" | "pm";
+export type UserRole = "admin" | "pm" | "viewer";
 
 // The username is email-shaped (contains "@"). "@" is a character that needs no escaping in a URL path
 // segment (RFC 3986 pchar), so the %40 produced by encodeURIComponent is decoded back —

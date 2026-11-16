@@ -106,6 +106,9 @@ IMPORT_FAILED = "import_failed"
 # for members, so the normal path never gets here -- it happens when permissions
 # changed while a tab was open.
 PROJECT_READ_ONLY = "project_read_only"
+# The viewer role attempted a write that is not scoped to one project (create, import, own
+# password) -- auth/deps.require_writer.
+VIEWER_READ_ONLY = "viewer_read_only"
 # A value that cannot be used as a member or owner (neither an email nor a username).
 MEMBER_INVALID = "member_invalid"
 # An account that cannot receive ownership (disabled, no role). A nonexistent

@@ -114,6 +114,19 @@ async def test_admin_wins_when_user_is_in_both_groups():
     assert principal.role == "admin"
 
 
+async def test_viewer_group_yields_viewer_role():
+    principal = await _verify(_token(**{"cognito:groups": ["viewer"]}))
+    assert principal.role == "viewer"
+
+
+@pytest.mark.parametrize("groups,role", [(["viewer", "pm"], "pm"),
+                                         (["viewer", "admin"], "admin")])
+async def test_a_wider_group_beats_viewer(groups, role):
+    # Adding a pm to the viewer group by mistake must not silently make them read-only.
+    principal = await _verify(_token(**{"cognito:groups": groups}))
+    assert principal.role == role
+
+
 async def test_expired_token_is_rejected():
     now = int(time.time())
     with pytest.raises(TokenError):

@@ -17,7 +17,7 @@ from dataclasses import dataclass
 
 from botocore.exceptions import BotoCoreError, ClientError
 
-from aipds.auth.models import ROLE_ADMIN, ROLE_PM, Role
+from aipds.auth.models import ROLE_ADMIN, ROLE_PM, ROLE_VIEWER, Role
 
 _log = logging.getLogger(__name__)
 
@@ -25,7 +25,7 @@ _log = logging.getLogger(__name__)
 _PAGE = 60
 
 # The role groups we manage. Groups outside this set are not touched.
-_ROLE_GROUPS = (ROLE_ADMIN, ROLE_PM)
+_ROLE_GROUPS = (ROLE_ADMIN, ROLE_PM, ROLE_VIEWER)
 
 # Replace characters that Cognito Username does not accept with '-'. The characters allowed
 # in a Username are limited (e.g., the '+' in tagged addresses), so passing the local part
@@ -186,11 +186,13 @@ class CognitoAdmin:
 
     @staticmethod
     def _role_of(groups: list[str]) -> Role | None:
-        # Same precedence as the verifier: if in both groups, treat as admin.
+        # Same precedence as the verifier: the widest group wins (admin > pm > viewer).
         if ROLE_ADMIN in groups:
             return ROLE_ADMIN
         if ROLE_PM in groups:
             return ROLE_PM
+        if ROLE_VIEWER in groups:
+            return ROLE_VIEWER
         return None
 
     # ---- Queries ----

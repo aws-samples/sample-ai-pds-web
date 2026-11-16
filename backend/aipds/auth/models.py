@@ -4,12 +4,18 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal
 
-# There are only two roles, and their source is Cognito group membership (cognito:groups). role is not
+# Three roles, and their source is Cognito group membership (cognito:groups). role is not
 # kept as a custom attribute — having the truth in two places makes them drift.
-Role = Literal["admin", "pm"]
+#
+#   admin   every project + user management
+#   pm      projects they own (writes) and projects they are a member of (reads)
+#   viewer  reads every project, writes nothing — the shared account workshop participants use to
+#           follow along while one person types (project_access.access_of, auth/deps.require_writer)
+Role = Literal["admin", "pm", "viewer"]
 
 ROLE_ADMIN: Role = "admin"
 ROLE_PM: Role = "pm"
+ROLE_VIEWER: Role = "viewer"
 
 
 @dataclass(frozen=True)

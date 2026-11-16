@@ -20,7 +20,7 @@ from typing import Callable
 import jwt
 from jwt.algorithms import RSAAlgorithm
 
-from aipds.auth.models import ROLE_ADMIN, ROLE_PM, Principal, Role
+from aipds.auth.models import ROLE_ADMIN, ROLE_PM, ROLE_VIEWER, Principal, Role
 
 _log = logging.getLogger(__name__)
 
@@ -179,8 +179,9 @@ class JwksCache:
 def _role_from_groups(groups: object) -> Role:
     """Convert group membership into a role.
 
-    Membership in both groups is interpreted as admin — so that the mistake of adding an
-    admin to the pm group does not silently strip privileges. If in neither group, there is no role, so it is rejected.
+    Membership in several groups resolves to the widest one (admin > pm > viewer) — so that the
+    mistake of adding an admin to the pm group does not silently strip privileges. If in none of them,
+    there is no role, so it is rejected.
     """
     if groups is None:
         raise TokenError("token has no cognito:groups claim")
@@ -194,6 +195,8 @@ def _role_from_groups(groups: object) -> Role:
         return ROLE_ADMIN
     if ROLE_PM in names:
         return ROLE_PM
+    if ROLE_VIEWER in names:
+        return ROLE_VIEWER
     raise TokenError(f"user belongs to no known role group: {sorted(names)}")
 
 

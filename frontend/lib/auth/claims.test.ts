@@ -49,6 +49,12 @@ describe("roleFromClaims", () => {
     expect(roleFromClaims({ "cognito:groups": ["pm", "admin"] })).toBe("admin");
   });
 
+  it("reads the viewer group, and a wider group beats it", () => {
+    expect(roleFromClaims({ "cognito:groups": ["viewer"] })).toBe("viewer");
+    expect(roleFromClaims({ "cognito:groups": ["viewer", "pm"] })).toBe("pm");
+    expect(roleFromClaims({ "cognito:groups": ["viewer", "admin"] })).toBe("admin");
+  });
+
   it("returns null when there is no known group", () => {
     expect(roleFromClaims({ "cognito:groups": [] })).toBeNull();
     expect(roleFromClaims({ "cognito:groups": ["other"] })).toBeNull();

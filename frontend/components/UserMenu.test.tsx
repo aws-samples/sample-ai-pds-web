@@ -44,6 +44,16 @@ describe("UserMenu", () => {
     expect(screen.queryByRole("link", { name: "사용자 관리" })).toBeNull();
   });
 
+  it("hides 비밀번호 변경 from the shared viewer account", async () => {
+    // One participant changing it would lock the rest out (the backend refuses it too).
+    mockMe({ authenticated: true, email: "reader@aipds.local", role: "viewer" });
+    render(<UserMenu />);
+    await userEvent.click(await screen.findByRole("button", { name: /사용자 메뉴/ }));
+    expect(screen.getByText("뷰어")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "비밀번호 변경" })).toBeNull();
+    expect(screen.queryByRole("link", { name: "사용자 관리" })).toBeNull();
+  });
+
   it("shows the design profile link for admins", async () => {
     mockMe({ authenticated: true, email: "admin@aipds.local", role: "admin" });
     render(<UserMenu />);

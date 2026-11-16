@@ -68,3 +68,20 @@ describe("프로젝트 생성 → 대시보드 이동", () => {
     });
   });
 });
+
+describe("뷰어 계정", () => {
+  it("프로젝트 생성·가져오기를 숨기고 읽기 전용 안내를 보인다", async () => {
+    server.use(
+      http.get("*/api/auth/me", () =>
+        HttpResponse.json({ authenticated: true, email: "reader@aipds.local", role: "viewer" })),
+      http.get(`${API_BASE_URL}/projects`, () =>
+        HttpResponse.json({ projects: [{ project_id: "ws-m", name: "기획", access: "member" }],
+                            total: 1, page: 1, size: 10 })),
+    );
+    render(<Home />);
+    expect(await screen.findByText(/읽기 전용 계정입니다/)).toBeInTheDocument();
+    expect(screen.queryByLabelText("프로젝트 ID")).toBeNull();
+    expect(screen.queryByRole("button", { name: /가져오기/ })).toBeNull();
+    expect(await screen.findByText("기획")).toBeInTheDocument();
+  });
+});
