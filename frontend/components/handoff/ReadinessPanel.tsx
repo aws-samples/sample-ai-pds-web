@@ -187,6 +187,7 @@ export function ReadinessPanel({
         <ul className="mt-1.5 pl-5 list-disc space-y-0.5">
           <li>{t("handoff.contains.document")}</li>
           <li>{t("handoff.contains.open")}</li>
+          <li>{t("handoff.contains.rules")}</li>
           <li>{t("handoff.contains.ledger")}</li>
           <li>{t("handoff.contains.originals")}</li>
           <li>{t("handoff.contains.design")}</li>

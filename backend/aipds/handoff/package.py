@@ -12,6 +12,8 @@
 #                     model's checked classification (handoff/open_rows), and code restores the estimate marks the originals gave
 #                     a value and the line dropped (handoff/estimates).
 #   start-prompt.md   The first request that starts AI-DLC, one for v2 and one for v1 (fixed text, `start_prompt`).
+#   project-rules.md  The package's rules in AI-DLC's rule shape (NEVER/ALWAYS lines), for the request to add to the space's
+#                     `memory/project.md`, which every stage loads (fixed text, `project_rules`).
 #   decisions.md      Decision ledger — every decision the PM made in Discovery and at handoff, with its question (handoff/ledger, no model).
 #   README.md         Reading order and usage rules (fixed text).
 #
@@ -78,6 +80,10 @@ MANIFEST_KEY = PACKAGE_PREFIX + "manifest.json"
 README = "README.md"
 VISION = "vision.md"
 START_PROMPT = "start-prompt.md"
+PROJECT_RULES = "project-rules.md"
+#: The technical environment document the development team writes and puts in the unpacked package folder. The package never
+#: ships a file by this name, so unpacking a new version over the folder leaves the team's document in place.
+TECH_ENV = "technical-environment.md"
 LEDGER = ledger_mod.LEDGER
 
 #: The steps the model writes, in execution order. Each step leaves its finished document, so a failure resumes from the failed step.
@@ -88,7 +94,7 @@ STEPS: tuple[tuple[str, str], ...] = (
 #: Options for the supplementary questions. Only the web screen uses them — for the harness, the Open Questions are all there is.
 OPTIONS = "options.json"
 #: Package files, in reading order. The originals (`discovery/`) are attached when the zip is built.
-FILES = (README, START_PROMPT, VISION, LEDGER)
+FILES = (README, START_PROMPT, PROJECT_RULES, VISION, LEDGER)
 #: Documents read as the previous version, earlier ones first. Also reads the open-decisions document and PRD (its section 9)
 #: of the earlier layout — that is the previous version of the first vision.md.
 DocKind = Literal["vision", "open", "prd"]
@@ -445,6 +451,12 @@ A title line ("# <product> — Vision"), then exactly these sections, headings a
 ### Target Users and Stakeholders
    Table: | User Type | Description | Primary Need |
 ### Business Constraints
+   End with one line that starts with "NFR:" — the non-functional needs the material states for the
+   first release, in business words: who may see or change what, how long records are kept, how many
+   users at once, how soon an answer must appear, what must keep working when something fails. Where
+   the material says the first release follows the current system as it is (sign-in, security),
+   write "no new requirement" for that. Where the material is silent, say so on the line. This line
+   keeps the scope from growing quietly and is the first thing the NFR stage reads.
 ### Success Metrics
    Table: | Metric | Today | Target | How it is measured |
 ## Full Scope Vision
@@ -920,11 +932,25 @@ REQUIRED_SECTIONS = ("Executive Summary", "Business Context", "Success Metrics",
                      "Assumptions and Accepted Limits", "Risks and Dependencies", "Open Questions")
 
 
+#: The NFR line Business Constraints ends with (`build_prompt`). One line stating the first release's non-functional needs, or
+#: that there are none new, is what keeps the scope from growing quietly (AI-DLC TTT: an intent with "no new NFR" asks fewer
+#: questions in NFR Requirements, which the classic plan runs). Read as a line in the section, bullet or bold allowed.
+NFR_LINE = "NFR"
+_NFR = re.compile(r"^\s*(?:[-*]\s+)?(?:\*\*)?NFR(?:\*\*)?\s*:", re.MULTILINE)
+_CONSTRAINTS = re.compile(r"^###\s+Business Constraints\s*$(.*?)(?=^#{1,3}\s|\Z)",
+                          re.MULTILINE | re.DOTALL | re.IGNORECASE)
+
+
 def _lint_structure(doc: str) -> list[Finding]:
     titles = {m.group(2).strip().lower()
               for m in re.finditer(r"^(#{2,4})\s+(.+?)\s*$", doc, re.MULTILINE)}
-    return [Finding(file=VISION, line=0, term=section, kind="structure")
-            for section in REQUIRED_SECTIONS if section.lower() not in titles]
+    findings = [Finding(file=VISION, line=0, term=section, kind="structure")
+                for section in REQUIRED_SECTIONS if section.lower() not in titles]
+    constraints = _CONSTRAINTS.search(doc)
+    if constraints and not _NFR.search(constraints.group(1)):
+        findings.append(Finding(file=VISION, line=0, term=f"Business Constraints · {NFR_LINE}",
+                                kind="structure"))
+    return findings
 
 
 def lint(doc: str, *, language: str = "ko", sources: Sequence[str] = (),
@@ -1161,7 +1187,11 @@ AI-DLC를 쓴다면 `start-prompt.md`에서 쓰는 버전(v2 또는 v1)의 요�
 ## 이 패키지를 쓰는 규칙
 
 - 기술 선택(언어·DB·인프라)은 담지 않았습니다. 프로토타입의 빌드 지시서도 넣지 않았습니다. 기술 스택과
-  도구, 금지 사항은 개발팀이 AI-DLC의 technical environment 문서로 따로 씁니다.
+  도구, 금지 사항은 개발팀이 AI-DLC의 technical environment 문서로 따로 써서 이 디렉터리에
+  `technical-environment.md`로 넣습니다. 패키지에는 같은 이름의 파일이 없어서, 새 버전을 받아 같은 위치에
+  덮어 풀어도 이 문서는 그대로 남습니다. 디렉터리를 지우고 새로 풀면 함께 지워집니다.
+- `project-rules.md`는 이 규칙들을 AI-DLC 규칙 형식(NEVER/ALWAYS 한 줄씩)으로 적은 것입니다. 시작 요청이
+  요구사항 분석 전에 `aidlc/spaces/<space>/memory/project.md`에 넣게 해서, 모든 단계가 규칙으로 읽습니다.
 - 프로토타입은 동작을 참고하는 자료이며, 코드의 출발점이 아닙니다.
 - `vision.md`의 Features In Scope에 없는 기능은 첫 출시에 만들지 않습니다. Features Out of Scope는 만들지
   마세요. 필요해 보이면 먼저 PM에게 묻습니다.
@@ -1201,7 +1231,12 @@ to bring one back). Any other coding assistant or harness can start from `vision
 
 - No technology choices (languages, databases, infrastructure) are included, and the prototype's build
   instructions are left out. The team writes the stack, tools and what is not allowed in AI-DLC's
-  technical environment document.
+  technical environment document and puts it in this directory as `technical-environment.md`. The package
+  has no file by that name, so unpacking a new version over the same place keeps the document; deleting the
+  directory and unpacking afresh removes it.
+- `project-rules.md` holds these rules in AI-DLC's rule shape (one NEVER/ALWAYS line each). The start request
+  has them added to `aidlc/spaces/<space>/memory/project.md` before Requirements Analysis, so every stage
+  reads them as rules.
 - Prototypes are behavioural references, not a starting point for code.
 - A feature not in vision.md's Features In Scope is not in the first release. Do not build Features Out of
   Scope; if one seems needed, ask the PM first.
@@ -1259,8 +1294,11 @@ _START_PROMPT = {
         "lead": ("프로젝트 루트에서 이 패키지의 압축을 풀면 `{root}/` 디렉터리가 생깁니다. 그다음 AI-DLC에 쓰는 "
                  "버전의 요청을 그대로 붙여 넣으세요. 디렉터리 이름이나 위치를 바꿨다면 요청의 경로도 같이 바꿉니다."),
         "first": "./{root}/vision.md에 정리된 제품을 만들어 주세요.",
-        "first_tech": ("./{root}/vision.md에 정리된 제품을 ./technical-environment.md의 기술 환경에 맞춰 "
-                       "만들어 주세요."),
+        "first_tech": ("./{root}/vision.md에 정리된 제품을 ./{root}/technical-environment.md의 기술 환경에 "
+                       "맞춰 만들어 주세요."),
+        "rules": ("요구사항 분석 전에 ./{root}/project-rules.md의 `## Forbidden`과 `## Mandated` 아래 줄을 활성 "
+                  "space의 aidlc/spaces/<space>/memory/project.md에서 같은 제목 아래에 덧붙여, 모든 단계가 규칙으로 "
+                  "읽게 해 주세요."),
         "rest": ("근거 자료는 ./{root}/discovery/에 있으니 discovery-document.md부터 읽고, PM이 정한 결정과 그 "
                  "답은 ./{root}/decisions.md에서 확인해 주세요. vision.md의 "
                  "Open Questions 중 시점이 \"빌드 전\"인 항목은 추측으로 채우지 말고, 요구사항 분석 단계에서 "
@@ -1271,15 +1309,20 @@ _START_PROMPT = {
                       "분석부터 시작합니다. 화면은 `discovery/prototype/`의 명세가 대신합니다. 단계별 리뷰는 한 번씩만 "
                       "하고 지적 사항은 승인 단계에서 보여 주며, 진행은 Build and Test에서 끝납니다. 건너뛴 단계가 "
                       "필요하면 `--skip refined-mockups`를 빼고 시작하거나, 진행 중에 `/aidlc --add <단계>`로 되살립니다."),
+        "rules_note": ("`project-rules.md`는 이 패키지를 쓰는 규칙(범위 밖 기능, 요청하지 않은 서비스, 프로토타입, "
+                       "열린 질문)을 AI-DLC 규칙 형식으로 적은 것입니다. memory/project.md에 들어가면 대화가 길어지거나 새 "
+                       "채팅에서 `/aidlc --resume`으로 이어 가도 모든 단계가 읽습니다. 요청이 옮기지 못했다면 시작 전에 "
+                       "손으로 같은 제목 아래에 붙여 넣어도 됩니다."),
         "codex": "Codex CLI에서는 `/aidlc` 대신 `$aidlc`를 씁니다.",
-        "tech_note": ("개발팀이 기술 스택·도구·금지 사항을 AI-DLC의 technical environment 문서로 프로젝트 루트에 "
-                      "써 두었다면(`./technical-environment.md`), 이 요청을 씁니다."),
+        "tech_note": ("개발팀이 기술 스택·도구·금지 사항을 AI-DLC의 technical environment 문서로 써서 압축을 푼 "
+                      "`{root}/` 디렉터리에 `technical-environment.md`로 넣었다면, 이 요청을 씁니다."),
         "v1_lead": ("AI-DLC v1에는 `/aidlc` 명령이 없습니다. v1 README의 설치 방법대로 규칙 파일을 프로젝트에 넣은 "
                     "뒤, \"{v1}\"로 시작하는 아래 요청을 붙여 넣으세요. v1에는 의도 파악, 타당성, 범위 정의, 화면 "
                     "초안 단계가 없어서 건너뛸 단계 없이 요구사항 분석으로 이어집니다."),
         "v1_first": "./{root}/vision.md에 정리된 제품을 만들어 주세요.",
-        "v1_first_tech": ("./{root}/vision.md에 정리된 제품을 ./technical-environment.md의 기술 환경에 맞춰 "
-                          "만들어 주세요."),
+        "v1_first_tech": ("./{root}/vision.md에 정리된 제품을 ./{root}/technical-environment.md의 기술 환경에 "
+                          "맞춰 만들어 주세요."),
+        "v1_rules": "./{root}/project-rules.md의 규칙을 모든 단계에서 지켜 주세요.",
     },
     "en": {
         "title": "# AI-DLC start prompt",
@@ -1288,7 +1331,10 @@ _START_PROMPT = {
                  "the paths in the request too."),
         "first": "Build the product described in ./{root}/vision.md.",
         "first_tech": ("Build the product described in ./{root}/vision.md, within the technical environment "
-                       "in ./technical-environment.md."),
+                       "in ./{root}/technical-environment.md."),
+        "rules": ("Before Requirements Analysis, add the lines under `## Forbidden` and `## Mandated` in "
+                  "./{root}/project-rules.md under the same headings of the active space's "
+                  "aidlc/spaces/<space>/memory/project.md, so that every stage reads them as rules."),
         "rest": ("The evidence is in ./{root}/discovery/, so start with discovery-document.md, and find the "
                  "decisions the PM made, with their answers, in ./{root}/decisions.md. "
                  "Do not fill in the Open Questions in vision.md marked \"Before build\" with guesses; ask "
@@ -1301,17 +1347,23 @@ _START_PROMPT = {
                       "`discovery/prototype/` stands in for the screens. Each stage gets one review pass whose findings "
                       "are shown at its approval, and the run ends at Build and Test. If you need the skipped stage, "
                       "drop `--skip refined-mockups` before you start, or bring it back during the run with `/aidlc --add <stage>`."),
+        "rules_note": ("`project-rules.md` holds the rules for using this package (features out of scope, services "
+                       "nobody asked for, the prototype, open questions) in AI-DLC's rule shape. In memory/project.md "
+                       "every stage reads them, even when the conversation grows long or a new chat goes on with "
+                       "`/aidlc --resume`. If the request did not add them, paste them under the same headings by "
+                       "hand before you start."),
         "codex": "Codex CLI uses `$aidlc` instead of `/aidlc`.",
         "tech_note": ("If the team has written its stack, tools and what is not allowed in AI-DLC's technical "
-                      "environment document at the project root (`./technical-environment.md`), use this "
-                      "request instead:"),
+                      "environment document and put it in the unpacked `{root}/` directory as "
+                      "`technical-environment.md`, use this request instead:"),
         "v1_lead": ("AI-DLC v1 has no `/aidlc` command. Install its rule files in the project as the v1 README "
                     "says, then paste the request below, which starts with \"{v1}\". v1 has no intent, "
                     "feasibility, scope or mockup stages, so there is nothing to skip and the run goes on to "
                     "Requirements Analysis."),
         "v1_first": "build the product described in ./{root}/vision.md.",
         "v1_first_tech": ("build the product described in ./{root}/vision.md, within the technical environment "
-                          "in ./technical-environment.md."),
+                          "in ./{root}/technical-environment.md."),
+        "v1_rules": "Follow the rules in ./{root}/project-rules.md in every stage.",
     },
 }
 
@@ -1324,11 +1376,74 @@ def start_prompt(language: str, folder: str) -> str:
     t = {k: v.replace("{root}", folder).replace("{plan}", AIDLC_PLAN).replace("{v1}", AIDLC_V1)
          for k, v in _START_PROMPT.get(language, _START_PROMPT["ko"]).items()}
     return (f"{t['title']}\n\n{t['lead']}\n\n"
-            f"## AI-DLC v2\n\n```text\n/aidlc {AIDLC_PLAN} {t['first']} {t['rest']}\n```\n\n"
-            f"{t['plan_note']}\n\n{t['codex']}\n\n{t['tech_note']}\n\n"
-            f"```text\n/aidlc {AIDLC_PLAN} {t['first_tech']} {t['rest']}\n```\n\n"
-            f"## AI-DLC v1\n\n{t['v1_lead']}\n\n```text\n{AIDLC_V1} {t['v1_first']} {t['rest']}\n```\n\n"
-            f"{t['tech_note']}\n\n```text\n{AIDLC_V1} {t['v1_first_tech']} {t['rest']}\n```\n")
+            f"## AI-DLC v2\n\n```text\n/aidlc {AIDLC_PLAN} {t['first']} {t['rules']} {t['rest']}\n```\n\n"
+            f"{t['plan_note']}\n\n{t['rules_note']}\n\n{t['codex']}\n\n{t['tech_note']}\n\n"
+            f"```text\n/aidlc {AIDLC_PLAN} {t['first_tech']} {t['rules']} {t['rest']}\n```\n\n"
+            f"## AI-DLC v1\n\n{t['v1_lead']}\n\n"
+            f"```text\n{AIDLC_V1} {t['v1_first']} {t['v1_rules']} {t['rest']}\n```\n\n"
+            f"{t['tech_note']}\n\n```text\n{AIDLC_V1} {t['v1_first_tech']} {t['v1_rules']} {t['rest']}\n```\n")
+
+
+#: The package's rules in AI-DLC's rule shape, for the space's `memory/project.md`. Why a rule file and not only the request:
+#: AI-DLC reads every rule file whole at each stage's start (2.11.3 `aidlc-steering.ts` resolvedRuleBundle), while the first
+#: request is one chat message — a run goes on from files, not the conversation (`/aidlc --resume`), and Construction runs
+#: long after it. The headings and the `NEVER …`/`ALWAYS …` one-per-line shape are those of the seeded project.md: Practices
+#: Discovery appends its affirmed rules under the same two headings and keeps the lines already there. The AI-DLC TTT field
+#: experiment found a NEVER rule against services nobody asked for is what stopped that drift.
+#:
+#: Only rules about what to build and how to treat this package — never technology, which is the team's technical environment
+#: document (`TECH_ENV`). Paths are relative to the project root, with `{root}` as in `start_prompt`. Fixed text, like the start
+#: prompt: the same package yields the same lines.
+_PROJECT_RULES = {
+    "ko": """# AI-DLC 프로젝트 규칙 — 개발 인계 패키지
+
+아래 `## Forbidden`과 `## Mandated`의 줄을 활성 space의 `aidlc/spaces/<space>/memory/project.md`에서 같은
+제목 아래에 덧붙입니다. 시작 요청이 요구사항 분석 전에 이 일을 맡기고, 손으로 옮겨도 됩니다. 그 파일에 이미 있는
+줄은 지우지 않습니다. 제품의 무엇·누구·왜만 다루고, 기술 선택은 개발팀의 technical environment 문서가 정합니다.
+
+## Forbidden
+
+NEVER ./{root}/vision.md의 Features In Scope에 없는 기능을 첫 출시에 만들지 않는다. Features Out of Scope도 만들지 않는다. 필요해 보이면 먼저 PM에게 묻는다. (handoff)
+NEVER 요구사항이 요청하지 않은 서비스·서버·외부 연동을 새로 만들지 않는다. (handoff)
+NEVER ./{root}/discovery/prototype/의 프로토타입을 코드나 기술 선택의 출발점으로 쓰지 않는다. 프로토타입은 동작을 참고하는 자료다. (handoff)
+NEVER vision.md Open Questions에서 시점이 "빌드 전"인 결정을 추측으로 채우지 않는다. (handoff)
+
+## Mandated
+
+ALWAYS 무엇을, 누구를 위해, 왜 만드는지는 ./{root}/vision.md를 따르고, 근거는 ./{root}/discovery/, PM이 정한 결정은 ./{root}/decisions.md에서 확인한다. (handoff)
+ALWAYS ./{root}/technical-environment.md가 있으면 기술 스택·도구·금지 사항은 그 문서를 따른다. (handoff)
+ALWAYS vision.md Open Questions에서 시점이 "빌드 전"인 결정은 설계에 들어가기 전에 묻고, "빌드 중"인 결정은 "답이 나올 때까지"에 적힌 대로 바꿀 수 있게 만들어 둔다. (handoff)
+ALWAYS 답할 사람이 "PM(외부 확인)"인 결정은 누가 언제 확인했는지와 함께 받고, 그것이 없으면 확정하지 않고 열린 질문으로 남긴다. (handoff)
+ALWAYS "(추정)"이나 "(가정)"이 붙은 값은 실측 방법을 정하기 전에는 목표나 기준선으로 확정하지 않는다. (handoff)
+""",
+    "en": """# AI-DLC project rules — development handoff package
+
+Add the lines under `## Forbidden` and `## Mandated` below under the same headings of the active space's
+`aidlc/spaces/<space>/memory/project.md`. The start request asks for this before Requirements Analysis; copying them by
+hand works too. Keep the lines the file already has. These rules cover what to build, for whom and why; technology is
+the team's technical environment document's to set.
+
+## Forbidden
+
+NEVER build a feature in the first release that is not in Features In Scope of ./{root}/vision.md, and never build its Features Out of Scope; if one seems needed, ask the PM first. (handoff)
+NEVER create a service, server or external integration the requirements do not ask for. (handoff)
+NEVER use the prototype in ./{root}/discovery/prototype/ as the starting point for code or technology choices; it is a reference for behaviour. (handoff)
+NEVER fill in an Open Question in vision.md marked "Before build" with a guess. (handoff)
+
+## Mandated
+
+ALWAYS take what to build, for whom and why from ./{root}/vision.md, the evidence from ./{root}/discovery/, and the PM's decisions from ./{root}/decisions.md. (handoff)
+ALWAYS follow ./{root}/technical-environment.md, when it exists, for the stack, tools and what is not allowed. (handoff)
+ALWAYS ask the Open Questions in vision.md marked "Before build" before any design, and build those marked "During build" as "Until answered" says, so the answer can drop in later. (handoff)
+ALWAYS take the answer to a question for "PM (external check)" together with who confirmed it and when; without that, keep it open. (handoff)
+ALWAYS settle how a value marked "(estimated)" or "(assumed)" will be measured before using it as a target or a baseline. (handoff)
+""",
+}
+
+
+def project_rules(language: str, folder: str) -> str:
+    """Contents of `project-rules.md`. `folder` is `archive_folder(pid)`, as for `start_prompt`."""
+    return _PROJECT_RULES.get(language, _PROJECT_RULES["ko"]).replace("{root}", folder)
 
 
 #: The README line for `design/`, there only when a prototype was branded — a line pointing at nothing would send the team
@@ -1544,10 +1659,11 @@ async def run(s3: S3StoreLike, *, read: Reader, paths: Sequence[str], readiness:
         await state.step(index, status="done", finished_at=_now(), chars=len(document),
                          thinking=False)
 
-    # The decision ledger, README and start prompt are built without a model — the same originals and records yield the same files.
+    # The decision ledger, README, start prompt and project rules are built without a model — the same originals and records yield the same files.
     await s3.put(PACKAGE_PREFIX + LEDGER, ledger)
     await s3.put(PACKAGE_PREFIX + README, readme(language))
     await s3.put(PACKAGE_PREFIX + START_PROMPT, start_prompt(language, folder))
+    await s3.put(PACKAGE_PREFIX + PROJECT_RULES, project_rules(language, folder))
     # A row that left the table with a recorded reason did not go missing.
     left = [supplement_mod.open_key(c.question) for c in (await load_open_record(s3) or open_rows.Record()).closed]
     return await state.save(state.manifest.model_copy(update={

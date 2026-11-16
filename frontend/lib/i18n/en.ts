@@ -731,6 +731,7 @@ export const en: Record<keyof typeof ko, string> = {
   "handoff.contains.title": "What the package contains",
   "handoff.contains.document": "vision.md: the AI-DLC vision document — summary, business context, full vision, first-release (MVP) scope, risks and open questions, each item citing its source",
   "handoff.contains.open": "start-prompt.md: the first request that starts AI-DLC — paste it as it is",
+  "handoff.contains.rules": "project-rules.md: the rules on features out of scope, services nobody asked for, the prototype and open questions, in AI-DLC's rule shape — the start request adds them to memory/project.md so every stage reads them. The team's technical-environment.md goes in the same unpacked folder",
   "handoff.contains.ledger": "decisions.md: the decision ledger. Every decision the PM made in Discovery and right before handoff, with its question — copied as is, no model",
   "handoff.contains.originals": "The evidence among the Discovery originals and uploaded source material, as they are — the decision ledger replaces the stage question files, and the build instructions, design context and questionnaire are left out · README.md: reading order and rules",
   "handoff.contains.design": "design/: if a prototype applied the brand, its brand guide (DESIGN.md) — not a product requirement but a company standard for the team to consult when writing its technical environment document",

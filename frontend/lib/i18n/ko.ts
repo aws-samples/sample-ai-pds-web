@@ -776,6 +776,7 @@ export const ko = {
   "handoff.contains.title": "패키지에 들어가는 것",
   "handoff.contains.document": "vision.md: AI-DLC vision document. 요약 · 비즈니스 맥락 · 전체 비전 · 첫 출시(MVP) 범위 · 위험과 열린 질문, 항목마다 원본 위치",
   "handoff.contains.open": "start-prompt.md: AI-DLC를 시작하는 첫 요청 — 그대로 붙여 넣습니다",
+  "handoff.contains.rules": "project-rules.md: 범위 밖 기능·요청하지 않은 서비스·프로토타입·열린 질문을 다루는 규칙을 AI-DLC 규칙 형식으로 — 시작 요청이 memory/project.md에 넣어 모든 단계가 읽습니다. 개발팀의 technical-environment.md는 압축을 푼 같은 폴더에 둡니다",
   "handoff.contains.ledger": "decisions.md: 결정 장부. Discovery와 인계 직전에 PM이 정한 결정과 그 답을 질문과 함께 — 모델 없이 그대로 옮깁니다",
   "handoff.contains.originals": "Discovery 원본 중 근거 문서와 업로드 원자료(있는 것만 그대로) — 단계별 질문 파일은 결정 장부로 대신하고, 빌드 지시서·디자인 컨텍스트·설문지는 넣지 않습니다 · README.md: 읽는 순서와 규칙",
   "handoff.contains.design": "design/: 프로토타입이 브랜드를 적용했다면 그 브랜드 지침(DESIGN.md) — 제품 요구가 아니라, 개발팀이 technical environment 문서를 쓸 때 참고할 회사 표준",
