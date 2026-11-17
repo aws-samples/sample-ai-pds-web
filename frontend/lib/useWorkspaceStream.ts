@@ -38,6 +38,11 @@ function isTooLong(err: unknown): boolean {
 // running on the server, and a refresh reattaches via `GET /turn`.
 export const RECONNECT_DELAYS_MS = [1000, 2000, 5000, 10000, 30000];
 
+// How often a read-only screen checks for a turn it has not seen (`follow`). A viewer cannot start
+// turns, so without this it saw the owner's next message only after a refresh. The check is a cheap
+// in-memory read (GET /turn) and it sets no state unless a new turn appears, so it redraws nothing.
+export const FOLLOW_POLL_MS = 4000;
+
 // Machine phrases the backend puts on terminal events → screen text. Phrases not listed here are
 // sentences the driver already produced in the project language (agent/prompts.turn_failed), so they are used as is.
 const ERROR_KEYS: Record<string, keyof Dict> = {
@@ -132,7 +137,12 @@ export function isDocPath(path: string): boolean {
   );
 }
 
-export function useWorkspaceStream(projectId: string, initial: ChatItem[] = []): WorkspaceStream {
+export function useWorkspaceStream(
+  projectId: string,
+  initial: ChatItem[] = [],
+  /** `follow`: attach to turns others start (read-only members). See FOLLOW_POLL_MS. */
+  { follow = false }: { follow?: boolean } = {},
+): WorkspaceStream {
   const t = useT();
   const [items, setItems] = useState<ChatItem[]>(initial);
   const [streaming, setStreaming] = useState(false);
@@ -157,6 +167,11 @@ export function useWorkspaceStream(projectId: string, initial: ChatItem[] = []):
   // array outright, or a slow /history response would silently wipe the turn
   // the user just started.
   const liveTurnStartedRef = useRef(false);
+  // The last turn this screen has shown or deliberately skipped — `follow` attaches only to a
+  // different one. `turnChecked` turns true once the mount-time GET /turn has set it: polling
+  // before that could attach to a turn the restored history already contains, doubling its bubbles.
+  const seenTurnRef = useRef<string | null>(null);
+  const [turnChecked, setTurnChecked] = useState(false);
 
   // Text deltas are appended once per frame (useTextDeltas). Every other bubble update goes
   // through patchAi, so flushing first here preserves the event order as is.
@@ -374,7 +389,7 @@ export function useWorkspaceStream(projectId: string, initial: ChatItem[] = []):
         let dropped = false;
         return {
           onCreated: (created: TurnCreated) => {
-            if (created.turn_id) turnId = created.turn_id;
+            if (created.turn_id) turnId = seenTurnRef.current = created.turn_id;
           },
           onEvent: (ev, seq) => {
             if (seq !== undefined) lastSeq = seq;
@@ -416,6 +431,7 @@ export function useWorkspaceStream(projectId: string, initial: ChatItem[] = []):
   const attach = useCallback(
     (turnId: string, input?: string | null) => {
       if (stopRef.current) return;
+      seenTurnRef.current = turnId;
       liveTurnStartedRef.current = true;
       const aiId = nextId();
       setItems((prev) => {
@@ -582,7 +598,10 @@ export function useWorkspaceStream(projectId: string, initial: ChatItem[] = []):
     let cancelled = false;
     getTurn(projectId)
       .then((turn) => {
-        if (cancelled || !turn || stopRef.current) return;
+        if (cancelled) return;
+        // A finished turn is already in the restored history; remember it so follow skips it.
+        if (turn && seenTurnRef.current === null) seenTurnRef.current = turn.turn_id;
+        if (!turn || stopRef.current) return;
         if (turn.state === "running") {
           attachRef.current(turn.turn_id, turn.input);
         } else if (turn.state === "interrupted") {
@@ -594,11 +613,45 @@ export function useWorkspaceStream(projectId: string, initial: ChatItem[] = []):
           ]);
         }
       })
-      .catch(() => {}); // degraded, not broken: if attaching fails, only the history is shown
+      .catch(() => {}) // degraded, not broken: if attaching fails, only the history is shown
+      .finally(() => {
+        if (!cancelled) setTurnChecked(true);
+      });
     return () => {
       cancelled = true;
     };
   }, [projectId]);
+
+  // Follow: while nothing is attached, look for a turn this screen has not seen and attach to it.
+  // A finished one is attached too — the server keeps its events, so a turn that started and ended
+  // between two checks still replays into the chat and the doc drawer's "new document" tab.
+  // An unchanged answer touches no state, so the screen does not redraw every few seconds.
+  useEffect(() => {
+    if (!follow || !turnChecked) return;
+    let cancelled = false;
+    let inFlight = false;
+    const tick = () => {
+      if (inFlight || stopRef.current || document.visibilityState === "hidden") return;
+      inFlight = true;
+      getTurn(projectId)
+        .then((turn) => {
+          if (cancelled || !turn || stopRef.current || turn.turn_id === seenTurnRef.current) return;
+          seenTurnRef.current = turn.turn_id;
+          // Cut off by a restart: there are no events left to replay.
+          if (turn.state === "interrupted") return;
+          attachRef.current(turn.turn_id, turn.input);
+        })
+        .catch(() => {}) // the next tick asks again
+        .finally(() => {
+          inFlight = false;
+        });
+    };
+    const id = setInterval(tick, FOLLOW_POLL_MS);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, [follow, turnChecked, projectId]);
 
   // Close the stream if the component unmounts mid-turn.
   useEffect(() => () => stopRef.current?.(), []);

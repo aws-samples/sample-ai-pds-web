@@ -1,7 +1,7 @@
 // frontend/lib/useWorkspaceStream.test.tsx
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { renderHook, act } from "@testing-library/react";
-import { RECONNECT_DELAYS_MS, useWorkspaceStream } from "./useWorkspaceStream";
+import { FOLLOW_POLL_MS, RECONNECT_DELAYS_MS, useWorkspaceStream } from "./useWorkspaceStream";
 import * as sse from "@/lib/api/sse";
 import * as client from "@/lib/api/client";
 import { ApiError } from "@/lib/api/client";
@@ -1067,5 +1067,114 @@ describe("isDocPath", () => {
     expect(isDocPath("aiplc-docs/discovery/envision/pain-point-questions.md")).toBe(false);
     expect(isDocPath("aiplc-docs/discovery/prototype/spec-as-built-questions-2.md")).toBe(false);
     expect(isDocPath("aiplc-docs/envision-approval-questions-2.md")).toBe(false);
+  });
+});
+
+describe("useWorkspaceStream — follow (read-only members)", () => {
+  // A viewer cannot start turns, so it saw the owner's next message only after a refresh — and a
+  // refresh after the turn had ended never lit the doc drawer's "new document" tab either.
+  const finished = (turnId: string, state: "done" | "interrupted" = "done") =>
+    ({ turn_id: turnId, kind: "message" as const, state, last_seq: 3 });
+  const doc = "aiplc-docs/discovery/envision/prfaq.md";
+  const fileChanged: AgentEvent = { kind: "file_changed", text: null, path: doc, payload: null };
+
+  function replays() {
+    vi.mocked(sse.watchTurn).mockImplementation((_pid: any, _turn: any, _after: any, handlers: any) => {
+      handlers.onEvent(fileChanged, 1);
+      handlers.onEvent(msg("PR/FAQ를 썼습니다"), 2);
+      handlers.onEvent(done, 3);
+      handlers.onDone();
+      return () => {};
+    });
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(client.getHistory).mockResolvedValue([]);
+    vi.useFakeTimers();
+    replays();
+  });
+  afterEach(() => { vi.useRealTimers(); });
+
+  it("attaches to a turn the owner starts after the screen opened", async () => {
+    vi.mocked(client.getTurn).mockResolvedValue(finished("t1"));
+    const { result } = renderHook(() => useWorkspaceStream("p1", [], { follow: true }));
+    await act(async () => {});
+    expect(sse.watchTurn).not.toHaveBeenCalled();
+
+    vi.mocked(client.getTurn).mockResolvedValue({ ...running("t2"), input: "다음 단계로 가 주세요" });
+    await act(async () => { await vi.advanceTimersByTimeAsync(FOLLOW_POLL_MS); });
+
+    expect(sse.watchTurn).toHaveBeenCalledWith("p1", "t2", 0, expect.anything());
+    expect(result.current.items.map((i) => i.role)).toEqual(["user", "ai"]);
+    // The drawer's "new document" signal comes from the replayed events.
+    expect(result.current.activeDoc).toEqual({ path: doc, version: null });
+  });
+
+  it("replays a turn that started and ended between two checks", async () => {
+    vi.mocked(client.getTurn).mockResolvedValue(finished("t1"));
+    const { result } = renderHook(() => useWorkspaceStream("p1", [], { follow: true }));
+    await act(async () => {});
+    vi.mocked(client.getTurn).mockResolvedValue(finished("t2"));
+    await act(async () => { await vi.advanceTimersByTimeAsync(FOLLOW_POLL_MS); });
+
+    expect(sse.watchTurn).toHaveBeenCalledWith("p1", "t2", 0, expect.anything());
+    expect(result.current.activeDoc).toEqual({ path: doc, version: null });
+  });
+
+  it("an unchanged turn touches no state, so nothing redraws", async () => {
+    vi.mocked(client.getTurn).mockResolvedValue(finished("t1"));
+    const { result } = renderHook(() => useWorkspaceStream("p1", [], { follow: true }));
+    await act(async () => {});
+    const before = result.current;
+    await act(async () => { await vi.advanceTimersByTimeAsync(FOLLOW_POLL_MS * 3); });
+
+    expect(client.getTurn).toHaveBeenCalledTimes(4);
+    expect(sse.watchTurn).not.toHaveBeenCalled();
+    expect(client.getHistory).toHaveBeenCalledTimes(1);
+    expect(result.current.items).toBe(before.items);
+    expect(result.current.turnSeq).toBe(before.turnSeq);
+  });
+
+  it("does not poll before the mount-time check has settled", async () => {
+    let settle: (v: null) => void = () => {};
+    vi.mocked(client.getTurn).mockReturnValueOnce(new Promise((r) => { settle = r; }));
+    renderHook(() => useWorkspaceStream("p1", [], { follow: true }));
+    await act(async () => { await vi.advanceTimersByTimeAsync(FOLLOW_POLL_MS * 2); });
+    expect(client.getTurn).toHaveBeenCalledTimes(1);
+
+    await act(async () => { settle(null); });
+    vi.mocked(client.getTurn).mockResolvedValue(null);
+    await act(async () => { await vi.advanceTimersByTimeAsync(FOLLOW_POLL_MS); });
+    expect(client.getTurn).toHaveBeenCalledTimes(2);
+  });
+
+  it("skips a turn cut off by a restart, once", async () => {
+    vi.mocked(client.getTurn).mockResolvedValue(finished("t1"));
+    const { result } = renderHook(() => useWorkspaceStream("p1", [], { follow: true }));
+    await act(async () => {});
+    vi.mocked(client.getTurn).mockResolvedValue(finished("t2", "interrupted"));
+    await act(async () => { await vi.advanceTimersByTimeAsync(FOLLOW_POLL_MS * 2); });
+
+    expect(sse.watchTurn).not.toHaveBeenCalled();
+    expect(result.current.items).toEqual([]);
+  });
+
+  it("does not check while the tab is hidden", async () => {
+    vi.mocked(client.getTurn).mockResolvedValue(finished("t1"));
+    const hidden = vi.spyOn(document, "visibilityState", "get").mockReturnValue("hidden");
+    renderHook(() => useWorkspaceStream("p1", [], { follow: true }));
+    await act(async () => {});
+    await act(async () => { await vi.advanceTimersByTimeAsync(FOLLOW_POLL_MS * 2); });
+    expect(client.getTurn).toHaveBeenCalledTimes(1);
+    hidden.mockRestore();
+  });
+
+  it("the owner's screen does not poll", async () => {
+    vi.mocked(client.getTurn).mockResolvedValue(finished("t1"));
+    renderHook(() => useWorkspaceStream("p1"));
+    await act(async () => {});
+    await act(async () => { await vi.advanceTimersByTimeAsync(FOLLOW_POLL_MS * 3); });
+    expect(client.getTurn).toHaveBeenCalledTimes(1);
   });
 });

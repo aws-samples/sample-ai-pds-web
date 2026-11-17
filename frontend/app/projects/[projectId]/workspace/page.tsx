@@ -50,8 +50,9 @@ export default function WorkspacePage({ params }: { params: Promise<{ projectId:
   const state = useAsync(() => getState(projectId), [projectId]);
   const t = useT();
   const { modelLabel, language, readOnly } = useProjectMeta(projectId);
+  // A read-only member cannot start turns, so the screen follows the ones the owner starts.
   const { items, streaming, send, submitAnswers, interrupt, pendingQuestions, stages, lastDocument, prototypeReady, changedPaths, historyLoading, context, activeDoc, turnSeq } =
-    useWorkspaceStream(projectId);
+    useWorkspaceStream(projectId, [], { follow: readOnly });
   // When the stage changes, reread the state file — the handoff banner must appear the moment GTM
   // ends, and that judgment is made by the state file (capability), not live events
   // (HandoffReadyBanner header).
