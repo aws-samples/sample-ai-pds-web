@@ -547,6 +547,8 @@ export const ko = {
   "dash.noActivity": "기록된 활동이 없습니다.",
   "preInterview.title": "사전 입력지 취합",
   "preInterview.body": "팀원들이 보낸 사전 입력지 답변 파일(.json)을 모아, Workspace에 첨부할 취합 파일과 함께 보낼 프롬프트를 만듭니다. 답을 요약하거나 고치지 않고 질문별로 그대로 모읍니다. 파일은 이 브라우저 안에서만 읽고 서버로 올리지 않습니다.",
+  "preInterview.readOnlyTitle": "사전 질문지",
+  "preInterview.readOnlyBody": "워크숍 전에 팀원들에게 나눠 줄 빈 사전 질문지입니다. 답변 취합은 프로젝트 소유자가 합니다.",
   "preInterview.formDownload": "사전 질문지 내려받기 (.html)",
   "preInterview.pick": "답변 파일 고르기",
   "preInterview.tooMany": "한 번에 {n}개까지 고를 수 있습니다.",

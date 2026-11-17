@@ -65,7 +65,12 @@ function download(name: string, text: string, type: string) {
   URL.revokeObjectURL(a.href);
 }
 
-export function PreInterviewCollector({ language }: { language: Locale | null }) {
+export function PreInterviewCollector({ language, readOnly = false }: {
+  language: Locale | null;
+  /** Viewer member — gets the blank form only. Collecting is left out: its output is an attachment
+   *  for the workspace, where a read-only member cannot send anything. */
+  readOnly?: boolean;
+}) {
   const t = useT();
   const uiLocale = useLocale();
   const [result, setResult] = useState<Collection | null>(null);
@@ -105,8 +110,12 @@ export function PreInterviewCollector({ language }: { language: Locale | null })
              aria-labelledby="pre-interview-heading">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div className="min-w-0 max-w-3xl">
-          <h2 id="pre-interview-heading" className="font-bold">{t("preInterview.title")}</h2>
-          <p className="mt-1 text-sm text-slate-600">{t("preInterview.body")}</p>
+          <h2 id="pre-interview-heading" className="font-bold">
+            {t(readOnly ? "preInterview.readOnlyTitle" : "preInterview.title")}
+          </h2>
+          <p className="mt-1 text-sm text-slate-600">
+            {t(readOnly ? "preInterview.readOnlyBody" : "preInterview.body")}
+          </p>
         </div>
         <div className="flex shrink-0 flex-wrap gap-2">
           {/* The blank form; whoever sends it fills FORM_CONFIG (topic and so on) as its header says. */}
@@ -114,11 +123,13 @@ export function PreInterviewCollector({ language }: { language: Locale | null })
              className="rounded-lg border border-slate-200 px-3 py-1.5 text-sm hover:bg-slate-50">
             {t("preInterview.formDownload")}
           </a>
-          <label className="cursor-pointer rounded-lg border border-slate-200 px-3 py-1.5 text-sm hover:bg-slate-50">
-            {t("preInterview.pick")}
-            <input type="file" accept=".json,application/json" multiple className="sr-only"
-                   onChange={(e) => { void onPick(e.target.files); e.target.value = ""; }} />
-          </label>
+          {!readOnly && (
+            <label className="cursor-pointer rounded-lg border border-slate-200 px-3 py-1.5 text-sm hover:bg-slate-50">
+              {t("preInterview.pick")}
+              <input type="file" accept=".json,application/json" multiple className="sr-only"
+                     onChange={(e) => { void onPick(e.target.files); e.target.value = ""; }} />
+            </label>
+          )}
         </div>
       </div>
 

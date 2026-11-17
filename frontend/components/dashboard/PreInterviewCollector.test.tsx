@@ -59,4 +59,13 @@ describe("PreInterviewCollector", () => {
     expect(writeText).toHaveBeenCalledWith(expect.stringContaining("[How to read it]"));
     expect(await screen.findByRole("status")).toHaveTextContent("복사했습니다.");
   });
+
+  it("gives a read-only member the blank form but not the collector", () => {
+    render(<PreInterviewCollector language="ko" readOnly />);
+    expect(screen.getByRole("heading", { name: "사전 질문지" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "사전 질문지 내려받기 (.html)" }))
+      .toHaveAttribute("href", "/pre-interview/ai-pds-pre-interview-form.html");
+    expect(screen.queryByText("답변 파일 고르기")).not.toBeInTheDocument();
+    expect(picker()).toBeNull();
+  });
 });
