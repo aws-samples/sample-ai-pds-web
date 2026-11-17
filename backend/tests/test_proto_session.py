@@ -1590,6 +1590,47 @@ async def test_what_the_user_typed_is_quoted_in_the_history_entry(tmp_path):
     assert history.index("**사용자 요청") < history.index("**변경**")
 
 
+async def test_question_card_answers_are_quoted_with_the_question_and_the_choice(tmp_path):
+    """Observed (a workshop run): card answers went into the history as "1: A" -- the
+    question number and option letter -- so it did not say what was asked or chosen."""
+    s3 = FakeS3Store()
+    s3.blobs[SPEC_KEY] = "# spec"
+    builder = FakeBuilder()
+    session = _session(s3, tmp_path, builder)
+    await session.start()
+
+    def opt(letter, text, is_other=False):
+        return {"letter": letter, "text": text, "is_other": is_other, "recommended": False}
+    qfile = {"name": "prototype-questions", "preamble": None, "questions": [
+        {"number": 1, "text": "자체 브랜드는 어떻게 판정할까요?", "multi_select": False,
+         "options": [opt("A", "포함"), opt("B", "확인 필요"), opt("X", "Other — 직접 입력", True)]},
+        {"number": 2, "text": "어떤 필드를 대조할까요?", "multi_select": True,
+         "options": [opt("A", "상품명"), opt("B", "브랜드"), opt("C", "제조사")]},
+        {"number": 3, "text": "조회 불가 업체는?", "multi_select": False,
+         "options": [opt("A", "확인 필요"), opt("B", "제외")]},
+        {"number": 4, "text": "기타 의견", "multi_select": False,
+         "options": [opt("A", "없음"), opt("X", "Other — 직접 입력", True)]},
+    ]}
+    payload = json.dumps({"interrupt_id": "iid-1", "questions": qfile}, ensure_ascii=False)
+    builder.script([AgentEvent(kind="questions", payload=payload)])
+    [ev async for ev in session.send_message("go")]
+    assert await session.send_answers(
+        {"1": "A", "2": "A,C", "3": "B: 사전에 걸릴 때만", "4": "B안으로 가자", "9": "C"}) is True
+
+    builder.script([_complete_event(changes="판정 규칙"), AgentEvent(kind="done")])
+    [ev async for ev in session.send_message("계속")]
+
+    history = s3.blobs[HISTORY_KEY]
+    assert "> - 자체 브랜드는 어떻게 판정할까요?\n>   → 포함" in history
+    assert "> - 어떤 필드를 대조할까요?\n>   → 상품명 / 제조사" in history
+    assert "> - 조회 불가 업체는?\n>   → 제외: 사전에 걸릴 때만" in history
+    # Free text whose first letter happens to be an option letter stays as typed.
+    assert "> - 기타 의견\n>   → B안으로 가자" in history
+    # An answer to an unknown question keeps its raw form rather than vanishing.
+    assert "> - 9: C" in history
+    assert "> - 1: A" not in history
+
+
 async def test_a_session_with_no_typed_request_has_no_requests_block(tmp_path):
     """The automatic first turn (no user text) leaves the entry in its old shape."""
     s3 = FakeS3Store()

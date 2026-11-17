@@ -88,6 +88,54 @@ def _interrupt_id_from(payload: str | None) -> str | None:
     return value if isinstance(value, str) else None
 
 
+def _questions_from(payload: str | None) -> list[dict]:
+    """The questions of a questions payload ({"interrupt_id", "questions": question file}),
+    or [] when the payload does not have that shape."""
+    try:
+        qfile = json.loads(payload or "").get("questions")
+        questions = qfile.get("questions") if isinstance(qfile, dict) else None
+    except (json.JSONDecodeError, AttributeError):
+        return []
+    return [q for q in questions if isinstance(q, dict)] if isinstance(questions, list) else []
+
+
+def _answer_text(value: str, options: list[dict]) -> str:
+    """A question card value as the user saw it. The card sends "A", "A,C", "A: note" or
+    free text (QuestionCard.tsx); letters become the option text and anything else stays."""
+    by_letter = {str(o.get("letter")): str(o.get("text") or "") for o in options
+                 if isinstance(o, dict) and not o.get("is_other")}
+    head, sep, note = value.partition(":")
+    if sep and head.strip() in by_letter:
+        return f"{by_letter[head.strip()]}: {note.strip()}"
+    letters = [p.strip() for p in value.split(",")]
+    if letters and all(p in by_letter for p in letters):
+        return " / ".join(by_letter[p] for p in letters)
+    return value
+
+
+def _answered_requests(questions: list[dict], answers: dict[str, str]) -> list[str]:
+    """Question card answers as change-history requests: the question, then the choice.
+
+    **Why not the raw answers.** The card sends {"1": "A", "2": "A"} -- question number to
+    option letter. Observed (a workshop run): that was quoted as-is, so the history read
+    "1: A" and "2: A", and nobody reading it later could tell what was asked or chosen.
+    An answer whose question is unknown keeps the raw form rather than being dropped.
+    """
+    by_number = {str(q.get("number")): q for q in questions}
+    lines: list[str] = []
+    for number, value in answers.items():
+        if not value:
+            continue
+        q = by_number.get(str(number))
+        text = str(q.get("text") or "").strip() if q else ""
+        if not text:
+            lines.append(f"{number}: {value}")
+            continue
+        choice = _answer_text(value, q.get("options") or [])
+        lines.append(f"{text}\n→ {choice}")
+    return lines
+
+
 #: Grace period after a completion declaration before the session closes itself. Why it
 #: is not 0: the terminal event needs room to make its way out of the generator chain
 #: (_relay_queue -> run -> send_message -> gen).
@@ -201,6 +249,8 @@ class PrototypeSession:
         # none (first build, or after a reset).
         self._history_key: str | None = None
         self._pending_interrupt_id: str | None = None
+        # The questions of that pending card, so its answers can be quoted with what was asked.
+        self._pending_questions: list[dict] = []
         # The completion declaration ({"summary","remaining"}) or None. It means two things
         # at once: (1) this session has finished its work, (2) the idle timer
         # must use the short grace period (see _arm_idle_timer).
@@ -592,6 +642,7 @@ class PrototypeSession:
                     got = _interrupt_id_from(event.payload)
                     if got:
                         self._pending_interrupt_id = got
+                        self._pending_questions = _questions_from(event.payload)
                         self.status = "waiting_input"
                 elif event.kind == "build_complete":
                     completion = _completion_from(event.payload)
@@ -677,10 +728,11 @@ class PrototypeSession:
         if self._pending_interrupt_id is None:
             return False
         interrupt_id, self._pending_interrupt_id = self._pending_interrupt_id, None
+        questions, self._pending_questions = self._pending_questions, []
         # The "기타" (Other) field of the question card is also text the user wrote
         # themselves.
         self._allow_user_urls("\n".join(answers.values()))
-        self._requests.extend(f"{q}: {a}" for q, a in answers.items() if a)
+        self._requests.extend(_answered_requests(questions, answers))
         # Record the answer in the turn log **first**. The build turn continues past the
         # question without breaking, so the answer is an event inside the turn -- it
         # must be recorded so that a reattached screen restores the answer bubble after
