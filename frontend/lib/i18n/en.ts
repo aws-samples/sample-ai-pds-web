@@ -508,6 +508,8 @@ export const en: Record<keyof typeof ko, string> = {
   "dash.noActivity": "No activity recorded.",
   "preInterview.title": "Collect pre-workshop forms",
   "preInterview.body": "Gather the team's pre-workshop answer files (.json) into one file to attach in the Workspace, plus the prompt to send with it. Answers are collected question by question as written, not summarized or edited. Files are read in this browser only and are not uploaded.",
+  "preInterview.readOnlyTitle": "Pre-workshop form",
+  "preInterview.readOnlyBody": "The blank pre-workshop form to hand out to the team. The project owner collects the answers.",
   "preInterview.formDownload": "Download the form (.html)",
   "preInterview.pick": "Choose answer files",
   "preInterview.tooMany": "You can choose up to {n} files at a time.",

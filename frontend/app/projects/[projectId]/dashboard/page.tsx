@@ -73,8 +73,9 @@ export default function DashboardPage({ params }: { params: Promise<{ projectId:
             />
             {/* Draws nothing for a non-admin. */}
             <ProjectCostCard projectId={projectId} />
-            {/* Hands out files only; the team attaches them in the workspace when Envision asks. */}
-            {!readOnly && <PreInterviewCollector language={language} />}
+            {/* Hands out files only; the team attaches them in the workspace when Envision asks.
+                A read-only member still gets the blank form to pass around. */}
+            <PreInterviewCollector language={language} readOnly={readOnly} />
 
             <div className="grid lg:grid-cols-3 gap-6">
               <StageTimeline state={state.data} projectId={projectId} />
