@@ -1149,6 +1149,33 @@ describe("useWorkspaceStream — follow (read-only members)", () => {
     expect(client.getTurn).toHaveBeenCalledTimes(2);
   });
 
+  it("closes the question form once the owner's answers start a turn", async () => {
+    const questions: AgentEvent = { kind: "questions", text: null, path: null, payload: QUESTIONS_PAYLOAD };
+    vi.mocked(client.getTurn).mockResolvedValue(finished("t1"));
+    vi.mocked(client.getPending).mockResolvedValueOnce(QUESTIONS_PAYLOAD);
+    const { result } = renderHook(() => useWorkspaceStream("p1", [], { follow: true }));
+    await act(async () => {});
+    expect(result.current.pendingQuestions).not.toBeNull();
+
+    vi.mocked(client.getTurn).mockResolvedValue(
+      { ...finished("t2"), kind: "answers" as const, input: "누구? → PM" });
+    await act(async () => { await vi.advanceTimersByTimeAsync(FOLLOW_POLL_MS); });
+    expect(result.current.pendingQuestions).toBeNull();
+    const user = result.current.items.find((i) => i.role === "user");
+    expect(user && user.role === "user" && user.text).toBe("누구? → PM");
+
+    // A turn that asks again reopens the form from its replay.
+    vi.mocked(sse.watchTurn).mockImplementation((_pid: any, _turn: any, _after: any, handlers: any) => {
+      handlers.onEvent(questions, 1);
+      handlers.onEvent(done, 2);
+      handlers.onDone();
+      return () => {};
+    });
+    vi.mocked(client.getTurn).mockResolvedValue(finished("t3"));
+    await act(async () => { await vi.advanceTimersByTimeAsync(FOLLOW_POLL_MS); });
+    expect(result.current.pendingQuestions).not.toBeNull();
+  });
+
   it("skips a turn cut off by a restart, once", async () => {
     vi.mocked(client.getTurn).mockResolvedValue(finished("t1"));
     const { result } = renderHook(() => useWorkspaceStream("p1", [], { follow: true }));
