@@ -333,7 +333,22 @@ if changed "${FRONTEND_PATHS[@]}"; then
     runuser -u "$SVC" -- env NEXT_PUBLIC_API_BASE_URL=/api HOME="$APP" npm ci
   fi
   # Building without this env makes the screen load while every API call fails (see the comment at the top of the file).
-  runuser -u "$SVC" -- env NEXT_PUBLIC_API_BASE_URL=/api HOME="$APP" npm run build
+  #
+  # CI=1 and no stdin keep the build non-interactive. From 16.4, next build shows an upgrade
+  # menu in an interactive terminal when the installed version has a security advisory, with
+  # "Upgrade now" selected by default. Observed (one instance): Enter picked it, the build was
+  # killed midway, and the command still exited 0 because no coding agent was found to run
+  # the upgrade. Next shows the menu only when not in CI and both stdin and stdout are TTYs.
+  BUILD_BEFORE=$(cat .next/BUILD_ID 2>/dev/null || true)
+  runuser -u "$SVC" -- env NEXT_PUBLIC_API_BASE_URL=/api HOME="$APP" CI=1 npm run build </dev/null
+  # Exit 0 alone is not proof of a build, so check for a new BUILD_ID (random per build) before
+  # restarting. Stopping here skips mark_applied, so the next run builds again.
+  BUILD_AFTER=$(cat .next/BUILD_ID 2>/dev/null || true)
+  if [ -z "$BUILD_AFTER" ] || [ "$BUILD_AFTER" = "$BUILD_BEFORE" ]; then
+    echo "aipds-update: next build exited without a new build (.next/BUILD_ID unchanged)" \
+         "— frontend not restarted" >&2
+    exit 1
+  fi
   systemctl restart aipds-frontend
   echo "aipds-update: frontend rebuilt and restarted"
 fi
