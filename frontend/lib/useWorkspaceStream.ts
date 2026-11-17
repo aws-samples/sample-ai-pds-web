@@ -637,6 +637,11 @@ export function useWorkspaceStream(
         .then((turn) => {
           if (cancelled || !turn || stopRef.current || turn.turn_id === seenTurnRef.current) return;
           seenTurnRef.current = turn.turn_id;
+          // A new turn means the owner acted on any questions shown here — answered them (both
+          // answer paths start a turn) or sent something else. The owner's screen closes its form
+          // in submitAnswers; this screen never submits, so without this the answered form stayed
+          // open under the answer bubble. If the new turn asks again, its replay reopens it.
+          setPendingQuestions(null);
           // Cut off by a restart: there are no events left to replay.
           if (turn.state === "interrupted") return;
           attachRef.current(turn.turn_id, turn.input);
