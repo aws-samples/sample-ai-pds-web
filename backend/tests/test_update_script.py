@@ -149,9 +149,10 @@ def test_nginx_step_restores_the_conf_when_nginx_rejects_it(tmp_path):
 
 # ---- An update that did not make it to the end is redone by the next run -----------------
 
-def _install_stubs(tmp_path: Path, pip_ok: bool) -> Path:
+def _install_stubs(tmp_path: Path, pip_ok: bool, build_ok: bool = True) -> Path:
     """Stubs for running the whole script without root, runuser, systemctl, install, pip, or
-    npm."""
+    npm. The npm stub logs CI and whether stdin is a terminal; `npm run build` writes a fresh
+    .next/BUILD_ID unless build_ok is False (a build that was stopped but exited 0)."""
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir(exist_ok=True)
     log = tmp_path / "calls"
@@ -161,7 +162,10 @@ def _install_stubs(tmp_path: Path, pip_ok: bool) -> Path:
         "runuser": 'shift 3; exec "$@"',
         "systemctl": f'echo "systemctl $*" >> "{log}"',
         "install": f'echo "install $*" >> "{log}"',
-        "npm": f'echo "npm $*" >> "{log}"',
+        "npm": (f'echo "npm $* CI=$CI stdin=$([ -t 0 ] && echo tty || echo other)" >> "{log}"\n'
+                + ('[ "$*" = "run build" ] && mkdir -p .next && echo "$RANDOM$RANDOM" > .next/BUILD_ID\n'
+                   if build_ok else '')
+                + 'exit 0'),
     }
     for name, body in stubs.items():
         stub = bin_dir / name
@@ -199,12 +203,12 @@ def _deployed(tmp_path: Path):
     return work, app, script, applied
 
 
-def _run_update(tmp_path: Path, app: Path, script: Path, pip_ok: bool):
+def _run_update(tmp_path: Path, app: Path, script: Path, pip_ok: bool, build_ok: bool = True):
     pip = app / "backend/.venv/bin/pip"
     pip.parent.mkdir(parents=True, exist_ok=True)
     pip.write_text(f'#!/bin/bash\necho "pip $*" >> "{tmp_path / "calls"}"\nexit {0 if pip_ok else 1}\n')
     pip.chmod(0o755)
-    bin_dir = _install_stubs(tmp_path, pip_ok)
+    bin_dir = _install_stubs(tmp_path, pip_ok, build_ok)
     return subprocess.run(["bash", str(script)], capture_output=True, text=True, cwd="/",
                           env={"PATH": f"{bin_dir}:/usr/bin:/bin", "HOME": str(tmp_path)})
 
@@ -240,6 +244,39 @@ def test_a_run_with_nothing_new_records_nothing(tmp_path):
     r = _run_update(tmp_path, app, script, pip_ok=True)
     assert r.returncode == 0, r.stderr
     assert "already at" in r.stdout
+    assert not applied.exists()
+
+
+def _push_frontend_change(work: Path) -> None:
+    (work / "frontend/app/page.tsx").parent.mkdir(parents=True, exist_ok=True)
+    (work / "frontend/app/page.tsx").write_text("v2\n")
+    _git(work, "add", "-A")
+    _git(work, "commit", "-qm", "frontend")
+    _git(work, "push", "-q", "origin", "HEAD:main")
+
+
+def test_the_frontend_build_runs_non_interactively(tmp_path):
+    """From 16.4, next build in a terminal offers an upgrade menu whose default kills the build
+    and still exits 0. Next skips the menu in CI or when stdin is not a terminal."""
+    work, app, script, applied = _deployed(tmp_path)
+    _push_frontend_change(work)
+    r = _run_update(tmp_path, app, script, pip_ok=True)
+    assert r.returncode == 0, r.stderr
+    calls = (tmp_path / "calls").read_text()
+    assert "npm run build CI=1 stdin=other" in calls
+    assert "systemctl restart aipds-frontend" in calls
+    assert applied.read_text().strip() == _git(work, "rev-parse", "HEAD")
+
+
+def test_a_build_without_a_new_build_id_neither_restarts_nor_records(tmp_path):
+    """Exit 0 is not proof of a build. Without a new BUILD_ID the old frontend keeps running and
+    the update is not recorded, so the next run builds again."""
+    work, app, script, applied = _deployed(tmp_path)
+    _push_frontend_change(work)
+    r = _run_update(tmp_path, app, script, pip_ok=True, build_ok=False)
+    assert r.returncode != 0
+    assert "BUILD_ID unchanged" in r.stderr
+    assert "restart aipds-frontend" not in (tmp_path / "calls").read_text()
     assert not applied.exists()
 
 
