@@ -338,6 +338,16 @@ export function useWorkspaceStream(
         // document/file_changed, the VM→S3 sync has not happened, so an S3 read may be empty;
         // the sync finishes after the turn completes, so we bump it here.
         setTurnSeq((n) => n + 1);
+        // An earlier question round may still be open — the backend keeps every unanswered
+        // round and GET /pending returns the newest one. Observed in a workshop run: a second
+        // round opened before the first was answered, and once the second was answered the
+        // first never came back. A form the turn just showed wins over the restored one.
+        getPending(projectId)
+          .then((pending) => {
+            const parsed = safeParse<QuestionsPayload>(pending);
+            if (parsed) setPendingQuestions((prev) => prev ?? parsed);
+          })
+          .catch(() => {}); // degraded, not broken: the form comes back on the next load
       };
       const giveUp = (message: string) => {
         patchAi(aiId, (it) => ({ ...it, streaming: false, error: it.error ?? message }));

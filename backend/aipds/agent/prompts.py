@@ -169,6 +169,37 @@ def file_questions_stop(language: str, path: str) -> str:
             f"태그에 기록되니, 다음 턴에 파일을 다시 읽고 이어가세요.")
 
 
+def open_question_rounds(language: str, paths: list[str]) -> str:
+    """Context added to a new user message while question files are still unanswered.
+
+    Goes out as the UserPromptSubmit hook's `additionalContext` (claude_driver), so it reaches
+    the model without becoming part of the user's bubble. It follows the project language.
+
+    Three things it must say: the form stays on screen until answered, so the agent must not
+    treat it as skipped or fill in answers itself; a message about something else is handled,
+    with one line saying what is still waiting; and answers typed into the chat go into the
+    file's `[Answer]:` tags — the upstream contract is that answers live in the file.
+    Observed in a workshop run: a decision form was left open while the next round was asked,
+    the agent noted it only in the audit log, and the user had to ask for it back.
+    """
+    files = ", ".join(f"`{p}`" for p in paths)
+    if _lang(language) == "en":
+        return (f"AI-PDS note: these question files are still waiting for answers: "
+                f"{files}. The user sent this message without answering them. Their "
+                "forms come back on screen until answered — do not treat them as "
+                "skipped, and do not fill in answers yourself. If this message is "
+                "about something else, handle it and end your reply with one line "
+                "saying which questions are still waiting. If this message answers "
+                "them, write those answers into the file's `[Answer]:` tags and "
+                "continue from there.")
+    return (f"AI-PDS 안내: 아직 답을 기다리는 질문 파일이 있습니다: {files}. 사용자는 "
+            "그 질문에 답하지 않고 이 메시지를 보냈습니다. 그 폼은 답을 받을 때까지 화면에 "
+            "다시 뜨니, 건너뛴 것으로 처리하거나 답을 임의로 채우지 마세요. 이 메시지가 다른 "
+            "일이면 처리하고, 응답 끝에 어떤 질문이 아직 답을 기다리는지 한 줄로 알려 주세요. "
+            "이 메시지가 그 질문에 대한 답이면 그 답을 파일의 `[Answer]:` 태그에 기록하고 "
+            "이어서 진행하세요.")
+
+
 # `_answer_lines` used to live here. It lined answers up as `- 1: A,B`, and that was the limit
 # of the morning fix (fe6a482) — it did not resolve option letters into labels, so the record differed
 # from the live screen. Rendering is now owned in one place by `aipds/answer_summary.py` (the frontend's
