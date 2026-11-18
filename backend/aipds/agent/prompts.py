@@ -175,6 +175,10 @@ def file_questions_stop(language: str, path: str) -> str:
 # detection was merged there too). This file only wraps that result in instructions for the model.
 
 
+#: Uploads whose text copy is a profile and whose rows are CSV (parsers/uploads.DATA_EXTS).
+DATA_FILE_EXTS = (".xlsx", ".csv")
+
+
 def answer_attachments(language: str, attachments: list[tuple[str, str | None]]) -> str:
     """Lines naming files the user attached while answering a question form, or "".
 
@@ -183,15 +187,28 @@ def answer_attachments(language: str, attachments: list[tuple[str, str | None]])
     turn waiting for it. Attaching from the form sends the file with the answers instead.
 
     Each item is (workspace path of the text copy, path of the original or None). The original
-    exists for a PDF, whose figures and scans the text copy loses.
+    exists for a PDF, whose figures and scans the text copy loses, and for a data file (xlsx,
+    csv), whose text copy is a profile — the rows are in CSVs it names, to be queried rather than
+    read whole (parsers/tables.py). Same wording as the chat's mention (workspace/page.tsx).
     """
     lines: list[str] = []
     for path, original in attachments:
+        data = bool(original) and original.lower().endswith(DATA_FILE_EXTS)
         if _lang(language) == "en":
-            line = (f"[Attached file: {path} — provided by the user with these answers; "
-                    "read it as context.")
-            if original:
-                line += f" Figures and scanned pages are in the original {original}."
+            if data:
+                line = (f"[Attached file: {path} — a profile of the data file the user provided "
+                        "with these answers. Read it first; for specific values, query only what "
+                        "you need from the CSVs it names with Bash (do not read a CSV whole). "
+                        f"The original is {original}.")
+            else:
+                line = (f"[Attached file: {path} — provided by the user with these answers; "
+                        "read it as context.")
+                if original:
+                    line += f" Figures and scanned pages are in the original {original}."
+        elif data:
+            line = (f"[첨부 파일: {path} — 사용자가 이 답변과 함께 제공한 데이터 파일의 요약이다. "
+                    "먼저 이 요약을 읽고, 세부 값이 필요하면 요약에 적힌 CSV에서 필요한 부분만 "
+                    f"Bash로 조회할 것(CSV를 통째로 읽지 말 것). 원본은 {original}에 있다.")
         else:
             line = f"[첨부 파일: {path} — 사용자가 이 답변과 함께 제공한 파일이다. 컨텍스트로 읽을 것."
             if original:

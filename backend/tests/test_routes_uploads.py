@@ -200,3 +200,44 @@ def test_an_nfd_upload_is_readable_through_its_nfc_path(monkeypatch):
     ws = app_module.registry.get("u-nfd")
     assert asyncio.get_event_loop().run_until_complete(
         ws.runner.read_file(unicodedata.normalize("NFC", path))) == "# 본문"
+
+
+def _xlsx_upload():
+    from openpyxl import Workbook
+    wb = Workbook()
+    wb.active.title = "매출"
+    wb.active.append(["부서", "금액"])
+    wb.active.append(["영업", 1000])
+    buf = io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
+
+
+def test_an_xlsx_stores_its_profile_original_and_sheet_csvs(monkeypatch):
+    _local_project(monkeypatch, "u10")
+    data = _xlsx_upload()
+    r = client.post("/projects/u10/uploads", files={"file": ("매출.xlsx", io.BytesIO(data),
+                    "application/octet-stream")})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert _KEY_RE.match(body["path"]).group(1) == "매출.xlsx.md"
+    assert body["original"] == body["path"][:-len(".md")]
+    assert _stored("u10", body["original"]) == data
+    sheet = f"{body['original']}.매출.csv"
+    assert _stored("u10", sheet).decode() == "부서,금액\n영업,1000\n"
+    ws = app_module.registry.get("u10")
+    profile = asyncio.get_event_loop().run_until_complete(ws.runner.read_file(body["path"]))
+    assert f"`{sheet}`" in profile
+
+
+def test_a_repeated_data_file_reuses_the_first_copy(monkeypatch):
+    """A data file's profile names its own folder, so a byte comparison of two profiles of the
+    same file never matched — the folder is set aside for the comparison."""
+    _local_project(monkeypatch, "u11")
+    bodies = [client.post("/projects/u11/uploads",
+                          files={"file": ("매출.xlsx", io.BytesIO(_xlsx_upload()),
+                                          "application/octet-stream")}).json()
+              for _ in range(2)]
+    assert bodies[1]["duplicate"] is True
+    assert bodies[1]["path"] == bodies[0]["path"]
+    assert bodies[1]["original"] == bodies[0]["original"]

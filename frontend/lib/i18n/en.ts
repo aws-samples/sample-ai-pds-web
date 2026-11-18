@@ -617,6 +617,7 @@ export const en: Record<keyof typeof ko, string> = {
   "upload.close": "Close",
   "upload.dropOverlay": "Drop to attach",
   "upload.duplicateReused": "{name} matches a file you already uploaded, so the earlier copy is used.",
+  "upload.truncated": "{name} is over 50,000 characters as text, so the rest was cut. The AI reads only the beginning — upload the part you need separately.",
   "upload.problemLegacy": "Legacy format, not accepted. Save it as .docx, .pptx, .xlsx or .hwpx and attach that.",
   "upload.problemType": "Not a supported type. Click 📎 to see the supported types.",
   "upload.problemSize": "Larger than {mb}MB.",
