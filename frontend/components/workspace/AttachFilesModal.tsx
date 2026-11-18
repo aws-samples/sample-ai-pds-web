@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useT } from "@/lib/i18n/provider";
 import {
-  MAX_UPLOAD_BYTES, UPLOAD_ACCEPT, UPLOAD_GROUPS, uploadProblemText, type UploadProblem,
+  WORKSPACE_UPLOAD_RULES, uploadProblemText, type UploadProblem, type UploadRules,
 } from "@/lib/uploads";
 
 type Row = { id: number; name: string; problem: UploadProblem | null; done: boolean };
@@ -18,8 +18,11 @@ type Row = { id: number; name: string; problem: UploadProblem | null; done: bool
  *
  * The look and the closing rules (backdrop click, Escape) follow ImportProjectButton's modal.
  */
-export function AttachFilesModal({ onClose, onUpload }: {
+export function AttachFilesModal({ onClose, onUpload, rules = WORKSPACE_UPLOAD_RULES }: {
   onClose: () => void;
+  /** What this entry point accepts and how it is explained — the build chat takes only images
+   *  and Markdown (lib/uploads.ts BUILD_ATTACH_RULES). */
+  rules?: UploadRules;
   /** Upload one file and put it in an attachment chip. Returns the reason on failure, null on
    *  success. */
   onUpload: (file: File) => Promise<UploadProblem | null>;
@@ -71,10 +74,10 @@ export function AttachFilesModal({ onClose, onUpload }: {
         onClick={(e) => e.stopPropagation()}
       >
         <h2 className="font-bold text-lg">{t("upload.title")}</h2>
-        <p className="text-sm text-slate-600 mt-2">{t("upload.intro")}</p>
+        <p className="text-sm text-slate-600 mt-2">{t(rules.introKey)}</p>
 
         <dl className="mt-3 space-y-1 text-sm">
-          {UPLOAD_GROUPS.map((g) => (
+          {rules.groups.map((g) => (
             <div key={g.label} className="flex gap-2">
               <dt className="shrink-0 w-32 text-slate-500">{t(g.label)}</dt>
               <dd className="text-slate-700 font-mono text-xs leading-5">{g.extensions.join(" ")}</dd>
@@ -82,14 +85,14 @@ export function AttachFilesModal({ onClose, onUpload }: {
           ))}
         </dl>
         <ul className="mt-3 space-y-1 text-xs text-slate-500 list-disc pl-4">
-          <li>{t("upload.howRead")}</li>
-          <li>{t("upload.limit").replace("{mb}", String(MAX_UPLOAD_BYTES / (1024 * 1024)))}</li>
+          <li>{t(rules.howReadKey)}</li>
+          <li>{t(rules.limitKey).replace("{mb}", String(rules.maxBytes / (1024 * 1024)))}</li>
         </ul>
         {/* Observed (workshop runs): confidential originals and documents carrying people's real
             names were attached whole. What is attached is read by the AI, can be quoted in the
             Discovery documents, and travels with the project export and the handoff package. */}
         <p className="mt-3 text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
-          {t("upload.dataNotice")}
+          {t(rules.noticeKey)}
         </p>
 
         <div
@@ -121,7 +124,7 @@ export function AttachFilesModal({ onClose, onUpload }: {
             type="file"
             hidden
             multiple
-            accept={UPLOAD_ACCEPT}
+            accept={rules.accept}
             onChange={(e) => {
               const files = Array.from(e.target.files ?? []);
               e.target.value = ""; // allow re-selecting the same file
@@ -139,7 +142,8 @@ export function AttachFilesModal({ onClose, onUpload }: {
                   <span className="break-all">{r.name}</span>
                   <span className={`block text-xs ${r.problem ? "text-rose-600" : "text-slate-500"}`}>
                     {!r.done ? t("upload.uploading")
-                      : r.problem ? uploadProblemText(t, r.problem) : t("upload.attached")}
+                      : r.problem ? uploadProblemText(t, r.problem, rules.maxBytes)
+                        : t("upload.attached")}
                   </span>
                 </span>
               </li>

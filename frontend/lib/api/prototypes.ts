@@ -331,3 +331,29 @@ export async function getBuildSession(
     throw err;
   }
 }
+
+/** A file attached in the build chat (backend proto/attachments.py). `mention` is the line to put
+ *  in front of the next message — written by the backend in the project language. */
+export interface BuildAttachment {
+  path: string;
+  kind: "image" | "markdown";
+  mention: string;
+}
+
+/** POST …/attachments — images and Markdown only; needs the open build session. */
+export async function uploadBuildAttachment(
+  pid: string, slug: string, file: File,
+): Promise<BuildAttachment> {
+  const form = new FormData();
+  form.append("file", file);
+  const res = await fetch(`${API_BASE_URL}${sessionPath(pid, slug, "/attachments")}`, {
+    method: "POST",
+    credentials: CREDENTIALS,
+    body: form,
+  });
+  if (!res.ok) {
+    const detail = await res.text().catch(() => "");
+    throw new ApiError(res.status, detail || res.statusText);
+  }
+  return res.json();
+}

@@ -19,7 +19,7 @@ export function AttachmentChips({
           className="inline-flex items-center gap-1.5 rounded-full bg-violet-50 border border-violet-200 px-3 py-1 text-xs text-violet-700"
         >
           <span aria-hidden="true">📎</span>
-          <span>{p.replace(/^uploads\//, "")}</span>
+          <span>{p.replace(/^(uploads|attachments)\//, "")}</span>
           <button
             type="button"
             aria-label={`${p} ${t("ws.removeAttachment")}`}

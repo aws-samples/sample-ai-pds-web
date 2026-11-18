@@ -4,13 +4,16 @@
 // question wizard (QuestionForm) as the workspace screen — only the stream
 // hook (usePrototypeStream) and the surrounding chrome are new.
 "use client";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { ChatTimeline } from "@/components/canvas/ChatTimeline";
 import { ChatInput } from "@/components/canvas/ChatInput";
 import { LiveActivityBar } from "@/components/canvas/LiveActivityBar";
 import { QuestionForm } from "@/components/questions/QuestionForm";
 import { Markdown } from "@/components/Markdown";
-import { closeSession, startHost } from "@/lib/api/prototypes";
+import { AttachFilesModal } from "@/components/workspace/AttachFilesModal";
+import { AttachmentChips } from "@/components/workspace/AttachmentChips";
+import { closeSession, startHost, uploadBuildAttachment, type BuildAttachment } from "@/lib/api/prototypes";
+import { BUILD_ATTACH_RULES, checkUpload, problemFromError, type UploadProblem } from "@/lib/uploads";
 import { ApiError } from "@/lib/api/client";
 import { knownErrorMessage } from "@/lib/api/errorMessage";
 import { usePrototypeStream } from "@/lib/usePrototypeStream";
@@ -49,6 +52,10 @@ export function BuildPanel({
   const [actionError, setActionError] = useState<string | null>(null);
   const [restarting, setRestarting] = useState(false);
   const completeCardRef = useRef<HTMLDivElement | null>(null);
+  // Files attached for the next message (images and Markdown — lib/uploads BUILD_ATTACH_RULES).
+  // Requested in a workshop run: a logo and notes had to reach the builder from this chat.
+  const [attachments, setAttachments] = useState<BuildAttachment[]>([]);
+  const [attachOpen, setAttachOpen] = useState(false);
   const completed = buildComplete !== null;
   const live = liveActivity(items);
 
@@ -76,6 +83,28 @@ export function BuildPanel({
     if (!completed) return;
     completeCardRef.current?.scrollIntoView?.({ block: "nearest" });
   }, [completed]);
+
+  // Upload one file and put it in a chip. Problems knowable before the upload (format, size)
+  // come back without sending anything.
+  const attach = useCallback(async (file: File): Promise<UploadProblem | null> => {
+    const problem = checkUpload(file, BUILD_ATTACH_RULES);
+    if (problem) return problem;
+    try {
+      const r = await uploadBuildAttachment(projectId, slug, file);
+      setAttachments((prev) => (prev.some((a) => a.path === r.path) ? prev : [...prev, r]));
+      return null;
+    } catch (err) {
+      return problemFromError(err);
+    }
+  }, [projectId, slug]);
+
+  // The mention lines go first, like the workspace's attachments — the backend wrote them, so the
+  // builder reads them in the project language.
+  function sendWithAttachments(text: string) {
+    const mentions = attachments.map((a) => a.mention);
+    send(mentions.length ? `${mentions.join("\n")}\n\n${text}` : text);
+    setAttachments([]);
+  }
 
   async function handleSubmitAnswers(answers: Record<string, string>) {
     setSubmittingAnswers(true);
@@ -223,13 +252,22 @@ export function BuildPanel({
                 {t("readOnly.buildChat")}
               </p>
             ) : (
+              <>
+              <div className="px-4 md:px-8">
+                <AttachmentChips
+                  paths={attachments.map((a) => a.path)}
+                  onRemove={(path) => setAttachments((prev) => prev.filter((a) => a.path !== path))}
+                />
+              </div>
               <ChatInput
-                onSend={send}
+                onSend={sendWithAttachments}
+                onAttach={buildComplete === null ? () => setAttachOpen(true) : undefined}
                 disabled={streaming || buildComplete !== null}
                 onInterrupt={() => void interrupt()}
                 interrupting={streaming}
                 context={context}
               />
+              </>
             )}
           </div>
 
@@ -345,6 +383,10 @@ export function BuildPanel({
           </aside>
         </div>
       </div>
+      {attachOpen && (
+        <AttachFilesModal rules={BUILD_ATTACH_RULES} onClose={() => setAttachOpen(false)}
+                          onUpload={attach} />
+      )}
     </div>
   );
 }

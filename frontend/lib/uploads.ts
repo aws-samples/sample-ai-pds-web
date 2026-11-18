@@ -43,12 +43,56 @@ function extensionOf(name: string): string {
   return dot >= 0 ? name.slice(dot).toLowerCase() : "";
 }
 
+/** What one attachment entry point accepts and how its modal explains it. */
+export interface UploadRules {
+  groups: readonly { label: keyof Dict; extensions: readonly string[] }[];
+  extensions: readonly string[];
+  maxBytes: number;
+  accept: string;
+  introKey: keyof Dict;
+  howReadKey: keyof Dict;
+  limitKey: keyof Dict;
+  noticeKey: keyof Dict;
+}
+
+export const WORKSPACE_UPLOAD_RULES: UploadRules = {
+  groups: UPLOAD_GROUPS,
+  extensions: UPLOAD_EXTENSIONS,
+  maxBytes: MAX_UPLOAD_BYTES,
+  accept: UPLOAD_ACCEPT,
+  introKey: "upload.intro",
+  howReadKey: "upload.howRead",
+  limitKey: "upload.limit",
+  noticeKey: "upload.dataNotice",
+};
+
+// Build-chat attachments (backend proto/attachments.py is the source of truth; its tests check
+// these two constants). **Images and Markdown only**: what enters the build tree reaches source
+// generations, downloads, exports and — once the builder copies it into the prototype — the preview
+// shared with survey participants, so real data files are not accepted here at all.
+export const BUILD_ATTACH_EXTENSIONS = [".png", ".jpg", ".jpeg", ".gif", ".webp", ".md"] as const;
+export const BUILD_ATTACH_MAX_BYTES = 5 * 1024 * 1024;
+
+export const BUILD_ATTACH_RULES: UploadRules = {
+  groups: [
+    { label: "upload.groupImages", extensions: BUILD_ATTACH_EXTENSIONS.filter((e) => e !== ".md") },
+    { label: "upload.groupMarkdown", extensions: [".md"] },
+  ],
+  extensions: BUILD_ATTACH_EXTENSIONS,
+  maxBytes: BUILD_ATTACH_MAX_BYTES,
+  accept: BUILD_ATTACH_EXTENSIONS.join(","),
+  introKey: "upload.buildIntro",
+  howReadKey: "upload.buildHowRead",
+  limitKey: "upload.buildLimit",
+  noticeKey: "upload.buildNotice",
+};
+
 /** A problem detectable before uploading. null if none. */
-export function checkUpload(file: File): UploadProblem | null {
+export function checkUpload(file: File, rules: UploadRules = WORKSPACE_UPLOAD_RULES): UploadProblem | null {
   const ext = extensionOf(file.name);
-  if (LEGACY_EXTENSIONS.includes(ext)) return "legacy";
-  if (!UPLOAD_EXTENSIONS.includes(ext)) return "type";
-  if (file.size > MAX_UPLOAD_BYTES) return "size";
+  if (LEGACY_EXTENSIONS.includes(ext) && rules.extensions === UPLOAD_EXTENSIONS) return "legacy";
+  if (!rules.extensions.includes(ext)) return "type";
+  if (file.size > rules.maxBytes) return "size";
   return null;
 }
 
@@ -66,6 +110,7 @@ export function problemFromError(err: unknown): UploadProblem {
 }
 
 /** The sentence for a failure reason. `{mb}` is the cap — the number is not baked into two copies of the text. */
-export function uploadProblemText(t: (key: keyof Dict) => string, problem: UploadProblem): string {
-  return t(UPLOAD_PROBLEM_KEY[problem]).replace("{mb}", String(MAX_UPLOAD_BYTES / (1024 * 1024)));
+export function uploadProblemText(t: (key: keyof Dict) => string, problem: UploadProblem,
+                                  maxBytes: number = MAX_UPLOAD_BYTES): string {
+  return t(UPLOAD_PROBLEM_KEY[problem]).replace("{mb}", String(maxBytes / (1024 * 1024)));
 }
