@@ -78,6 +78,11 @@ export interface PrototypeInfo {
    *  warns with it: after a reset and rebuild, that spec describes a build that is gone until
    *  Discovery reconciles it again. */
   spec_as_built: boolean;
+  /** Whether `spec-as-built.md` covers the latest change-history entry — the same judgment as
+   *  the handoff tab's reconciliation check. `missing`/`stale` mean builds changed the prototype
+   *  since the spec was last brought up to date; the card then offers to ask Discovery for it.
+   *  Optional for responses from before the field existed (read as `not_needed`). */
+  spec_reconcile?: "not_needed" | "current" | "missing" | "stale";
 }
 
 // Mirrors backend/aipds/proto/host.py's HostState Literal exactly.
@@ -325,4 +330,30 @@ export async function getBuildSession(
     if (err instanceof ApiError && err.status === 404) return null;
     throw err;
   }
+}
+
+/** A file attached in the build chat (backend proto/attachments.py). `mention` is the line to put
+ *  in front of the next message — written by the backend in the project language. */
+export interface BuildAttachment {
+  path: string;
+  kind: "image" | "markdown";
+  mention: string;
+}
+
+/** POST …/attachments — images and Markdown only; needs the open build session. */
+export async function uploadBuildAttachment(
+  pid: string, slug: string, file: File,
+): Promise<BuildAttachment> {
+  const form = new FormData();
+  form.append("file", file);
+  const res = await fetch(`${API_BASE_URL}${sessionPath(pid, slug, "/attachments")}`, {
+    method: "POST",
+    credentials: CREDENTIALS,
+    body: form,
+  });
+  if (!res.ok) {
+    const detail = await res.text().catch(() => "");
+    throw new ApiError(res.status, detail || res.statusText);
+  }
+  return res.json();
 }

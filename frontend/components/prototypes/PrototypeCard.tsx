@@ -8,6 +8,7 @@
 //                          \-------> failed
 "use client";
 import { useEffect, useRef, useState } from "react";
+import Link from "next/link";
 
 import type { HostState, PrototypeInfo, PrototypeState } from "@/lib/api/prototypes";
 import type { Dict } from "@/lib/i18n";
@@ -46,6 +47,7 @@ export function PrototypeCard({
   onOpenSurvey,
   onReset,
   onWatch,
+  reconcileHref,
   startingPhase,
   hostError,
   archiveUrl,
@@ -66,6 +68,10 @@ export function PrototypeCard({
   /** Read-only members: open the build conversation to watch it (live while the owner's session is
    *  open, the past conversation otherwise). Shown once anything has been built or started. */
   onWatch?: () => void;
+  /** The Discovery chat with the "bring spec-as-built.md up to date" request drafted. Shown when
+   *  builds changed the prototype since the spec was last reconciled and no session is open (a
+   *  session still changing it would make the result stale at once). */
+  reconcileHref?: string;
   /** The step while starting hosting is in progress. `POST /host` awaits all of npm install → build →
    *  port wait (routes/prototypes.py), so in the meantime the card had only disabled
    *  buttons and read as "nothing happening". The caller polls `GET /host` and
@@ -105,6 +111,8 @@ export function PrototypeCard({
   };
   const phaseKey = startingPhase ? PHASE_KEYS[startingPhase] : undefined;
   const hostFailed = info.state === "built" && info.host_failed && !phaseKey;
+  const reconcileDue = !readOnly && !!reconcileHref && !info.session_open
+    && (info.spec_reconcile === "missing" || info.spec_reconcile === "stale");
 
   return (
     <div className="w-full rounded-xl border border-slate-200 bg-white px-4 py-3 flex items-center gap-3">
@@ -180,6 +188,14 @@ export function PrototypeCard({
         <span className="block text-[11px] text-slate-400 mt-0.5 truncate">{info.spec_path}</span>
         {hostError && (
           <p role="alert" className="text-xs text-rose-600 mt-1">{hostError}</p>
+        )}
+        {reconcileDue && (
+          <p className="text-xs text-amber-700 mt-1">
+            {t(info.spec_reconcile === "stale" ? "proto.reconcileStale" : "proto.reconcileMissing")}{" "}
+            <Link href={reconcileHref} className="underline font-medium hover:text-amber-800">
+              {t("proto.reconcile")}
+            </Link>
+          </p>
         )}
       </div>
       {/* flex-wrap: in `running` the buttons go up to eight: preview, link, stop, logs, download, modify, reset, survey.

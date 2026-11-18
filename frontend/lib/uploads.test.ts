@@ -41,3 +41,17 @@ it("the picker accepts every supported extension", () => {
   expect(UPLOAD_ACCEPT.split(",")).toContain(".vtt");
   expect(UPLOAD_ACCEPT.split(",")).toContain(".webp");
 });
+
+
+describe("build-chat attachment rules", () => {
+  it("take images and Markdown only, up to 5MB", async () => {
+    const { BUILD_ATTACH_RULES, checkUpload } = await import("./uploads");
+    const f = (name: string, size = 10) => new File([new Uint8Array(size)], name);
+    expect(checkUpload(f("logo.png"), BUILD_ATTACH_RULES)).toBeNull();
+    expect(checkUpload(f("notes.md"), BUILD_ATTACH_RULES)).toBeNull();
+    for (const name of ["data.xlsx", "data.csv", "spec.pdf", "logo.svg", "old.doc"]) {
+      expect(checkUpload(f(name), BUILD_ATTACH_RULES)).toBe("type");
+    }
+    expect(checkUpload(f("big.png", 5 * 1024 * 1024 + 1), BUILD_ATTACH_RULES)).toBe("size");
+  });
+});

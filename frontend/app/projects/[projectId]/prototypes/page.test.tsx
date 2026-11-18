@@ -49,7 +49,7 @@ const PROTOTYPES = [
 // GET /prototypes now answers {prototypes, active_builds, max_builds}
 // (Task 7) rather than a bare array; this wraps the fixture so each test
 // site doesn't have to restate the capacity fields.
-function listing(prototypes = PROTOTYPES, activeBuilds = 0, maxBuilds = 2) {
+function listing(prototypes: object[] = PROTOTYPES, activeBuilds = 0, maxBuilds = 2) {
   return { prototypes, active_builds: activeBuilds, max_builds: maxBuilds };
 }
 
@@ -67,6 +67,24 @@ describe("Prototypes page", () => {
     expect(await screen.findByText("todo-app")).toBeInTheDocument();
     expect(screen.getByText("chat-widget")).toBeInTheDocument();
     expect(screen.getByText("실행 중 :4021")).toBeInTheDocument();
+  });
+
+  it("the spec link drafts the reconciliation request into the Discovery chat", async () => {
+    server.use(
+      http.get(`${API_BASE_URL}/projects/p1/prototypes`, () => HttpResponse.json(listing([
+        { ...PROTOTYPES[0], state: "built", spec_reconcile: "stale" },
+      ]))),
+    );
+    mockStream();
+    await act(async () => {
+      render(<PrototypesPage params={params} />);
+    });
+    const link = await screen.findByRole("link", { name: "명세에 반영" });
+    const href = new URL(link.getAttribute("href")!, "http://x");
+    expect(href.pathname).toBe("/projects/p1/workspace");
+    const draft = href.searchParams.get("draft")!;
+    expect(draft).toContain("spec-as-built.md");
+    expect(draft).toContain("aiplc-docs/discovery/prototypes/todo-app/change-history.md");
   });
 
   it("shows an empty state when there are no prototype specs", async () => {

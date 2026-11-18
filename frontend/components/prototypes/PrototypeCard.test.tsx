@@ -636,3 +636,44 @@ describe("PrototypeCard — watching the build", () => {
     expect(screen.queryAllByRole("button")).toHaveLength(0);
   });
 });
+
+
+// ---- Bringing the spec up to date ----
+// Requested in a workshop run: what "수정하기" changed should flow back into the documents. The
+// card says when spec-as-built.md is behind the change history and drafts the request.
+
+describe("PrototypeCard — spec reconciliation", () => {
+  const href = "/projects/p1/workspace?draft=x";
+
+  it("offers to update the spec when the history has entries it does not cover", () => {
+    render(<PrototypeCard info={info({ state: "built", spec_reconcile: "stale" })} busy={false}
+                          {...noop} reconcileHref={href} />);
+    expect(screen.getByText(/최근 수정한 내용이 명세/)).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "명세에 반영" })).toHaveAttribute("href", href);
+  });
+
+  it("says the spec was never reconciled when spec-as-built is missing", () => {
+    render(<PrototypeCard info={info({ state: "built", spec_reconcile: "missing" })} busy={false}
+                          {...noop} reconcileHref={href} />);
+    expect(screen.getByText(/빌드에서 바뀐 내용이 명세/)).toBeInTheDocument();
+  });
+
+  it.each(["current", "not_needed", undefined] as const)("nothing when %s", (status) => {
+    render(<PrototypeCard info={info({ state: "built", spec_reconcile: status })} busy={false}
+                          {...noop} reconcileHref={href} />);
+    expect(screen.queryByRole("link", { name: "명세에 반영" })).toBeNull();
+  });
+
+  it("waits while a session is still changing the prototype", () => {
+    render(<PrototypeCard info={info({ state: "building", session_open: true,
+                                       spec_reconcile: "stale" })}
+                          busy={false} {...noop} reconcileHref={href} />);
+    expect(screen.queryByRole("link", { name: "명세에 반영" })).toBeNull();
+  });
+
+  it("read-only members are not offered a request they cannot send", () => {
+    render(<PrototypeCard info={info({ state: "built", spec_reconcile: "stale" })} busy={false}
+                          readOnly {...noop} reconcileHref={href} />);
+    expect(screen.queryByRole("link", { name: "명세에 반영" })).toBeNull();
+  });
+});

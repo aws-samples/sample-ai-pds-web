@@ -1000,3 +1000,26 @@ def fetch_refused(language: str, host: str, allowed: tuple[str, ...],
             "설치본 소스를 읽거나 `npx shadcn@latest docs <이름>`을 써라. 다른 사이트가 "
             "필요하면 나에게 그 URL을 채팅에 붙여 달라고 해라 — 내가 거기 쓴 URL의 "
             "사이트는 열린다.")
+
+
+def attachment_mention(language: str, rel: str, kind: str) -> str:
+    """The line put in front of a build message for each attached file (proto/attachments.py).
+
+    Built here rather than on the screen so it follows the project language, like every other
+    sentence the build agent reads. It says what the file is for and where it may go: an image
+    becomes part of the prototype only when the builder copies it under `prototype/` (the
+    attachment directory itself is not served), and the original stays where it is.
+    """
+    if _lang(language) == "en":
+        if kind == "image":
+            return (f"[Attached image: {rel} — an image the user uploaded for this prototype "
+                    "(a logo, for example). To use it on screen, copy it under `prototype/` "
+                    "(e.g. its public folder) and reference that copy; leave the original in "
+                    "place.]")
+        return (f"[Attached document: {rel} — a Markdown document the user provided as "
+                "reference. Read it if needed.]")
+    if kind == "image":
+        return (f"[첨부 이미지: {rel} — 사용자가 이 프로토타입에 쓰라고 올린 이미지(로고 등)야. "
+                "화면에 쓰려면 `prototype/` 아래(예: public 폴더)로 복사해서 그 사본을 참조하고, "
+                "원본은 그대로 둬.]")
+    return (f"[첨부 문서: {rel} — 사용자가 참고하라고 올린 Markdown 문서야. 필요하면 읽어 봐.]")

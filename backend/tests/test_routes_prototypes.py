@@ -335,7 +335,8 @@ def test_list_state_none(proto_env):
                                    "preview_stale": False,
                                    "access_url": None, "host_failed": False, "host_starting": False,
                                    "response_count": 0,
-                                   "has_survey": False, "spec_as_built": False}]
+                                   "has_survey": False, "spec_as_built": False,
+                                   "spec_reconcile": "not_needed"}]
 
 
 def _seed_source_generation(s3, files=None):
@@ -1157,7 +1158,8 @@ def test_reset_leaves_the_card_listable_as_none(proto_env, monkeypatch):
                                    "preview_stale": False,
                                    "access_url": None, "host_failed": False, "host_starting": False,
                                    "response_count": 0,
-                                   "has_survey": False, "spec_as_built": False}]
+                                   "has_survey": False, "spec_as_built": False,
+                                   "spec_reconcile": "not_needed"}]
 
 
 def test_reset_closes_a_live_session_and_frees_its_build_slot(proto_env, monkeypatch):
@@ -2550,3 +2552,125 @@ def test_the_list_says_when_a_start_is_under_way(proto_env, monkeypatch):
     card = next(c for c in client.get(f"/projects/{PID}/prototypes").json()["prototypes"]
                 if c["slug"] == SLUG)
     assert card["host_starting"] is True and card["host_failed"] is False
+
+
+# ---- Bringing the spec up to date (spec-as-built) ----
+#
+# Requested in a workshop run: what "수정하기" (Modify) changed should flow back into the
+# documents. The card says when `spec-as-built.md` no longer covers the change history, with the
+# same judgment as the handoff tab (handoff/readiness.reconcile_status).
+
+_ART = f"aiplc-docs/discovery/prototypes/{SLUG}"
+_HISTORY = ("# 수정 이력\n\n## 2026-01-02 03:04 UTC · gen 1\n\n**변경**\nA\n")
+
+
+def _reconcile_of(s3) -> str:
+    return client.get(f"/projects/{PID}/prototypes").json()["prototypes"][0]["spec_reconcile"]
+
+
+def test_no_history_needs_no_reconciliation(proto_env):
+    _seed_spec(proto_env["s3"])
+    assert _reconcile_of(proto_env["s3"]) == "not_needed"
+
+
+def test_a_history_without_spec_as_built_is_missing(proto_env):
+    s3 = proto_env["s3"]
+    _seed_spec(s3)
+    s3.blobs[f"{_ART}/change-history.md"] = _HISTORY
+    assert _reconcile_of(s3) == "missing"
+
+
+def test_spec_as_built_that_cites_the_last_entry_is_current(proto_env):
+    s3 = proto_env["s3"]
+    _seed_spec(s3)
+    s3.blobs[f"{_ART}/change-history.md"] = _HISTORY
+    s3.blobs[f"{_ART}/spec-as-built.md"] = "# as built\n반영: 2026-01-02 03:04 UTC\n"
+    assert _reconcile_of(s3) == "current"
+
+
+def test_a_newer_entry_makes_spec_as_built_stale(proto_env):
+    s3 = proto_env["s3"]
+    _seed_spec(s3)
+    s3.blobs[f"{_ART}/change-history.md"] = (
+        _HISTORY + "\n## 2026-01-05 10:00 UTC · gen 2\n\n**변경**\nB\n")
+    s3.blobs[f"{_ART}/spec-as-built.md"] = "# as built\n반영: 2026-01-02 03:04 UTC\n"
+    assert _reconcile_of(s3) == "stale"
+
+
+# ---- Build-chat attachments (images and Markdown only) ----
+#
+# Requested in a workshop run: teams wanted to hand the builder a logo and notes from the build
+# chat. Real data is refused on purpose — what enters the build tree reaches source generations,
+# downloads, exports, and (once copied into prototype/) the shared preview.
+
+_PNG = b"\x89PNG\r\n\x1a\n" + b"\x00" * 32
+
+
+def _open_session_at(root):
+    session = FakePrototypeSession()
+    session.status = "ready"
+    session.build_dir = lambda: root / PID / SLUG
+    app_module.proto_sessions[(PID, SLUG)] = session
+    return session
+
+
+def _attach(name: str, data: bytes):
+    return client.post(f"/projects/{PID}/prototypes/{SLUG}/attachments",
+                       files={"file": (name, data)})
+
+
+def test_an_image_lands_in_the_build_directory_with_a_mention(proto_env):
+    _seed_spec(proto_env["s3"])
+    _open_session_at(proto_env["root"])
+
+    r = _attach("logo.png", _PNG)
+
+    assert r.status_code == 201
+    body = r.json()
+    assert body["kind"] == "image"
+    assert body["path"].startswith("attachments/") and body["path"].endswith("/logo.png")
+    assert (proto_env["root"] / PID / SLUG / body["path"]).read_bytes() == _PNG
+    # The builder is told to copy it under prototype/ rather than serve the original.
+    assert body["path"] in body["mention"] and "prototype/" in body["mention"]
+
+
+def test_markdown_is_accepted(proto_env):
+    _seed_spec(proto_env["s3"])
+    _open_session_at(proto_env["root"])
+    r = _attach("notes.md", "# 메모\n색은 남색".encode("utf-8"))
+    assert r.status_code == 201
+    assert r.json()["kind"] == "markdown"
+
+
+@pytest.mark.parametrize("name", ["data.xlsx", "data.csv", "report.pdf", "spec.docx",
+                                  "logo.svg", "noext"])
+def test_anything_but_images_and_markdown_is_refused(proto_env, name):
+    _seed_spec(proto_env["s3"])
+    _open_session_at(proto_env["root"])
+    r = _attach(name, b"a,b\n1,2\n")
+    assert r.status_code == 415
+    assert "unsupported extension" in r.json()["detail"]
+
+
+def test_an_image_whose_bytes_are_not_an_image_is_refused(proto_env):
+    _seed_spec(proto_env["s3"])
+    _open_session_at(proto_env["root"])
+    assert _attach("logo.png", b"<svg onload=alert(1)>").status_code == 415
+
+
+def test_markdown_that_is_not_utf8_is_refused(proto_env):
+    _seed_spec(proto_env["s3"])
+    _open_session_at(proto_env["root"])
+    assert _attach("notes.md", b"\xff\xfe\x00bad").status_code == 415
+
+
+def test_an_oversized_attachment_is_refused(proto_env):
+    from aipds.proto.attachments import MAX_ATTACHMENT_BYTES
+    _seed_spec(proto_env["s3"])
+    _open_session_at(proto_env["root"])
+    assert _attach("big.png", _PNG + b"\x00" * MAX_ATTACHMENT_BYTES).status_code == 413
+
+
+def test_attaching_needs_an_open_session(proto_env):
+    _seed_spec(proto_env["s3"])
+    assert _attach("logo.png", _PNG).status_code == 404

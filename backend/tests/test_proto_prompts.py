@@ -529,3 +529,24 @@ def test_english_iteration_notes_stay_english():
                            instructions_key=INSTRUCTIONS, history_key=HISTORY,
                            iteration_log_key=LOG, results_key=RESULTS, new_iteration=ni)
         assert not any("가" <= c <= "힣" for c in p), p
+
+
+# ---- Build-chat attachments ----
+
+@pytest.mark.parametrize("language", ["ko", "en"])
+def test_an_attached_image_is_copied_into_the_prototype_not_served_in_place(language):
+    rel = "attachments/ab12cd34/logo.png"
+    line = prompts.attachment_mention(language, rel, "image")
+    assert rel in line and "prototype/" in line
+
+
+@pytest.mark.parametrize("language", ["ko", "en"])
+def test_an_attached_document_is_reference(language):
+    rel = "attachments/ab12cd34/notes.md"
+    assert rel in prompts.attachment_mention(language, rel, "markdown")
+
+
+def test_english_attachment_mentions_stay_english():
+    for kind in ("image", "markdown"):
+        line = prompts.attachment_mention("en", "attachments/x/a", kind)
+        assert not any("가" <= c <= "힣" for c in line), line

@@ -61,7 +61,9 @@ for every prototype you want to validate.`,
       md: `**Modify** does **not** throw away what was built. A build session opens with the AI
 waiting, and **you say what to change first** — write it plainly ("move the cart button to the top
 right", "make this screen mobile-first") and the AI gets on with it instead of asking you to pick
-from a list. The earlier builds' conversation stays on screen above, but the AI is handed **only a
+from a list. Attach **images** such as a logo, or **Markdown** notes, with 📎 in the input box (5MB per file). Real
+business data (Excel, CSV and the like) is not accepted: files in the prototype reach its source history,
+downloads, exports and the shared preview. If the prototype needs data, ask for generated sample data. The earlier builds' conversation stays on screen above, but the AI is handed **only a
 summary** of it, so changing one button's colour does not drag the entire build's context with it.
 
 What each finished build changed against the spec is kept as well, in \`change-history.md\` next to the
@@ -69,6 +71,8 @@ spec, and every later session reads it first. Where it disagrees with the spec t
 feature you had taken out does not come back. When the Discovery conversation decides to proceed past
 validation, it applies that history to the approved spec as \`spec-as-built.md\` — the approved spec
 itself stays as it was — and asks you to approve it before carrying on.
+To bring the spec up to date before that, press **Update the spec** when a card says the changes are
+*not in the spec yet*. The request is drafted into the Discovery chat and goes through the same approval.
 
 When Discovery decides to **iterate** after validation, it rewrites the build instructions
 (\`build-instructions.md\`) with that iteration and records it in \`iteration-log.md\`. A session opened
