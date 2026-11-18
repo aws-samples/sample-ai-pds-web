@@ -860,6 +860,26 @@ class ProtoHost:
                 pass
         return sorted(found)
 
+    def require_launchable(self) -> None:
+        """Raise `LauncherUnavailable` if the wrapper is refusing — checked by the route before
+        it answers, since the start itself now runs after the response."""
+        if self._launcher is not None:
+            self._launcher.require()
+
+    def record_failure(self, pid: str, slug: str, reason: str) -> None:
+        """Mark a start that failed before or outside `start()` (an exception in the hosting
+        procedure) as failed, with the reason in the host log — the screen only learns the
+        outcome by reading the state."""
+        entry = self._registry.get((pid, slug))
+        log_path = self._state_dir(pid, slug) / _STATE_LOG
+        log_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        if entry is None:
+            entry = _HostEntry(dir=beneath(self._root, pid, slug), log_path=log_path,
+                               state="failed")
+            self._registry[(pid, slug)] = entry
+        entry.state = "failed"
+        _note(log_path, f"failed: {reason}")
+
     def status(self, pid: str, slug: str) -> HostInfo | None:
         """`log_tail` is always an empty string -- this method is the polling path the
         list route calls for each prototype, and only the state is needed (see the comment

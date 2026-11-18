@@ -18,7 +18,7 @@ import zipfile
 from pathlib import Path
 from urllib.parse import quote
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
 from pydantic import BaseModel
 from sse_starlette.sse import EventSourceResponse
 from starlette.responses import Response
@@ -33,8 +33,8 @@ from aipds.proto.reset_evidence import snapshot_before_reset
 from aipds.proto.session import has_build_output, purge_session_state
 from aipds.proto.history import load_context, load_history, record_opening
 from aipds.turn_job import TurnBusy, subscribe
-from aipds.proto.hosting import (HostStarting, host_prototype, prototype_store,
-                                  stop_prototype)
+from aipds.proto.hosting import (HostStarting, claim_start, host_in_background,
+                                  is_starting, prototype_store, stop_prototype)
 from aipds.proto.store import PrototypeStore
 from aipds.proto.source import newest_source_mtime, source_entries
 # The module that owns the token-gate route also assembles its path -- rewriting
@@ -382,7 +382,11 @@ async def list_prototypes(pid: str):
                     # still has its build, so the card reads `built` -- and `built` had no log
                     # button, so a failed start showed only "호스팅 시작 실패" (hosting failed
                     # to start) with no way to see why.
-                    "host_failed": host_info is not None and host_info.state == "failed",
+                    "host_failed": (host_info is not None and host_info.state == "failed"
+                                    and not is_starting(pid, slug)),
+                    # A start is under way. The screen resumes following it after a reload,
+                    # or when it was started from the build panel.
+                    "host_starting": is_starting(pid, slug),
                     "response_count": survey.responses,
                     "has_survey": survey.exists,
                     # Whether Discovery has written a `spec-as-built.md` for this build. The
@@ -887,8 +891,20 @@ async def download_prototype_archive(pid: str, slug: str):
 
 # ---- hosting ----
 
-@router.post("/projects/{pid}/prototypes/{slug}/host")
-async def start_host(pid: str, slug: str):
+@router.post("/projects/{pid}/prototypes/{slug}/host", status_code=202)
+async def start_host(pid: str, slug: str, background: BackgroundTasks):
+    """Start hosting and answer **at once** (202); the outcome is read from `GET /host`.
+
+    **Why not wait for it.** The procedure — restore, brand sync, npm install, build, server
+    start, token, snapshot — takes from about a minute to more than ten, and CloudFront cuts an
+    origin response after 60s (infra/lib/aipds-hosting-stack.ts). The browser got a 504 while
+    the backend went on and succeeded: every start read as failed on screen, and a reload
+    showed it running.
+
+    Only what can be decided now is answered now: an open build session and a refusing
+    sandbox (both need the user or the operator), and a start already under way.
+    """
+    import aipds.app as app_module
     _require_registered(pid)
     # Hosting serves the build directory IN PLACE now, so starting it under a
     # live build session would race the agent writing into that same tree.
@@ -896,38 +912,44 @@ async def start_host(pid: str, slug: str):
         raise HTTPException(
             status_code=409,
             detail=ec.BUILD_SESSION_ACTIVE)
-    # Restore -> brand sync -> npm -> snapshot -> token -> desired state. It must be
-    # the same procedure as re-hosting after boot, so it is one function
-    # (proto/hosting.py).
     try:
-        info, token = await host_prototype(pid, slug)
-    except FileNotFoundError:
-        raise HTTPException(status_code=404, detail="prototype bundle not found")
+        app_module.proto_host().require_launchable()
     except LauncherUnavailable:
         raise HTTPException(status_code=503, detail=ec.SANDBOX_UNAVAILABLE)
+    try:
+        claim_start(pid, slug)
     except HostStarting:
         raise HTTPException(status_code=409, detail=ec.HOST_STARTING)
-    if info.state == "failed" or token is None:
-        raise HTTPException(status_code=502, detail=info.log_tail)
-    return {"state": info.state, "port": info.port, "log_tail": info.log_tail,
-            "access_url": access_url_path(token)}
+    # Restore -> brand sync -> npm -> snapshot -> token -> desired state. It must be
+    # the same procedure as re-hosting after boot, so it is one function
+    # (proto/hosting.py). It runs after the response is sent.
+    background.add_task(host_in_background, pid, slug)
+    return {"state": "installing", "starting": True}
 
 
 @router.get("/projects/{pid}/prototypes/{slug}/host")
 async def host_status(pid: str, slug: str):
     import aipds.app as app_module
     _require_registered(pid)
-    info = app_module.proto_host().status(pid, slug)
-    if info is None:
+    host = app_module.proto_host()
+    info = host.status(pid, slug)
+    # `starting`: the start is still under way — the screen polls until it is false, then
+    # reads the outcome from `state`. Until `start()` records its first step the entry (if
+    # any) is the previous attempt's, so its state is not reported as this one's.
+    starting = is_starting(pid, slug)
+    if info is None and not starting:
         raise HTTPException(status_code=404, detail="not hosted")
+    if starting and (info is None or info.state not in ("installing", "building", "running")):
+        return {"state": "installing", "port": None, "access_url": None,
+                "log_tail": host.log_tail(pid, slug), "starting": True}
     # GET does not mint a token (`token_for`) -- if a read had the side effect of
     # creating a credential, tokens would be laid down even for prototypes that
     # were never hosted. If none exists yet it is None, and the frontend then
     # does not expose the link.
-    token = app_module.proto_host().token_for(pid, slug)
+    token = host.token_for(pid, slug)
     return {"state": info.state, "port": info.port,
             "access_url": access_url_path(token) if token else None,
-            "log_tail": app_module.proto_host().log_tail(pid, slug)}
+            "log_tail": host.log_tail(pid, slug), "starting": starting}
 
 
 @router.delete("/projects/{pid}/prototypes/{slug}/host", status_code=204)

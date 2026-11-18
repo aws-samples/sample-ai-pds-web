@@ -181,6 +181,7 @@ export const en: Record<keyof typeof ko, string> = {
   "admin.designNoTokens": "No tokens, so colours and fonts never reach the screen — only the prose is passed. Upload a DESIGN.md that states colour values to fix this.",
   "proto.hostStartFailed": "Could not start hosting. Check the log for the cause, then try again.",
   "proto.hostFailed": "Hosting failed",
+  "proto.hostStatusUnknown": "Could not check how hosting is going. Reload the page in a moment to see.",
   "proto.hostStopFailed": "Could not stop hosting. Please try again.",
   "proto.improveStartFailed": "Could not start the improvement session. Please try again.",
   "proto.done": "Done",

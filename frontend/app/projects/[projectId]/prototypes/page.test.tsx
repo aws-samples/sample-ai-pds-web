@@ -535,22 +535,34 @@ describe("Prototypes page — next step after a build", () => {
   });
 });
 
-// ---- A failed hosting start shows why ----
-// The 502's detail is the tail of the host log. It used to be swapped for a generic sentence and
-// dropped, so the reason never reached the screen.
+// ---- Hosting starts answer at once; the outcome is followed ----
+// The start used to be awaited, and CloudFront cut it after 60s: every start read as failed
+// while the server went on and succeeded. It now answers 202, and the page polls GET /host
+// until `starting` is false.
 
-describe("Prototypes page — 호스팅 실패", () => {
-  it("502로 실패하면 그 로그를 바로 연다", async () => {
-    const built = [{ ...PROTOTYPES[0], state: "built", session_open: false }];
+describe("Prototypes page — 호스팅 시작 따라가기", () => {
+  const BUILT = [{ ...PROTOTYPES[0], state: "built", session_open: false,
+                   host_failed: false, host_starting: false }];
+
+  function seed(statuses: object[], prototypes: object[] = BUILT) {
+    let polls = 0;
+    const posted = { count: 0 };
     server.use(
-      http.get(`${API_BASE_URL}/projects/p1/prototypes`, () => HttpResponse.json(listing(built))),
+      http.get(`${API_BASE_URL}/projects/p1/prototypes`, () => HttpResponse.json(listing(
+        prototypes as typeof PROTOTYPES))),
+      http.post(`${API_BASE_URL}/projects/p1/prototypes/todo-app/host`, () => {
+        posted.count += 1;
+        return HttpResponse.json({ state: "installing", starting: true }, { status: 202 });
+      }),
       http.get(`${API_BASE_URL}/projects/p1/prototypes/todo-app/host`,
-        () => HttpResponse.json({ detail: "not hosted" }, { status: 404 })),
-      http.post(`${API_BASE_URL}/projects/p1/prototypes/todo-app/host`,
-        () => HttpResponse.json(
-          { detail: "Failed to start transient service unit: Unit aipds-run-proto-x.service was already loaded" },
-          { status: 502 })),
+        () => HttpResponse.json(statuses[Math.min(polls++, statuses.length - 1)])),
     );
+    return posted;
+  }
+
+  it("실패로 끝나면 그 로그를 바로 연다", async () => {
+    seed([{ state: "failed", port: null, access_url: null, starting: false,
+            log_tail: "Failed to start transient service unit: Unit x.service was already loaded" }]);
     mockStream();
     await act(async () => {
       render(<PrototypesPage params={params} />);
@@ -558,8 +570,38 @@ describe("Prototypes page — 호스팅 실패", () => {
     const user = userEvent.setup();
     await user.click(await screen.findByRole("button", { name: "호스팅 시작" }));
 
-    expect(await screen.findByRole("dialog")).toBeInTheDocument();
+    expect(await screen.findByRole("dialog", {}, { timeout: 4000 })).toBeInTheDocument();
     expect(screen.getByText(/was already loaded/)).toBeInTheDocument();
     expect(screen.getByText(/로그에서 원인을 확인한 뒤/)).toBeInTheDocument();
+  });
+
+  it("진행 단계를 보여 주고, 성공하면 실패를 말하지 않는다", async () => {
+    seed([{ state: "building", port: null, access_url: null, starting: true, log_tail: "" },
+          { state: "running", port: 4001, access_url: "/api/proto/t/x", starting: false, log_tail: "" }]);
+    mockStream();
+    await act(async () => {
+      render(<PrototypesPage params={params} />);
+    });
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: "호스팅 시작" }));
+
+    expect(await screen.findByText("빌드 중…", {}, { timeout: 4000 })).toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByText("빌드 중…")).not.toBeInTheDocument(),
+                  { timeout: 4000 });
+    expect(screen.queryByText(/호스팅을 시작하지 못했습니다/)).not.toBeInTheDocument();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  }, 10000);
+
+  it("이미 진행 중인 시작은 새로 고친 뒤에도 이어서 따라간다", async () => {
+    const posted = seed(
+      [{ state: "failed", port: null, access_url: null, starting: false, log_tail: "npm ERR! boom" }],
+      [{ ...BUILT[0], host_starting: true }]);
+    mockStream();
+    await act(async () => {
+      render(<PrototypesPage params={params} />);
+    });
+    expect(await screen.findByRole("dialog", {}, { timeout: 4000 })).toBeInTheDocument();
+    expect(screen.getByText(/npm ERR! boom/)).toBeInTheDocument();
+    expect(posted.count).toBe(0);           // followed, not started again
   });
 });

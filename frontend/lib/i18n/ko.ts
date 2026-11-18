@@ -195,6 +195,7 @@ export const ko = {
   // 프로토타입 탭
   "proto.hostStartFailed": "호스팅을 시작하지 못했습니다. 로그에서 원인을 확인한 뒤 다시 시도해 주세요.",
   "proto.hostFailed": "호스팅 실패",
+  "proto.hostStatusUnknown": "호스팅 진행 상태를 확인하지 못했습니다. 잠시 뒤 화면을 새로 고쳐 확인해 주세요.",
   "proto.hostStopFailed": "호스팅을 중지하지 못했습니다. 다시 시도해 주세요.",
   "proto.improveStartFailed": "개선 세션을 시작하지 못했습니다. 다시 시도해 주세요.",
   "proto.done": "완료",

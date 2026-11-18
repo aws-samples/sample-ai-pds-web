@@ -863,3 +863,12 @@ async def test_a_failed_build_says_which_step_failed(root):
     info = await host.start(PID, SLUG)
     assert info.state == "failed"
     assert "[AI-PDS] failed: npm run build exited with code 2" in info.log_tail
+
+
+def test_record_failure_marks_a_start_that_never_reached_start(root):
+    """The hosting procedure can fail before `start()` records anything (a restore error, say).
+    It runs after the route answered, so the state is the only way the screen learns of it."""
+    host = ProtoHost(root=root)
+    host.record_failure(PID, SLUG, "RuntimeError: s3 unreachable")
+    assert host.status(PID, SLUG).state == "failed"
+    assert "[AI-PDS] failed: RuntimeError: s3 unreachable" in host.log_tail(PID, SLUG)

@@ -3,7 +3,7 @@
 // BuildPanel (Task 9) for the build chat + hosting controls per card.
 "use client";
 import Link from "next/link";
-import { use, useEffect, useState } from "react";
+import { use, useEffect, useRef, useState } from "react";
 import { AppHeader } from "@/components/AppHeader";
 import { PrototypeCard } from "@/components/prototypes/PrototypeCard";
 import { BuildPanel } from "@/components/prototypes/BuildPanel";
@@ -16,6 +16,7 @@ import {
   startHost,
   stopHost,
   getHost,
+  followHost,
   absoluteShareUrl,
   resetPrototype,
 } from "@/lib/api/prototypes";
@@ -66,8 +67,19 @@ export default function PrototypesPage({ params }: { params: Promise<{ projectId
   // The server does not need fixing: `ProtoHost.start` moves `_registry`'s state through
   // installing → building → running as it goes, and `GET /host` returns it as is. That is, we only
   // need to poll and display **state that is already observable**.
-  const [hostPhase, setHostPhase] =
-    useState<{ slug: string; state: HostState } | null>(null);
+  //
+  // Per slug: since the start answers at once and runs on the server, several can be followed
+  // at the same time (two cards started back to back, or starts begun elsewhere).
+  const [hostPhases, setHostPhases] = useState<Record<string, HostState>>({});
+  const following = useRef(new Set<string>());
+  function setPhase(slug: string, state: HostState | null) {
+    setHostPhases((cur) => {
+      const next = { ...cur };
+      if (state === null) delete next[slug];
+      else next[slug] = state;
+      return next;
+    });
+  }
   // Why starting/stopping hosting was rejected. Attached to that card — a rejection usually means
   // there is something the user must do (409 `build_session_active`: the open build session must be closed),
   // and if it is not visible, it reads as the button coming back with no response.
@@ -122,35 +134,54 @@ export default function PrototypesPage({ params }: { params: Promise<{ projectId
   async function handleStartHost(slug: string) {
     setBusySlug(slug);
     setHostError(null);
-    // Before the server records `installing` (start calls stop first), a 404 is normal —
-    // getHost folds it to null, so we leave it and wait for the next poll. A failure of the
-    // polling itself does not abort hosting: this value is for display only.
-    setHostPhase({ slug, state: "installing" });
-    const poll = setInterval(() => {
-      void getHost(projectId, slug)
-        .then((st) => {
-          if (st) setHostPhase({ slug, state: st.state });
-        })
-        .catch(() => {});
-    }, 1500);
+    setPhase(slug, "installing");
     try {
+      // Answers 202 at once; the start runs on the server (startHost).
       await startHost(projectId, slug);
     } catch (err) {
+      // Refused before anything ran: an open build session, the sandbox, a start already under way.
       setHostError({ slug, message: hostErrorText(err, "proto.hostStartFailed") });
-      // A 502's detail is the tail of the host log (start_host). It used to be dropped for the
-      // generic sentence above, so the reason a start failed was never on screen — open it.
-      if (err instanceof ApiError && err.status === 502) {
+      setPhase(slug, null);
+      setBusySlug(null);
+      list.reload();
+      return;
+    }
+    await followStart(slug);
+    setBusySlug(null);
+  }
+
+  // Follow one start to its end. Also used for starts this page did not begin — another tab,
+  // the build panel, or one still running across a reload (`host_starting` in the list).
+  async function followStart(slug: string) {
+    if (following.current.has(slug)) return;
+    following.current.add(slug);
+    try {
+      const final = await followHost(projectId, slug, (st) => setPhase(slug, st.state));
+      if (final?.state === "failed") {
+        // The reason is the log — open it rather than leave only a generic sentence.
+        setHostError({ slug, message: t("proto.hostStartFailed") });
         setLogsSlug(slug);
         setLogsError(null);
-        setLogsText(err.detail);
+        setLogsText(final.log_tail);
       }
+    } catch {
+      // The status could not be read for a while. The start itself may still be running; the
+      // list below shows what the server knows.
+      setHostError({ slug, message: t("proto.hostStatusUnknown") });
     } finally {
-      clearInterval(poll);
-      setHostPhase(null);
-      setBusySlug(null);
+      following.current.delete(slug);
+      setPhase(slug, null);
       list.reload();
     }
   }
+
+  useEffect(() => {
+    for (const info of list.data?.prototypes ?? []) {
+      if (info.host_starting) void followStart(info.slug);
+    }
+    // followStart is stable in effect: it reads only refs and setters.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [list.data]);
 
   async function handleStopHost(slug: string) {
     setBusySlug(slug);
@@ -281,11 +312,11 @@ export default function PrototypesPage({ params }: { params: Promise<{ projectId
               <PrototypeCard
                 key={info.slug}
                 info={info}
-                busy={busySlug === info.slug}
+                busy={busySlug === info.slug || info.slug in hostPhases}
                 readOnly={readOnly}
                 onBuild={() => handleBuild(info.slug, info.state)}
                 onStartHost={() => handleStartHost(info.slug)}
-                startingPhase={hostPhase?.slug === info.slug ? hostPhase.state : null}
+                startingPhase={hostPhases[info.slug] ?? null}
                 hostError={hostError?.slug === info.slug ? hostError.message : null}
                 onStopHost={() => handleStopHost(info.slug)}
                 // The criterion changed from state to **the presence of access_url**. The server sends

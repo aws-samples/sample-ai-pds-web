@@ -5,6 +5,7 @@ import { http, HttpResponse } from "msw";
 import { server } from "@/test/msw/server";
 import { API_BASE_URL, ApiError } from "./client";
 import {
+  followHost,
   listPrototypes,
   prototypeArchiveUrl,
   startSession,
@@ -383,5 +384,43 @@ describe("streamPrototypeEvents", () => {
     expect(onError).toHaveBeenCalledTimes(1);
     expect(onDone).toHaveBeenCalledTimes(1);
     expect(es.closed).toBe(true);
+  });
+});
+
+describe("followHost", () => {
+  const url = `${API_BASE_URL}/projects/p1/prototypes/todo/host`;
+
+  it("polls until the start is over, reporting each step, and returns the last status", async () => {
+    const answers = [
+      { state: "installing", starting: true },
+      { state: "building", starting: true },
+      { state: "running", starting: false, port: 4001 },
+    ];
+    let i = 0;
+    server.use(http.get(url, () => HttpResponse.json(answers[i++])));
+    const seen: string[] = [];
+    const final = await followHost("p1", "todo", (st) => seen.push(st.state), { intervalMs: 1 });
+    expect(seen).toEqual(["installing", "building"]);
+    expect(final?.state).toBe("running");
+  });
+
+  it("a dropped poll is retried, not taken as the end of the start", async () => {
+    let i = 0;
+    server.use(http.get(url, () => (i++ === 0
+      ? HttpResponse.json({ detail: "gateway" }, { status: 504 })
+      : HttpResponse.json({ state: "failed", starting: false, log_tail: "x" }))));
+    const final = await followHost("p1", "todo", () => {}, { intervalMs: 1 });
+    expect(final?.state).toBe("failed");
+  });
+
+  it("gives up after repeated errors", async () => {
+    server.use(http.get(url, () => HttpResponse.json({ detail: "down" }, { status: 503 })));
+    await expect(followHost("p1", "todo", () => {}, { intervalMs: 1, maxErrors: 3 }))
+      .rejects.toBeInstanceOf(ApiError);
+  });
+
+  it("no record means nothing was started", async () => {
+    server.use(http.get(url, () => HttpResponse.json({ detail: "not hosted" }, { status: 404 })));
+    expect(await followHost("p1", "todo", () => {}, { intervalMs: 1 })).toBeNull();
   });
 });
