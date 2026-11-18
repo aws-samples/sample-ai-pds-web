@@ -465,3 +465,105 @@ async def test_a_quoted_answer_tag_does_not_ask(tmp_path):
                                 "# 메모\n\n답변 태그는 `[Answer]: B` 꼴로 적는다.\n"))
     assert out == {}
     assert not _questions_events(d)
+
+
+# ---- More than one open round ----
+#
+# Observed in a workshop run: one prototype's decision form was still open when the PM asked
+# for the next prototype's survey to be reflected. That round's form took the only slot, the
+# first form never came back, and asking for it again did not show it either.
+
+REL_B = "aiplc-docs/discovery/prototypes/second/validation-decision-questions.md"
+
+
+async def _open_two_rounds(d: ClaudeDriver, ws: Path) -> None:
+    await _post(d, _write(ws, REL, QUESTION_MD))
+    await d._s3.put(REL, QUESTION_MD)
+    await _post(d, _write(ws, REL_B, QUESTION_MD))
+    await d._s3.put(REL_B, QUESTION_MD)
+    d._pending_payload = None
+
+
+async def test_a_second_round_shows_first_and_the_first_comes_back_after(tmp_path):
+    d, ws = _driver(tmp_path)
+    await _open_two_rounds(d, ws)
+
+    assert json.loads(await d.pending({"session_id": "s-1"}))["file"] == REL_B
+    # The newer round is answered (answers go to the file in S3).
+    await d._s3.put(REL_B, QUESTION_MD.replace("[Answer]:", "[Answer]: A"))
+    assert json.loads(await d.pending({"session_id": "s-1"}))["file"] == REL
+    await d._s3.put(REL, QUESTION_MD.replace("[Answer]:", "[Answer]: B"))
+    assert await d.pending({"session_id": "s-1"}) is None
+
+
+async def test_an_answered_round_is_dropped_when_the_next_one_opens(tmp_path):
+    from aipds.agent.pending_store import load_open_files
+    d, ws = _driver(tmp_path)
+    await _post(d, _write(ws, REL, QUESTION_MD))
+    await d._s3.put(REL, QUESTION_MD.replace("[Answer]:", "[Answer]: A"))
+    await _post(d, _write(ws, REL_B, QUESTION_MD))
+    assert await load_open_files(d._s3) == [REL_B]
+
+
+async def test_a_new_message_tells_the_agent_which_rounds_are_open(tmp_path):
+    d, ws = _driver(tmp_path)
+    await _open_two_rounds(d, ws)
+
+    out = await d._on_user_prompt_submit({"prompt": "다른 이야기"}, None, None)
+
+    note = out["hookSpecificOutput"]["additionalContext"]
+    assert out["hookSpecificOutput"]["hookEventName"] == "UserPromptSubmit"
+    assert REL in note and REL_B in note
+    assert "[Answer]:" in note        # answers typed into the chat go into the file
+
+
+async def test_no_note_once_every_round_is_answered(tmp_path):
+    d, ws = _driver(tmp_path)
+    await _post(d, _write(ws, REL, QUESTION_MD))
+    await d._s3.put(REL, QUESTION_MD.replace("[Answer]:", "[Answer]: A"))
+    assert await d._on_user_prompt_submit({"prompt": "x"}, None, None) == {}
+
+
+async def test_the_prompt_note_survives_a_broken_store(tmp_path):
+    d, _ = _driver(tmp_path)
+
+    async def boom():
+        raise RuntimeError("s3 down")
+    d._open_rounds = boom
+    assert await d._on_user_prompt_submit({"prompt": "x"}, None, None) == {}
+
+
+async def test_a_new_turn_lets_the_same_questions_be_asked_again(tmp_path):
+    """Within one turn a rewrite is not re-asked; in a later turn the card may be gone from
+    the screen, so asking for it again must show it."""
+    d, ws = _driver(tmp_path)
+    await _post(d, _write(ws, REL, QUESTION_MD))
+    d._queue.clear()
+
+    from aipds.models import AgentEvent
+
+    async def fake_stream(text, session):
+        yield AgentEvent(kind="done")
+    d._stream = fake_stream
+    d._place_rules = lambda: True
+    [ev async for ev in d.run("다시 띄워줘", {"session_id": "s-1"})]
+
+    out = await _post(d, _write(ws, REL, QUESTION_MD))
+    assert out.get("continue_") is False
+    assert len(_questions_events(d)) == 1
+
+
+def test_the_prompt_submit_hook_is_wired(tmp_path, monkeypatch):
+    from tests.test_claude_driver import _captured_options
+    options = _captured_options(tmp_path, monkeypatch,
+                                {"session_id": "p1", "resume": False})
+    assert "UserPromptSubmit" in options.hooks
+
+
+@pytest.mark.parametrize("language", ["ko", "en"])
+def test_the_open_rounds_note_exists_in_both_languages(language):
+    from aipds.agent import prompts
+    note = prompts.open_question_rounds(language, [REL, REL_B])
+    assert REL in note and REL_B in note and "[Answer]:" in note
+    if language == "en":
+        assert not any("가" <= c <= "힣" for c in note)

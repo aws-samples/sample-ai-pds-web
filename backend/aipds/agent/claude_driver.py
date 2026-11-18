@@ -73,7 +73,7 @@ from aipds.agent.discovery_guard import (NOTEBOOK_TOOL, WRITE_TOOLS,
                                               bash_write_denial, settings_denial, tool_write_path,
                                               web_owned_denial, write_denial)
 from aipds.agent.pending_store import (clear_pending, load_pending,
-                                              load_pending_file, save_pending,
+                                              load_open_files, save_pending,
                                               save_pending_file)
 from aipds.agent import reconcile
 from aipds.agent.question_file_answers import (looks_like_question_file,
@@ -640,6 +640,8 @@ def _default_client_factory(driver: "ClaudeDriver") -> Callable[[dict], Any]:
                     hooks=[driver._on_pre_tool_use])],
                 "PostToolUse": [HookMatcher(matcher="Write|Edit|MultiEdit",
                                             hooks=[driver._on_post_tool_use])],
+                "UserPromptSubmit": [HookMatcher(
+                    hooks=[driver._on_user_prompt_submit])],
             },
         )
         return ClaudeSDKClient(options=options)
@@ -747,9 +749,9 @@ class ClaudeDriver:
         # the same stream, so the parent is part of the key too (agent/tool_input_draft.py).
         self._drafts: dict[tuple[str | None, int], tool_input_draft.ToolInputDraft] = {}
         # rel path -> the **set of unanswered questions already asked** from that file. A guard
-        # against asking the same set twice (see _file_question_round). Kept across turns because
-        # the driver instance lives as long as the project -- it is emptied on a backend restart, but
-        # by then the answers are already in the file, so the "no unanswered questions" condition prevents re-asking.
+        # against asking the same set twice **within one turn** (see _file_question_round) --
+        # emptied when a new turn starts (`run`), because by then the card may be gone from the
+        # screen and a rewrite of the same questions must be able to show it again.
         self._asked_question_sets: dict[str, tuple[str, ...]] = {}
         # rel path -> the content whose parse failure was already reported. The same note is not
         # repeated for the same content, but it is reported again if the content changes (see _on_post_tool_use).
@@ -1083,9 +1085,11 @@ class ClaudeDriver:
            the questions from appearing on screen at all -- it must degrade, not block.
         3. At least one question must have an empty answer. The agent re-reading the answers
            and rewriting the file is normal behavior, and it must not be asked again then.
-        4. **Never ask the same set of unanswered questions twice.** The guard is keyed on the
-           set of unanswered questions rather than on the file because questions added after
-           the answers (`### Clarification Question 2`) must be asked.
+        4. **Never ask the same set of unanswered questions twice in one turn.** The guard is
+           keyed on the set of unanswered questions rather than on the file because questions
+           added after the answers (`### Clarification Question 2`) must be asked. It is
+           emptied at each new turn (`run`), so a deliberate re-ask of a card that left the
+           screen goes through.
 
         Reads from disk -- the tool_input of `Edit`/`MultiEdit` does not hold the full content,
         and PostToolUse runs after the write has finished.
@@ -1311,7 +1315,9 @@ class ClaudeDriver:
             # The file was already published above (publish_file) -- every artifact goes
             # through the same path, so no question-file-specific upload is kept. The marker
             # comes **after** it: reversing the order would leave a window where the marker points to a file not in the source of truth.
-            await save_pending_file(self._s3, file=rel)
+            still_open = [f for f, _ in reversed(await self._open_rounds())
+                          if f != rel]
+            await save_pending_file(self._s3, file=rel, still_open=still_open)
         except Exception:
             # The live card is already in the queue -- even on failure this turn's questions
             # appear on screen; only refresh restore and answer submission fail. Killing the turn would be worse.
@@ -2207,6 +2213,12 @@ class ClaudeDriver:
                           "consumer")
                 yield AgentEvent(kind="error", text="turn already in progress")
                 return
+            # A new turn: a card asked in an earlier turn may no longer be on screen (the
+            # user sent something else, or another round took its place). Observed in a
+            # workshop run: asked to "show the skipped form again", the agent rewrote the
+            # same questions and the guard swallowed them -- no card, and the user typed the
+            # answers into the chat. Within this turn the guard still stops repeats.
+            self._asked_question_sets.clear()
             async for ev in self._stream(text, session):
                 yield ev
         finally:
@@ -2307,32 +2319,72 @@ class ClaudeDriver:
         return await self._pending_from_file()
 
     async def _pending_from_file(self) -> str | None:
-        """Re-read the open question file from S3 and rebuild the card.
+        """Re-read the open question files from S3 and rebuild the card of the newest one
+        that still has unanswered questions.
 
         **Reads S3, not the local workspace.** The local copy is restored only at turn start
         (runner.py's `_restore_workspace_from_s3`), so a `GET /pending` right after a restart
         would see an empty directory. S3 is the single source of truth.
 
-        None when there are no unanswered questions -- that is this round's end signal, and
-        it is why the answer-submission path does not have to delete anything.
+        **Falls back to older open files.** When a second round opens before the first is
+        answered, the newest is shown; once it is answered, the earlier one comes back
+        instead of being lost (pending_store.save_pending_file).
+
+        None when no open file has unanswered questions -- that is the rounds' end signal,
+        and it is why the answer-submission path does not have to delete anything.
         """
-        rel = await load_pending_file(self._s3)
-        if rel is None:
+        rounds = await self._open_rounds()
+        if not rounds:
             return None
-        from aipds.parsers.questions import parse_question_file
-        try:
-            md = await self._s3.get(rel)
-        except FileNotFoundError:
-            # The file is gone (deleted or moved). Restore is a convenience, so give up quietly.
-            return None
-        qfile = parse_question_file(rel, md)
-        if not qfile.parse_ok:
-            return None
-        if not any(not (q.answer or "").strip() for q in qfile.questions):
-            return None
+        rel, qfile = rounds[0]
         return json.dumps({"interrupt_id": "", "file": rel, "questions": qfile},
                           ensure_ascii=False,
                           default=lambda o: o.model_dump())
+
+    async def _open_rounds(self) -> list[tuple[str, Any]]:
+        """Open question files that still have unanswered questions, newest first, with their parse.
+
+        Files that are gone, do not parse, or are fully answered are skipped -- their round is over.
+        """
+        from aipds.parsers.questions import parse_question_file
+        rounds: list[tuple[str, Any]] = []
+        for rel in reversed(await load_open_files(self._s3)):
+            try:
+                md = await self._s3.get(rel)
+            except FileNotFoundError:
+                # The file is gone (deleted or moved). Restore is a convenience, so give up quietly.
+                continue
+            qfile = parse_question_file(rel, md)
+            if not qfile.parse_ok:
+                continue
+            if any(not (q.answer or "").strip() for q in qfile.questions):
+                rounds.append((rel, qfile))
+        return rounds
+
+    async def _on_user_prompt_submit(self, input_data, tool_use_id, context) -> dict:
+        """Tell the agent which question rounds are still open when a new message arrives.
+
+        Observed in a workshop run: with one prototype's decision form still open, the PM
+        sent the next prototype's survey for reflection, and the agent wrote that round's
+        questions without a word about the open one -- it noted "not answered yet" in the
+        audit log and moved on. The card now comes back on its own (`_pending_from_file`),
+        but only the agent can say in the conversation that a decision is still waiting.
+
+        Context, not message text: the turn text stays in the transcript as the user's
+        bubble (prompts.file_answers_recorded), and this note is not something the user said.
+        Fail-soft -- a failed read must not block the turn.
+        """
+        try:
+            rounds = await self._open_rounds()
+        except Exception:
+            _log.exception("reading open question rounds for the prompt note failed")
+            return {}
+        if not rounds:
+            return {}
+        return {"hookSpecificOutput": {
+            "hookEventName": "UserPromptSubmit",
+            "additionalContext": prompts.open_question_rounds(
+                self._language, [rel for rel, _ in rounds])}}
 
     # ---- lifecycle (beyond the three-method contract) ----
 

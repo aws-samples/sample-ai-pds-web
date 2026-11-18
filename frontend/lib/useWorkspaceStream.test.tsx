@@ -175,6 +175,32 @@ describe("useWorkspaceStream", () => {
     expect(result.current.pendingQuestions).toBeNull();
   });
 
+  it("brings back an earlier open round once the answered one's turn ends", async () => {
+    // Observed in a workshop run: a second round opened before the first was answered, and the
+    // first never came back. The backend keeps both; the screen asks again at the turn's end.
+    drive(
+      [
+        { kind: "questions", text: null, path: null, payload: QUESTIONS_PAYLOAD },
+        { kind: "done", text: null, path: null, payload: null },
+      ],
+      "streamEvents",
+    );
+    const { result } = renderHook(() => useWorkspaceStream("p1"));
+    await act(async () => {});
+    // The form the turn just showed wins over whatever /pending holds at its end.
+    vi.mocked(client.getPending).mockResolvedValueOnce(FILE_QUESTIONS_PAYLOAD);
+    act(() => result.current.send("다음 설문 반영"));
+    await act(async () => {});
+    expect(result.current.pendingQuestions?.interrupt_id).toBe("i-1");
+
+    vi.mocked(client.getPending).mockResolvedValueOnce(FILE_QUESTIONS_PAYLOAD);
+    drive([{ kind: "done", text: null, path: null, payload: null }], "streamAnswers");
+    act(() => result.current.submitAnswers({ "1": "A" }));
+    await act(async () => {});
+    expect(result.current.pendingQuestions?.file).toBe(
+      "aiplc-docs/discovery/envision/pain-point-questions.md");
+  });
+
   it("malformed payload does not crash the stream (fallback: chat keeps going)", async () => {
     drive(
       [
