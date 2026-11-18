@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 import uuid
@@ -192,6 +193,15 @@ def handoff_key(slug: str) -> str:
     return f"prototypes/{slug}/handoff.json"
 
 
+#: handoff.json field holding the digest of the build instructions the completed session
+#: was given (see `_write_handoff`).
+_INSTRUCTIONS_SHA = "instructions_sha256"
+
+
+def _digest(text: str) -> str:
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
 class PrototypeSession:
     """One prototype's build session: owns the durable session id, the build
     directory, the turn relay, the questions interrupt id, and the idle timer.
@@ -248,6 +258,18 @@ class PrototypeSession:
         # Key of the change history this start() planted in cwd. None means there is
         # none (first build, or after a reset).
         self._history_key: str | None = None
+        # Keys of Discovery's iteration log and validation results this start() planted
+        # in cwd (read-only copies). None means the file is not there.
+        self._iteration_log_key: str | None = None
+        self._results_key: str | None = None
+        # Digest of the build instructions this start() planted. Recorded in the
+        # handoff at completion, so the next improvement session can tell whether
+        # Discovery rewrote the instructions after this build (`_new_iteration`).
+        self._instructions_sha: str | None = None
+        # Whether the planted build instructions are newer than the last completed
+        # build: True (rewritten since), False (the same ones), None (the handoff
+        # predates the digest, so it is not known). Only meaningful on the handoff branch.
+        self._new_iteration: bool | None = False
         self._pending_interrupt_id: str | None = None
         # The questions of that pending card, so its answers can be quoted with what was asked.
         self._pending_questions: list[dict] = []
@@ -393,8 +415,10 @@ class PrototypeSession:
         if not isinstance(summary, str) or not summary:
             return None
         remaining = data.get("remaining")
+        sha = data.get(_INSTRUCTIONS_SHA)
         return {"summary": summary,
-                "remaining": remaining if isinstance(remaining, str) else ""}
+                "remaining": remaining if isinstance(remaining, str) else "",
+                _INSTRUCTIONS_SHA: sha if isinstance(sha, str) and sha else None}
 
     # ---- idle timer ----
 
@@ -464,10 +488,18 @@ class PrototypeSession:
 
         completed_at is for diagnostics -- it lets you read from the logs which branch
         was taken.
+
+        The digest of the build instructions this session was given goes along. Discovery
+        hands an iteration to the builder by rewriting those instructions after
+        validation (`prototype-validation.md` Step 7 -> Step 4); comparing digests at the
+        next start is how the improvement session learns that a new iteration is waiting
+        (observed in a workshop run: nothing told the builder, and the user pasted the
+        iteration log into the chat by hand).
         """
         await self._s3.put(self._handoff_key(), json.dumps({
             **completion,
             "completed_at": datetime.now(timezone.utc).isoformat(),
+            _INSTRUCTIONS_SHA: self._instructions_sha,
         }, ensure_ascii=False))
 
     # ---- start ----
@@ -515,33 +547,33 @@ class PrototypeSession:
         # defined upstream, combining the spec and the design-context answers
         # (layout.BUILD_INSTRUCTIONS). If only the spec were planted, the design
         # direction and device context the user chose in Step 2 would not reach the
-        # builder. For the same reason as the spec, it is rewritten on every start, and
-        # if it has disappeared from S3 the local copy is also deleted -- if left
-        # behind, stale instructions sit in cwd that the prompt does not mention.
-        instructions_key = layout.build_instructions_key(self.slug)
-        try:
-            instructions_md = await self._s3.get(instructions_key)
-        except FileNotFoundError:
-            unlink_beneath(build_dir, instructions_key)
-            self._instructions_key = None
-        else:
-            write_beneath(build_dir, instructions_key, instructions_md)
-            self._instructions_key = instructions_key
+        # builder.
+        instructions_md = await self._plant(build_dir,
+                                            layout.build_instructions_key(self.slug))
+        self._instructions_key = (layout.build_instructions_key(self.slug)
+                                  if instructions_md is not None else None)
+        self._instructions_sha = (_digest(instructions_md)
+                                  if instructions_md is not None else None)
+        self._new_iteration = self._instructions_changed_since_handoff()
 
         # The change history is also planted next to the spec. The spec is frozen at
         # approval time and later changes exist only in this file -- improvement
         # sessions and rebuilds must read it so they do not revive features the spec has
-        # already dropped. For the same reason as the instructions, it is rewritten on
-        # every start, and deleted if absent.
+        # already dropped.
         history_key = layout.change_history_key(self.slug)
-        try:
-            history_md = await self._s3.get(layout.change_history_key(self.slug))
-        except FileNotFoundError:
-            unlink_beneath(build_dir, history_key)
-            self._history_key = None
-        else:
-            write_beneath(build_dir, history_key, history_md)
-            self._history_key = history_key
+        self._history_key = (history_key if await self._plant(build_dir, history_key)
+                             is not None else None)
+
+        # Discovery's iteration log and the validation results behind it. Iteration
+        # instructions cite both, and the user refers to the log by name ("apply
+        # iteration-log.md") -- without a copy in cwd, neither resolves. Read-only
+        # copies: Discovery owns the originals, and nothing here writes them back.
+        log_key = layout.iteration_log_key(self.slug)
+        self._iteration_log_key = (log_key if await self._plant(build_dir, log_key)
+                                   is not None else None)
+        results_key = layout.validation_results_key(self.slug)
+        self._results_key = (results_key if await self._plant(build_dir, results_key)
+                             is not None else None)
 
         # Apply the brand profile to the workspace. For the same reason as spec, it is
         # rewritten on every start -- values an admin fixed take effect from this session.
@@ -566,6 +598,37 @@ class PrototypeSession:
         self._builder = self._builder_factory(self._session_id, resume)
         self.status = "ready"
         self._arm_idle_timer()
+
+    async def _plant(self, build_dir: Path, key: str) -> str | None:
+        """Copy one Discovery document from S3 into cwd at the same path. Its text, or None.
+
+        Rewritten on every start, for the same reason as the spec. If it has disappeared
+        from S3 the local copy is deleted too -- a stale copy left behind would sit in cwd
+        where the prompt does not mention it, yet the agent can still read it.
+        """
+        try:
+            md = await self._s3.get(key)
+        except FileNotFoundError:
+            unlink_beneath(build_dir, key)
+            return None
+        write_beneath(build_dir, key, md)
+        return md
+
+    def _instructions_changed_since_handoff(self) -> bool | None:
+        """Whether the planted build instructions differ from those of the last completed build.
+
+        Only the handoff branch has a "last completed build" to compare against. A
+        handoff written before the digest existed gives None -- unknown, not "unchanged",
+        so the prompt still tells the agent to check rather than staying silent.
+        """
+        if self._prompt_kind != "handoff" or self._handoff is None:
+            return False
+        if self._instructions_sha is None:
+            return False
+        previous = self._handoff.get(_INSTRUCTIONS_SHA)
+        if previous is None:
+            return None
+        return previous != self._instructions_sha
 
     # ---- turn relay ----
 
@@ -844,6 +907,8 @@ class PrototypeSession:
             request=request,
             spec_key=self._spec_key(),
             instructions_key=self._instructions_key,
+            iteration_log_key=self._iteration_log_key,
+            results_key=self._results_key,
             proxy_path=f"/api/proto/{self.project_id}/{self.slug}/")
 
     def _resume_prompt(self, request: str | None = None) -> str:
@@ -892,7 +957,9 @@ class PrototypeSession:
         return prompts.missing_output_prompt(
             self._language, spec_key=self._spec_key(),
             instructions_key=self._instructions_key,
-            history_key=self._history_key, request=request)
+            history_key=self._history_key,
+            iteration_log_key=self._iteration_log_key,
+            results_key=self._results_key, request=request)
 
     def _handoff_prompt(self, handoff: dict, *,
                         request: str | None = None) -> str:
@@ -918,6 +985,9 @@ class PrototypeSession:
             spec_key=self._spec_key(),
             instructions_key=self._instructions_key,
             history_key=self._history_key,
+            iteration_log_key=self._iteration_log_key,
+            results_key=self._results_key,
+            new_iteration=self._new_iteration,
             request=request,
             summary=handoff["summary"],
             remaining=handoff.get("remaining")

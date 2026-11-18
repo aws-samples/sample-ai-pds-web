@@ -174,6 +174,28 @@ def change_history_key(prototype_id: str) -> str:
     return f"{artifact_dir(prototype_id)}/{CHANGE_HISTORY}"
 
 
+#: Iteration log — the upstream artifact where Discovery records the changes decided after
+#: validation (`prototype-validation.md` Step 4, `prototype-building.md` "Log iterations in").
+#: Owned by the Discovery agent; build sessions get a read-only copy (proto/session.start).
+ITERATION_LOG = "iteration-log.md"
+
+
+def iteration_log_key(prototype_id: str) -> str:
+    """id → iteration log path. Same directory as the spec."""
+    return f"{artifact_dir(prototype_id)}/{ITERATION_LOG}"
+
+
+#: Validation results — the upstream Step 6 artifact the iteration is based on. Build
+#: instructions written for an iteration cite it as their basis, so the builder gets a
+#: read-only copy for the same reason as the iteration log.
+VALIDATION_RESULTS = "validation-results.md"
+
+
+def validation_results_key(prototype_id: str) -> str:
+    """id → validation results path. Same directory as the spec."""
+    return f"{artifact_dir(prototype_id)}/{VALIDATION_RESULTS}"
+
+
 #: Survey aggregate file name. A web-owned artifact — not in the upstream rules. "결과 취합" (Synthesize results)
 #: rebuilds it from the responses and overwrites it each time, and reset deletes it (survey/store).
 #:

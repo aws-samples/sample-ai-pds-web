@@ -456,3 +456,76 @@ def test_the_unchanged_rejection_and_the_tool_send_answers_to_the_chat(language)
     word = "채팅" if language == "ko" else "chat"
     assert word in prompts.build_complete_unchanged(language)
     assert word in build_complete_description(language)
+
+
+# ---- Discovery's iteration documents ----
+#
+# After validation, Discovery hands an iteration to the builder by rewriting the build
+# instructions, and records it in the iteration log next to the validation results. Observed
+# in a workshop run: the build session had neither file and was never told an iteration was
+# waiting, so the user pasted the iteration log into the build chat by hand.
+
+LOG = "aiplc-docs/discovery/prototypes/demo/iteration-log.md"
+RESULTS = "aiplc-docs/discovery/prototypes/demo/validation-results.md"
+HISTORY = "aiplc-docs/discovery/prototypes/demo/change-history.md"
+
+
+@pytest.mark.parametrize("language", ["ko", "en"])
+def test_openings_name_the_iteration_documents_as_read_only(language):
+    for p in (
+        plan_prompt(language, spec_key=SPEC, proxy_path=PROXY,
+                    iteration_log_key=LOG, results_key=RESULTS),
+        missing_output_prompt(language, spec_key=SPEC,
+                              iteration_log_key=LOG, results_key=RESULTS),
+        handoff_prompt(language, spec_key=SPEC, summary="s", remaining="r",
+                       iteration_log_key=LOG, results_key=RESULTS),
+    ):
+        assert LOG in p and RESULTS in p
+        assert "고치지 마" in p or "do not edit them" in p
+
+
+@pytest.mark.parametrize("language", ["ko", "en"])
+@pytest.mark.parametrize("log,results", [(LOG, None), (None, RESULTS)])
+def test_one_iteration_document_alone_is_named_without_the_other(language, log, results):
+    p = handoff_prompt(language, spec_key=SPEC, summary="s", remaining="r",
+                       iteration_log_key=log, results_key=results)
+    assert (log or results) in p
+    assert (RESULTS if log else LOG) not in p
+
+
+@pytest.mark.parametrize("language", ["ko", "en"])
+@pytest.mark.parametrize("ask", [None, "버튼 색"])
+def test_a_waiting_iteration_is_announced_in_the_improvement_session(language, ask):
+    p = handoff_prompt(language, spec_key=SPEC, summary="s", remaining="r",
+                       instructions_key=INSTRUCTIONS, iteration_log_key=LOG,
+                       new_iteration=True, request=ask)
+    assert "Discovery가 지난 완료 뒤" in p or "Discovery rewrote" in p
+    assert "첫 번째 선택지" in p or "first option" in p
+    # Announced before the steps, so it frames them rather than trailing as a footnote.
+    assert p.index(LOG) < p.index("1. ")
+
+
+@pytest.mark.parametrize("language", ["ko", "en"])
+def test_an_unknown_iteration_state_asks_the_agent_to_check_the_history(language):
+    p = handoff_prompt(language, spec_key=SPEC, summary="s", remaining="r",
+                       instructions_key=INSTRUCTIONS, history_key=HISTORY,
+                       new_iteration=None)
+    assert "기록이 없다" in p or "There is no record" in p
+    assert "Discovery가 지난 완료 뒤" not in p and "Discovery rewrote" not in p
+
+
+@pytest.mark.parametrize("language", ["ko", "en"])
+@pytest.mark.parametrize("new_iteration", [True, None])
+def test_no_iteration_note_without_build_instructions(language, new_iteration):
+    """Path B has no instructions, so there is nothing Discovery could have rewritten."""
+    assert handoff_prompt(language, spec_key=SPEC, summary="s", remaining="r",
+                          new_iteration=new_iteration) == \
+        handoff_prompt(language, spec_key=SPEC, summary="s", remaining="r")
+
+
+def test_english_iteration_notes_stay_english():
+    for ni in (True, None):
+        p = handoff_prompt("en", spec_key=SPEC, summary="s", remaining="r",
+                           instructions_key=INSTRUCTIONS, history_key=HISTORY,
+                           iteration_log_key=LOG, results_key=RESULTS, new_iteration=ni)
+        assert not any("가" <= c <= "힣" for c in p), p

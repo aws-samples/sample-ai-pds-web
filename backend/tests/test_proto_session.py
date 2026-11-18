@@ -1796,3 +1796,138 @@ async def test_a_url_typed_into_a_question_card_also_opens(tmp_path):
     await session.send_answers({"1": "D: https://shop.example.org/item/1 이거 참고"})
 
     assert builder.fetch_hosts == {"shop.example.org"}
+
+
+# ---- Discovery's iteration documents reach the build session ----
+#
+# After validation Discovery records the iteration in iteration-log.md and rewrites the build
+# instructions with it (prototype-validation.md Step 7 -> Step 4). Observed in a workshop
+# run: the build session had no copy of the log and nothing said an iteration was waiting,
+# so the user pasted the log into the build chat by hand.
+
+ART_DIR = f"aiplc-docs/discovery/prototypes/{SLUG}"
+INSTRUCTIONS_KEY = f"{ART_DIR}/build-instructions.md"
+ITERATION_LOG_KEY = f"{ART_DIR}/iteration-log.md"
+RESULTS_KEY = f"{ART_DIR}/validation-results.md"
+SAVED_ID = "99999999-8888-7777-6666-555555555555"
+
+
+def _completed_project(*, instructions="# 지시서 v1", handoff_sha="same"):
+    """A project whose prototype completed once. `handoff_sha` is "same" (the handoff
+    records the current instructions), a digest string, or None (a handoff from before
+    the digest existed)."""
+    import hashlib
+    s3 = FakeS3Store()
+    s3.blobs[SPEC_KEY] = "# spec"
+    s3.blobs[SESSION_KEY] = json.dumps({"session_id": SAVED_ID})
+    s3.blobs[INSTRUCTIONS_KEY] = instructions
+    handoff = {"summary": "요약", "remaining": "없음"}
+    if handoff_sha == "same":
+        handoff["instructions_sha256"] = hashlib.sha256(
+            instructions.encode("utf-8")).hexdigest()
+    elif handoff_sha is not None:
+        handoff["instructions_sha256"] = handoff_sha
+    s3.blobs[HANDOFF_KEY] = json.dumps(handoff)
+    return s3
+
+
+async def test_start_plants_the_iteration_log_and_validation_results(tmp_path):
+    s3 = _completed_project()
+    s3.blobs[ITERATION_LOG_KEY] = "# 반복 기록\n\n## 반복 1\n"
+    s3.blobs[RESULTS_KEY] = "# 검증 결과\n"
+
+    session = _session(s3, tmp_path, FakeBuilder())
+    await session.start()
+    _build_output(session)
+
+    assert (session.build_dir() / ITERATION_LOG_KEY).read_text(
+        encoding="utf-8") == "# 반복 기록\n\n## 반복 1\n"
+    assert (session.build_dir() / RESULTS_KEY).read_text(
+        encoding="utf-8") == "# 검증 결과\n"
+    prompt = session.first_prompt()
+    assert ITERATION_LOG_KEY in prompt and RESULTS_KEY in prompt
+
+
+async def test_start_removes_iteration_copies_gone_from_s3(tmp_path):
+    s3 = _completed_project()
+    session = _session(s3, tmp_path, FakeBuilder())
+    for key in (ITERATION_LOG_KEY, RESULTS_KEY):
+        stale = session.build_dir() / key
+        stale.parent.mkdir(parents=True, exist_ok=True)
+        stale.write_text("# old", encoding="utf-8")
+
+    await session.start()
+    _build_output(session)
+
+    assert not (session.build_dir() / ITERATION_LOG_KEY).exists()
+    assert not (session.build_dir() / RESULTS_KEY).exists()
+    prompt = session.first_prompt()
+    assert "iteration-log" not in prompt and "validation-results" not in prompt
+
+
+async def test_the_handoff_records_the_digest_of_the_instructions_given(tmp_path):
+    import hashlib
+    s3 = FakeS3Store()
+    s3.blobs[SPEC_KEY] = "# spec"
+    s3.blobs[INSTRUCTIONS_KEY] = "# 지시서"
+    builder = FakeBuilder()
+    session = _session(s3, tmp_path, builder)
+    await session.start()
+
+    builder.script([_complete_event(), AgentEvent(kind="done")])
+    [ev async for ev in session.send_message("go")]
+
+    saved = json.loads(s3.blobs[HANDOFF_KEY])
+    assert saved["instructions_sha256"] == hashlib.sha256(
+        "# 지시서".encode("utf-8")).hexdigest()
+
+
+async def test_rewritten_instructions_announce_a_waiting_iteration(tmp_path):
+    s3 = _completed_project(instructions="# 지시서 v2 · 반복 1", handoff_sha="0" * 64)
+    s3.blobs[ITERATION_LOG_KEY] = "# 반복 기록\n"
+
+    session = _session(s3, tmp_path, FakeBuilder())
+    await session.start()
+    _build_output(session)
+    prompt = session.first_prompt()
+
+    assert "Discovery가 지난 완료 뒤" in prompt
+    assert INSTRUCTIONS_KEY in prompt
+
+
+async def test_unchanged_instructions_announce_nothing(tmp_path):
+    s3 = _completed_project(handoff_sha="same")
+
+    session = _session(s3, tmp_path, FakeBuilder())
+    await session.start()
+    _build_output(session)
+    prompt = session.first_prompt()
+
+    assert "Discovery가 지난 완료 뒤" not in prompt
+    assert "기록이 없다" not in prompt
+
+
+async def test_a_handoff_from_before_the_digest_asks_the_agent_to_check(tmp_path):
+    """Prototypes completed before this change have no digest — unknown is not "unchanged"."""
+    s3 = _completed_project(handoff_sha=None)
+    s3.blobs[HISTORY_KEY] = "# 수정 이력\n"
+
+    session = _session(s3, tmp_path, FakeBuilder())
+    await session.start()
+    _build_output(session)
+    prompt = session.first_prompt()
+
+    assert "기록이 없다" in prompt
+    assert HISTORY_LOCAL in prompt
+
+
+async def test_a_waiting_iteration_also_reaches_a_session_that_brings_a_request(tmp_path):
+    s3 = _completed_project(instructions="# 지시서 v2", handoff_sha="0" * 64)
+
+    session = _session(s3, tmp_path, FakeBuilder())
+    await session.start()
+    _build_output(session)
+    prompt = session.first_prompt(request="반복 1 반영해줘")
+
+    assert "반복 1 반영해줘" in prompt
+    assert "Discovery가 지난 완료 뒤" in prompt

@@ -51,6 +51,85 @@ def _history_note(language: str, history_key: str | None) -> str:
             "이겨 — 여기서 빼거나 바꿨다고 한 것을 명세대로 되돌리지 마.")
 
 
+def _discovery_note(language: str, iteration_log_key: str | None,
+                    results_key: str | None) -> str:
+    """What Discovery's iteration log and validation results are. Empty string if neither is there.
+
+    Build instructions written for an iteration cite these files as their basis, and users
+    name them in the build chat ("apply iteration-log.md"). They are read-only copies:
+    Discovery owns the originals, and what the build actually changed belongs in
+    `build_complete`'s `changes` (the web appends it to the change history).
+    """
+    log, res = iteration_log_key, results_key
+    if not log and not res:
+        return ""
+    if _lang(language) == "en":
+        if log and res:
+            what = (f"`{log}` is Discovery's record of the iterations decided after "
+                    f"validation, and `{res}` holds the validation results behind them")
+        elif log:
+            what = (f"`{log}` is Discovery's record of the iterations decided after "
+                    "validation")
+        else:
+            what = f"`{res}` holds Discovery's validation results"
+        return (f" {what}. These are read-only references that Discovery maintains — "
+                "do not edit them; what you change goes into `changes` of "
+                "`build_complete`.")
+    if log and res:
+        what = (f"`{log}`는 Discovery가 검증 뒤 정한 반복(개선) 요청 기록이고, "
+                f"`{res}`는 그 근거인 검증 결과야")
+    elif log:
+        what = f"`{log}`는 Discovery가 검증 뒤 정한 반복(개선) 요청 기록이야"
+    else:
+        what = f"`{res}`는 Discovery가 정리한 검증 결과야"
+    return (f" {what}. Discovery가 관리하는 읽기 전용 참고 자료니 고치지 마 — 네가 "
+            "바꾼 것은 `build_complete`의 changes에 적으면 된다.")
+
+def _new_iteration_note(language: str, new_iteration: bool | None,
+                        instructions_key: str | None,
+                        iteration_log_key: str | None,
+                        history_key: str | None) -> str:
+    """A paragraph telling an improvement session that Discovery handed over a new iteration.
+
+    Discovery hands an iteration to the builder by rewriting the build instructions after
+    validation (`prototype-validation.md` Step 7 → Step 4). The improvement session's
+    other inputs — the previous build's summary and remaining work — predate that
+    decision, so without this paragraph the session does not know the work is waiting.
+    Observed in a workshop run: the user had to paste the iteration log into the chat.
+
+    `new_iteration` is True when the instructions changed since the last completed build,
+    None when that is not known (a handoff from before the digest was recorded), False
+    otherwise (empty string).
+    """
+    if not instructions_key or new_iteration is False:
+        return ""
+    log = iteration_log_key
+    if _lang(language) == "en":
+        basis = f" Its basis is the latest iteration in `{log}`." if log else ""
+        if new_iteration:
+            return (f"**Discovery rewrote `{instructions_key}` after the last "
+                    "completed build — it carries a new iteration that is not built "
+                    f"yet.**{basis} Applying it is this session's default work: when "
+                    "you ask what to improve, offer it as the first option; if my "
+                    "message asks for something else, do that and tell me this "
+                    "iteration is still waiting.\n\n")
+        against = f"`{history_key}`" if history_key else "the code"
+        return (f"There is no record of whether `{instructions_key}` changed after "
+                f"the last completed build.{basis} Check whether its latest iteration "
+                f"is already reflected in {against}; if not, applying it is the "
+                "waiting work — offer it as the first option when you ask.\n\n")
+    basis = f" 근거는 `{log}`의 마지막 반복이다." if log else ""
+    if new_iteration:
+        return (f"**Discovery가 지난 완료 뒤 `{instructions_key}`를 새로 써서 넘겼다 — "
+                f"아직 빌드하지 않은 새 반복 지시가 들어 있다.**{basis} 이번 세션의 기본 "
+                "작업은 이것을 반영하는 것이다. 무엇을 개선할지 물을 때는 이것을 첫 번째 "
+                "선택지로 두고, 내 메시지가 다른 일을 요청했다면 그 일을 하면서 이 반복이 "
+                "아직 남아 있다고 알려줘.\n\n")
+    against = f"`{history_key}`" if history_key else "코드"
+    return (f"`{instructions_key}`가 지난 완료 뒤 바뀌었는지는 기록이 없다.{basis} "
+            f"지시서의 마지막 반복이 {against}에 이미 반영됐는지 대조해 보고, 반영되지 "
+            "않았다면 그것이 남은 일이다 — 물을 때 첫 번째 선택지로 둬.\n\n")
+
 def change_history_header(language: str) -> str:
     """Header of the change history file — the file explains itself."""
     if _lang(language) == "en":
@@ -139,17 +218,20 @@ def _instructions_note(language: str, instructions_key: str | None) -> str:
     """What the build instructions are and which side wins. Empty string if there are none.
 
     Without this one line, the agent reads the two files with equal weight. What only the instructions hold
-    is the Step 2 design-context answers (design direction, devices), and the instructions are planted
-    so those reach the builder (proto/session.start).
+    is the Step 2 design-context answers (design direction, devices) and, after validation, the
+    iteration Discovery hands back (Step 7 → Step 4); the instructions are planted so those reach
+    the builder (proto/session.start).
     """
     if not instructions_key:
         return ""
     if _lang(language) == "en":
         return (f" `{instructions_key}` is the build instructions Discovery wrote "
-                "from the approved spec and the design-context answers; follow its "
-                "design and device requirements.")
+                "from the approved spec and the design-context answers (after "
+                "validation, Discovery rewrites it with the iteration to build); "
+                "follow its design and device requirements and its iteration.")
     return (f" `{instructions_key}`는 승인된 명세와 design-context 답변을 합친 "
-            "빌드 지시서야 — 디자인·기기 요구사항은 이 파일을 따라줘.")
+            "빌드 지시서야(검증 뒤에는 Discovery가 다음 반복 지시를 담아 다시 쓴다) — "
+            "디자인·기기 요구사항과 반복 지시는 이 파일을 따라줘.")
 
 
 def _design_question(language: str, *, basis: str) -> str:
@@ -209,6 +291,8 @@ def _design_question(language: str, *, basis: str) -> str:
 
 def plan_prompt(language: str, *, spec_key: str, proxy_path: str,
                 instructions_key: str | None = None,
+                iteration_log_key: str | None = None,
+                results_key: str | None = None,
                 request: str | None = None) -> str:
     """Opening turn of a session that starts from scratch. Only plans; does not build.
 
@@ -220,14 +304,19 @@ def plan_prompt(language: str, *, spec_key: str, proxy_path: str,
     """
     return _with_request(
         _plan_prompt_base(language, spec_key=spec_key, proxy_path=proxy_path,
-                          instructions_key=instructions_key),
+                          instructions_key=instructions_key,
+                          iteration_log_key=iteration_log_key,
+                          results_key=results_key),
         language, request)
 
 
 def _plan_prompt_base(language: str, *, spec_key: str, proxy_path: str,
-                      instructions_key: str | None) -> str:
+                      instructions_key: str | None,
+                      iteration_log_key: str | None = None,
+                      results_key: str | None = None) -> str:
     src = _sources(language, spec_key, instructions_key)
-    note = _instructions_note(language, instructions_key)
+    note = (_instructions_note(language, instructions_key)
+            + _discovery_note(language, iteration_log_key, results_key))
     if _lang(language) == "en":
         return (
             f"Read {src} and draw up a plan for building this prototype.\n"
@@ -347,6 +436,8 @@ def resume_prompt(language: str, *, request: str | None = None) -> str:
 def missing_output_prompt(language: str, *, spec_key: str,
                          instructions_key: str | None = None,
                          history_key: str | None = None,
+                         iteration_log_key: str | None = None,
+                         results_key: str | None = None,
                          request: str | None = None) -> str:
     """Opening turn after the output has disappeared — tells it to rebuild, not to search.
 
@@ -363,16 +454,21 @@ def missing_output_prompt(language: str, *, spec_key: str,
     return _with_request(
         _missing_output_prompt_base(language, spec_key=spec_key,
                                     instructions_key=instructions_key,
-                                    history_key=history_key),
+                                    history_key=history_key,
+                                    iteration_log_key=iteration_log_key,
+                                    results_key=results_key),
         language, request)
 
 
 def _missing_output_prompt_base(language: str, *, spec_key: str,
                                 instructions_key: str | None,
-                                history_key: str | None = None) -> str:
+                                history_key: str | None = None,
+                                iteration_log_key: str | None = None,
+                                results_key: str | None = None) -> str:
     src = _sources(language, spec_key, instructions_key)
     note = (_instructions_note(language, instructions_key)
-            + _history_note(language, history_key))
+            + _history_note(language, history_key)
+            + _discovery_note(language, iteration_log_key, results_key))
     if _lang(language) == "en":
         return (
             "The record of the previous build session is still here, but "
@@ -447,6 +543,9 @@ def _request_branches_en(what: str) -> str:
 def handoff_prompt(language: str, *, spec_key: str, summary: str,
                    remaining: str, instructions_key: str | None = None,
                    history_key: str | None = None,
+                   iteration_log_key: str | None = None,
+                   results_key: str | None = None,
+                   new_iteration: bool | None = False,
                    request: str | None = None) -> str:
     """Opening turn of a new session that improves a completed build.
 
@@ -471,7 +570,10 @@ def handoff_prompt(language: str, *, spec_key: str, summary: str,
     """
     src = _sources(language, spec_key, instructions_key)
     note = (_instructions_note(language, instructions_key)
-            + _history_note(language, history_key))
+            + _history_note(language, history_key)
+            + _discovery_note(language, iteration_log_key, results_key))
+    waiting = _new_iteration_note(language, new_iteration, instructions_key,
+                                  iteration_log_key, history_key)
     if request:
         if _lang(language) == "en":
             return (
@@ -479,7 +581,7 @@ def handoff_prompt(language: str, *, spec_key: str, summary: str,
                 "improvements, and this is my message:\n\n"
                 f"{request}\n\n"
                 f"Summary of the previous build:\n{summary}\n\n"
-                f"Recorded as remaining work:\n{remaining}\n\n"
+                f"Recorded as remaining work:\n{remaining}\n\n{waiting}"
                 "1. First look at `prototype/` in the working directory to see where "
                 f"things stand. Re-read {src} if you need to.{note}\n"
                 "2. Then:\n"
@@ -489,7 +591,7 @@ def handoff_prompt(language: str, *, spec_key: str, summary: str,
             "내 메시지는 이것이다:\n\n"
             f"{request}\n\n"
             f"이전 빌드 요약:\n{summary}\n\n"
-            f"남은 작업으로 기록된 것:\n{remaining}\n\n"
+            f"남은 작업으로 기록된 것:\n{remaining}\n\n{waiting}"
             f"1. 먼저 작업 디렉토리의 `prototype/`을 살펴보고 현재 상태를 파악해줘. "
             f"필요하면 {src}도 다시 읽어줘.{note}\n"
             "2. 그다음:\n"
@@ -499,7 +601,7 @@ def handoff_prompt(language: str, *, spec_key: str, summary: str,
             "This prototype has already been built once. This session is for "
             "improvements.\n\n"
             f"Summary of the previous build:\n{summary}\n\n"
-            f"Recorded as remaining work:\n{remaining}\n\n"
+            f"Recorded as remaining work:\n{remaining}\n\n{waiting}"
             "**Do not modify anything yet.**\n"
             "1. First look at `prototype/` in the working directory to see where "
             f"things stand. Re-read {src} if you need to.{note}\n"
@@ -513,7 +615,7 @@ def handoff_prompt(language: str, *, spec_key: str, summary: str,
         "이 프로토타입은 이미 한 번 빌드가 완료됐다. 이번 세션은 개선 "
         "작업이다.\n\n"
         f"이전 빌드 요약:\n{summary}\n\n"
-        f"남은 작업으로 기록된 것:\n{remaining}\n\n"
+        f"남은 작업으로 기록된 것:\n{remaining}\n\n{waiting}"
         "**아직 아무것도 수정하지 마.**\n"
         f"1. 먼저 작업 디렉토리의 `prototype/`을 살펴보고 현재 상태를 파악해줘. "
         f"필요하면 {src}도 다시 읽어줘.{note}\n"
