@@ -100,6 +100,7 @@ export function PrototypeCard({
     running: "proto.hostStarting",
   };
   const phaseKey = startingPhase ? PHASE_KEYS[startingPhase] : undefined;
+  const hostFailed = info.state === "built" && info.host_failed && !phaseKey;
 
   return (
     <div className="w-full rounded-xl border border-slate-200 bg-white px-4 py-3 flex items-center gap-3">
@@ -128,6 +129,14 @@ export function PrototypeCard({
           >
             {phaseKey ? t(phaseKey) : badgeLabel}
           </span>
+          {/* The last hosting start failed. The card still reads `built` (the build is there), and
+              `built` alone said nothing — the user saw "호스팅 시작 실패" (hosting failed to start)
+              once, and after a reload not even that. */}
+          {hostFailed && (
+            <span className="text-[11px] px-2 py-0.5 rounded-full shrink-0 bg-rose-50 text-rose-700">
+              {t("proto.hostFailed")}
+            </span>
+          )}
           {/* Survey status. **Attached only when `state !== "none"`** — at a stage with nothing
               to build yet, "no survey" reads like a to-do and becomes noise.
 
@@ -192,6 +201,19 @@ export function PrototypeCard({
                 </button>
                 <BuildButton info={info} busy={busy} onBuild={onBuild} />
               </>
+            )}
+            {/* After a failed start: the log says why, and stop ends whatever that start left
+                running (a server that came up on the wrong port, say) — both were reachable only
+                from a running card. */}
+            {hostFailed && onShowLogs && (
+              <button type="button" className={SECONDARY_BTN} disabled={busy} onClick={onShowLogs}>
+                {t("proto.logs")}
+              </button>
+            )}
+            {hostFailed && !readOnly && (
+              <button type="button" className={SECONDARY_BTN} disabled={busy} onClick={onStopHost}>
+                {t("proto.stopHosting")}
+              </button>
             )}
             {archiveUrl && <ArchiveLink href={archiveUrl} />}
           </>

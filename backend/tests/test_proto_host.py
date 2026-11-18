@@ -799,3 +799,67 @@ def test_sweep_finds_pid_files_where_hosting_actually_writes_them(root):
     assert host.sweep_orphans() == 1
     assert not (served / ".proto-host.pid").exists()
     assert host.previously_running() == []
+
+
+# ---- what a failed start leaves behind ----
+
+def _seed_server(root: Path, server_js: str, scripts: dict | None = None) -> Path:
+    import json
+    target = root / PID / SLUG
+    target.mkdir(parents=True, exist_ok=True)
+    (target / "package.json").write_text(
+        json.dumps({"name": "s", "scripts": scripts or {"start": "node server.js"}}),
+        encoding="utf-8")
+    (target / "server.js").write_text(server_js, encoding="utf-8")
+    return target
+
+
+def _port_free(port: int) -> bool:
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        sock.bind(("127.0.0.1", port))
+        return True
+    except OSError:
+        return False
+    finally:
+        sock.close()
+
+
+async def test_a_server_that_ignores_its_port_is_ended_and_the_log_says_why(root, monkeypatch):
+    """A server listening on a port of its own choosing never answered on the one it was given:
+    the start failed with nothing in the log to say so, and the server ran on holding its port —
+    one the next prototype could be handed."""
+    import aipds.proto.host as host_module
+    monkeypatch.setattr(host_module, "_READY_TIMEOUT", 2.0)
+    own = 4089
+    _seed_server(root, f"require('http').createServer((q, r) => r.end('x')).listen({own});")
+    host = ProtoHost(root=root, port_range=range(4081, 4089))
+
+    info = await host.start(PID, SLUG)
+
+    assert info.state == "failed"
+    assert "[AI-PDS] hosting start" in info.log_tail
+    assert f"starting the server: npm run start on port {info.port}" in info.log_tail
+    assert f"nothing answered on port {info.port} within 2s" in info.log_tail
+    assert host._reserved == set()
+    for _ in range(50):          # the group was signaled; give it a moment to let go
+        if _port_free(own):
+            break
+        await asyncio.sleep(0.1)
+    assert _port_free(own), "the failed start left its server running"
+
+
+async def test_a_server_that_exits_says_so_in_the_log(root):
+    _seed_server(root, "process.exit(3);")
+    host = ProtoHost(root=root, port_range=range(4091, 4099))
+    info = await host.start(PID, SLUG)
+    assert info.state == "failed"
+    assert "the server exited with code" in info.log_tail
+
+
+async def test_a_failed_build_says_which_step_failed(root):
+    _seed_server(root, "", scripts={"build": "node -e process.exit(2)", "start": "node server.js"})
+    host = ProtoHost(root=root, port_range=range(4101, 4109))
+    info = await host.start(PID, SLUG)
+    assert info.state == "failed"
+    assert "[AI-PDS] failed: npm run build exited with code 2" in info.log_tail

@@ -33,7 +33,8 @@ from aipds.proto.reset_evidence import snapshot_before_reset
 from aipds.proto.session import has_build_output, purge_session_state
 from aipds.proto.history import load_context, load_history, record_opening
 from aipds.turn_job import TurnBusy, subscribe
-from aipds.proto.hosting import host_prototype, prototype_store, stop_prototype
+from aipds.proto.hosting import (HostStarting, host_prototype, prototype_store,
+                                  stop_prototype)
 from aipds.proto.store import PrototypeStore
 from aipds.proto.source import newest_source_mtime, source_entries
 # The module that owns the token-gate route also assembles its path -- rewriting
@@ -377,6 +378,11 @@ async def list_prototypes(pid: str):
                     "session_open": session_open,
                     "preview_stale": preview_stale,
                     "access_url": access_url,
+                    # The last hosting attempt failed. `state` cannot carry it: a failed start
+                    # still has its build, so the card reads `built` -- and `built` had no log
+                    # button, so a failed start showed only "호스팅 시작 실패" (hosting failed
+                    # to start) with no way to see why.
+                    "host_failed": host_info is not None and host_info.state == "failed",
                     "response_count": survey.responses,
                     "has_survey": survey.exists,
                     # Whether Discovery has written a `spec-as-built.md` for this build. The
@@ -899,6 +905,8 @@ async def start_host(pid: str, slug: str):
         raise HTTPException(status_code=404, detail="prototype bundle not found")
     except LauncherUnavailable:
         raise HTTPException(status_code=503, detail=ec.SANDBOX_UNAVAILABLE)
+    except HostStarting:
+        raise HTTPException(status_code=409, detail=ec.HOST_STARTING)
     if info.state == "failed" or token is None:
         raise HTTPException(status_code=502, detail=info.log_tail)
     return {"state": info.state, "port": info.port, "log_tail": info.log_tail,

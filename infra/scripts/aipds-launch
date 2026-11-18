@@ -294,12 +294,34 @@ def build_run(kind: str, project_id: str, slug: str | None, args: list[str],
     return argv, env
 
 
-def build_stop(kind: str, project_id: str, slug: str) -> list[str]:
+def build_stop(kind: str, project_id: str, slug: str) -> list[list[str]]:
+    """Commands that leave the unit name free: stop it, then drop a failed record.
+
+    `--collect` unloads a unit once it ends, but a unit that is still running keeps its name, and
+    systemd-run then refuses a new one with "Unit … was already loaded or has a fragment file"
+    (measured in operation: every re-host of one prototype failed this way for half an hour, its
+    server still running from an earlier start the backend had lost track of). `reset-failed`
+    covers a record left behind anyway.
+    """
     if kind not in DETERMINISTIC:
         raise LaunchError(f"stop is only for {sorted(DETERMINISTIC)}")
     check_segment(project_id, "project id")
     check_segment(slug, "slug")
-    return [SYSTEMCTL, "stop", unit_name(kind, project_id, slug)]
+    unit = unit_name(kind, project_id, slug)
+    return [[SYSTEMCTL, "stop", unit], [SYSTEMCTL, "reset-failed", unit]]
+
+
+#: `systemctl stop` of a unit that does not exist ("not loaded"). Nothing to stop is success here.
+_NOT_LOADED = 5
+
+
+def clear_unit(kind: str, project_id: str, slug: str) -> int:
+    stop, reset = build_stop(kind, project_id, slug)
+    rc = subprocess.run(stop, check=False, stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL).returncode
+    # No record to reset is the normal case — its exit code says nothing about the name.
+    subprocess.run(reset, check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    return 0 if rc in (0, _NOT_LOADED) else rc
 
 
 def check_report() -> dict:
@@ -335,10 +357,13 @@ def main(argv: list[str]) -> int:
             slug = head[2] if len(head) == 3 else None
             run_argv, env = build_run(kind, project_id, slug, args,
                                       dict(os.environ), read_conf())
+            if kind in DETERMINISTIC:
+                # The name is fixed per prototype, so whatever still holds it is an earlier run of
+                # this same prototype — replacing it is what the caller asked for.
+                clear_unit(kind, project_id, slug)
             os.execve(SYSTEMD_RUN, run_argv, env)
         if len(argv) == 4 and argv[0] == "stop":
-            return subprocess.run(build_stop(argv[1], argv[2], argv[3]),
-                                  check=False).returncode
+            return clear_unit(argv[1], argv[2], argv[3])
         if argv == ["sweep"]:
             # When the backend restarts, the systemd-run client dies with it, but the unit remains.
             return subprocess.run([SYSTEMCTL, "stop", f"{UNIT_PREFIX}*.service"],

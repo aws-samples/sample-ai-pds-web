@@ -193,7 +193,8 @@ export const ko = {
   "admin.designOriginNone": "이 문서에서 토큰을 찾지 못했습니다. 그대로 저장하면 산문만 전달되고 화면의 색·서체는 shadcn 기본값으로 남습니다.",
   "admin.designNoTokens": "토큰이 없어 색·서체가 화면에 반영되지 않습니다 — 산문만 전달됩니다. 색 값이 적힌 DESIGN.md를 다시 올리면 반영됩니다.",
   // 프로토타입 탭
-  "proto.hostStartFailed": "호스팅을 시작하지 못했습니다. 다시 시도해 주세요.",
+  "proto.hostStartFailed": "호스팅을 시작하지 못했습니다. 로그에서 원인을 확인한 뒤 다시 시도해 주세요.",
+  "proto.hostFailed": "호스팅 실패",
   "proto.hostStopFailed": "호스팅을 중지하지 못했습니다. 다시 시도해 주세요.",
   "proto.improveStartFailed": "개선 세션을 시작하지 못했습니다. 다시 시도해 주세요.",
   "proto.done": "완료",
@@ -619,6 +620,7 @@ export const ko = {
   "err.languageUnsupported": "지원하지 않는 언어입니다.",
   "err.buildSlotsBusy": "다른 팀이 프로토타입을 빌드하고 있습니다 — 잠시 후 다시 시도해 주세요.",
   "err.buildSessionActive": "빌드 세션이 아직 열려 있습니다. 빌드 패널에서 “완료”를 눌러 세션을 닫은 뒤 다시 시도해 주세요(패널은 카드의 “세션 열기”로 엽니다).",
+  "err.hostStarting": "이 프로토타입의 호스팅이 이미 시작되는 중입니다. 끝날 때까지 기다려 주세요.",
   "err.sandboxUnavailable": "프로토타입 실행 환경(샌드박스)을 쓸 수 없어 호스팅을 시작하지 않았습니다 — 운영자에게 알려 주세요.",
   "err.initIncomplete": "초기화가 완료되지 않았습니다 — 다시 시도해 주세요.",
   "err.surveyClosed": "이 설문은 마감되었습니다.",

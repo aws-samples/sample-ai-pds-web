@@ -137,6 +137,13 @@ export default function PrototypesPage({ params }: { params: Promise<{ projectId
       await startHost(projectId, slug);
     } catch (err) {
       setHostError({ slug, message: hostErrorText(err, "proto.hostStartFailed") });
+      // A 502's detail is the tail of the host log (start_host). It used to be dropped for the
+      // generic sentence above, so the reason a start failed was never on screen — open it.
+      if (err instanceof ApiError && err.status === 502) {
+        setLogsSlug(slug);
+        setLogsError(null);
+        setLogsText(err.detail);
+      }
     } finally {
       clearInterval(poll);
       setHostPhase(null);

@@ -42,6 +42,8 @@ export function BuildPanel({
   const [submittingAnswers, setSubmittingAnswers] = useState(false);
   const [hosting, setHosting] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
+  /** The host log a failed start returned (502 detail) — the reason, shown under the error. */
+  const [hostLog, setHostLog] = useState<string | null>(null);
   const [restarting, setRestarting] = useState(false);
   const completeCardRef = useRef<HTMLDivElement | null>(null);
   const completed = buildComplete !== null;
@@ -103,6 +105,7 @@ export function BuildPanel({
   async function handleStartHost() {
     setHosting(true);
     setActionError(null);
+    setHostLog(null);
     try {
       await startHost(projectId, slug);
       onClose();
@@ -113,6 +116,7 @@ export function BuildPanel({
         err instanceof ApiError
           ? knownErrorMessage(t, err.detail, t("proto.hostStartFailed"))
           : t("proto.hostStartFailed"));
+      if (err instanceof ApiError && err.status === 502) setHostLog(err.detail);
     } finally {
       setHosting(false);
     }
@@ -273,6 +277,14 @@ export function BuildPanel({
                 </div>
                 {actionError && (
                   <p className="mt-3 text-sm text-rose-600">{actionError}</p>
+                )}
+                {hostLog && (
+                  <details className="mt-2" open>
+                    <summary className="text-xs text-slate-500 cursor-pointer">{t("proto.logs")}</summary>
+                    <pre className="mt-1 max-h-64 overflow-y-auto text-xs bg-slate-50 border border-slate-200 rounded-lg p-3 whitespace-pre-wrap break-all">
+                      {hostLog}
+                    </pre>
+                  </details>
                 )}
                 {/* build_complete arrives before done, so even after the card appears,
                     streaming can stay true during the 0-5 second window (the backend grace

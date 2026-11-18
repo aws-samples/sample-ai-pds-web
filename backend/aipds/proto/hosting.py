@@ -18,6 +18,21 @@ from aipds.proto.store import PrototypeStore
 
 _log = logging.getLogger(__name__)
 
+#: (pid, slug) whose hosting procedure is under way. One event loop runs every start, so a set
+#: is enough — no await sits between the check and the add.
+_starting: set[tuple[str, str]] = set()
+
+
+class HostStarting(RuntimeError):
+    """Hosting for this prototype is already starting. The route answers 409.
+
+    **Why refuse rather than queue.** Two starts of one prototype overlapped in operation (a
+    second press while the first was still building), and the second, finding no server yet,
+    stopped nothing and overwrote the first's entry. The first's server came up untracked,
+    kept the unit name, and every later start failed with "unit already loaded". The first
+    start is already doing what the second asks for.
+    """
+
 
 async def restore_local(pid: str, slug: str, build_dir, store: PrototypeStore) -> None:
     """Restore from the source of truth what is not present locally — build output and access tokens.
@@ -49,6 +64,17 @@ async def host_prototype(pid: str, slug: str) -> tuple[HostInfo, str | None]:
 
     If there is no build tree, `FileNotFoundError` (the route maps it to a 404).
     """
+    key = (pid, slug)
+    if key in _starting:
+        raise HostStarting(f"{pid}/{slug}")
+    _starting.add(key)
+    try:
+        return await _host_prototype(pid, slug)
+    finally:
+        _starting.discard(key)
+
+
+async def _host_prototype(pid: str, slug: str) -> tuple[HostInfo, str | None]:
     import aipds.app as app_module
     from aipds.routes.proto_public import public_base_path
 
@@ -188,6 +214,9 @@ async def rehost_desired() -> int:
                 continue
             try:
                 info, _ = await host_prototype(pid, slug)
+            except HostStarting:
+                # The user started it themselves while this loop was on its way there.
+                continue
             except FileNotFoundError:
                 # There is no source to restore — no reason to keep the desired state.
                 _log.warning("no source to re-host %s/%s; clearing desired state",

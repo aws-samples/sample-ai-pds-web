@@ -72,6 +72,10 @@ LANGUAGE_UNSUPPORTED = "language_unsupported"
 # Prototypes (routes/prototypes.py)
 BUILD_SLOTS_BUSY = "build_slots_busy"
 BUILD_SESSION_ACTIVE = "build_session_active"
+# Hosting for this prototype is already starting (proto/hosting.host_prototype). Two starts of
+# one prototype overlapped once, and the second lost track of the first one's server unit --
+# every later start then failed on "unit already loaded" until a backend restart.
+HOST_STARTING = "host_starting"
 # The sandbox wrapper is on but unusable (aipds/launcher.py) -- an operator must fix it.
 SANDBOX_UNAVAILABLE = "sandbox_unavailable"
 # For a failed reset, diagnosis needs to know what failed. It is sent appended

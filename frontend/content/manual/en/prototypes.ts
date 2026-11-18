@@ -28,7 +28,11 @@ The colours and typeface come from whatever the administrator uploaded under
 | Building | It is being built right now | **Open session** to watch |
 | Built | It exists but is not running | **Start hosting** · **Modify** |
 | Running | The preview is live | **Open preview** · **Copy link** · **Modify** |
-| Failed | The build did not finish | Check **Logs**, then **Continue** |`,
+| Failed | The build did not finish | Check **Logs**, then **Continue** |
+
+A **Built** card that also shows *Hosting failed* means the last **Start hosting** failed. Check
+**Logs** for the cause, then press **Start hosting** again. **Stop hosting** cleans up anything the
+failed start may have left behind. When a start fails, the log opens on its own.`,
     },
     {
       kind: "md",

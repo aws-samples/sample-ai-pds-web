@@ -27,6 +27,9 @@ from aipds.pathsafe import read_text_beneath, reject_unsafe_segment, stat_beneat
 if TYPE_CHECKING:
     from aipds.launcher import Launcher
 
+#: How long a started server has to answer on its port.
+_READY_TIMEOUT = 60.0
+
 HostState = Literal["installing", "building", "running", "failed", "stopped"]
 
 #: Hosting bookkeeping (access token, log, pid) lives in the **state tree**, not the build
@@ -98,6 +101,24 @@ class _HostEntry:
 
 #: Unit for reading the tail. One block usually holds 100 lines of npm output.
 _TAIL_BLOCK = 64 * 1024
+
+
+#: Prefix of the lines hosting itself writes into the host log, to tell them from npm's output.
+_NOTE = "[AI-PDS]"
+
+
+def _note(path: Path, text: str) -> None:
+    """Append one line of hosting's own to the host log.
+
+    The log is what the user sees when hosting fails, and npm's output alone did not say why:
+    a server that never answered on its port left no line at all, and the log ran on from one
+    attempt into the next with nothing between them.
+    """
+    try:
+        with open(path, "a", encoding="utf-8") as fh:
+            fh.write(f"\n{_NOTE} {text}\n")
+    except OSError:
+        pass  # a diagnostic line must never be what fails a start
 
 
 def _tail_text(path: Path, lines: int) -> str:
@@ -490,6 +511,7 @@ class ProtoHost:
         log_path = self._state_dir(pid, slug) / _STATE_LOG
         log_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
         log_path.touch()
+        _note(log_path, f"hosting start {time.strftime('%Y-%m-%d %H:%M:%S %Z')}")
 
         entry = _HostEntry(dir=target_dir, log_path=log_path, state="installing")
         self._registry[(pid, slug)] = entry
@@ -511,6 +533,7 @@ class ProtoHost:
 
         rc = await self._npm_install(pid, slug, target_dir, log_path, base_env)
         if rc != 0:
+            _note(log_path, f"failed: npm install exited with code {rc}")
             entry.state = "failed"
             return self._info(entry)
 
@@ -529,6 +552,7 @@ class ProtoHost:
             entry.state = "building"
             rc = await self._npm_run_build(pid, slug, target_dir, log_path, base_env)
             if rc != 0:
+                _note(log_path, f"failed: npm run build exited with code {rc}")
                 entry.state = "failed"
                 return self._info(entry)
 
@@ -538,6 +562,7 @@ class ProtoHost:
         # here too -- otherwise the server would route at "/" while the built
         # assets expect the prefix.
         env = self._env("proto", pid, slug, {**base_env, "PORT": str(port)})
+        _note(log_path, f"starting the server: npm run {start_script} on port {port}")
 
         log_fh = open(log_path, "ab")
         try:
@@ -560,7 +585,7 @@ class ProtoHost:
                     "npm", "run", start_script, cwd=str(target_dir), env=env,
                     stdout=log_fh, stderr=log_fh, start_new_session=True,
                 )
-        except Exception:
+        except Exception as exc:
             # The spawn itself failed (e.g. npm missing from PATH, EMFILE) --
             # entry.port never gets assigned on this path, so stop() (whose
             # release is gated on entry.port is not None) could never reclaim
@@ -568,6 +593,7 @@ class ProtoHost:
             # leaving it held for the lifetime of this ProtoHost.
             self._reserved.discard(port)
             entry.state = "failed"
+            _note(log_path, f"failed: the server could not be launched: {exc!r}")
             raise
         finally:
             log_fh.close()
@@ -577,7 +603,20 @@ class ProtoHost:
         entry.launched = self._launcher is not None
         self._write_state(self._state_dir(pid, slug) / _STATE_PID, str(proc.pid))
 
-        if not await self._wait_for_port(proc, port, timeout=60.0):
+        if not await self._wait_for_port(proc, port, timeout=_READY_TIMEOUT):
+            if proc.returncode is not None:
+                _note(log_path, f"failed: the server exited with code {proc.returncode} "
+                                f"before port {port} answered")
+            else:
+                _note(log_path, f"failed: nothing answered on port {port} within "
+                                f"{_READY_TIMEOUT:.0f}s — the app must listen on the PORT "
+                                "it is given")
+            # A server left running after a failed start serves nothing (the proxy needs
+            # `running`), still holds whatever port it did bind -- one another prototype may be
+            # handed next -- and under the wrapper keeps the unit name, so the next start of this
+            # prototype is refused. End it here.
+            await self._end_process(pid, slug, entry)
+            self._reserved.discard(port)
             entry.state = "failed"
             return self._info(entry)
 
@@ -586,17 +625,37 @@ class ProtoHost:
 
     async def stop(self, pid: str, slug: str) -> None:
         entry = self._registry.get((pid, slug))
+        if self._launcher is not None:
+            # By name, **whatever this process remembers**. The server under the wrapper is a
+            # systemd unit, not our child, and what we hold is only its client — so "is the
+            # client alive" said nothing about the unit. Gating on it once left a prototype
+            # stuck (measured in operation): two starts overlapped, the second overwrote the
+            # first's entry, and the first's server ran on untracked. Every later start then
+            # found a dead client, skipped this, and systemd-run refused the still-taken unit
+            # name ("already loaded") until a backend restart swept it. Stopping a unit that
+            # does not exist is a no-op in the wrapper.
+            await self._launcher.stop("proto", pid, slug)
         if entry is None:
-            return  # unknown (pid, slug) -- idempotent no-op
+            return  # nothing remembered -- idempotent no-op
+        await self._end_process(pid, slug, entry, unit_stopped=self._launcher is not None)
+        if entry.port is not None:
+            self._reserved.discard(entry.port)
+        (self._state_dir(pid, slug) / _STATE_PID).unlink(missing_ok=True)
+        entry.proc = None
+        entry.state = "stopped"
+
+    async def _end_process(self, pid: str, slug: str, entry: "_HostEntry", *,
+                           unit_stopped: bool = False) -> None:
+        """End the server process of `entry` and wait for it.
+
+        Under the wrapper the unit is stopped by name (unless the caller already did — `stop`)
+        and the client, which ends with it, is reaped. Without the wrapper the process group is
+        signaled.
+        """
         proc = entry.proc
         if proc is not None and proc.returncode is None and entry.launched:
-            # The server under the wrapper is not our child (it is a systemd unit).
-            # Signaling the client
-            # kills only the client and the server stays holding the port (measured) —
-            # stopping the
-            # unit also ends the client. If it does not end, the path below at least reaps
-            # the client.
-            await self._launcher.stop("proto", pid, slug)
+            if not unit_stopped:
+                await self._launcher.stop("proto", pid, slug)
             try:
                 await asyncio.wait_for(proc.wait(), timeout=15.0)
             except asyncio.TimeoutError:
@@ -617,11 +676,6 @@ class ProtoHost:
                 except (ProcessLookupError, PermissionError):
                     proc.kill()
                 await proc.wait()
-        if entry.port is not None:
-            self._reserved.discard(entry.port)
-        (self._state_dir(pid, slug) / _STATE_PID).unlink(missing_ok=True)
-        entry.proc = None
-        entry.state = "stopped"
 
     async def purge(self, pid: str, slug: str) -> None:
         """Stop this prototype and delete its local build tree.

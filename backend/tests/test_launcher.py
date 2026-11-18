@@ -322,7 +322,8 @@ async def test_hosting_goes_through_the_launcher(tmp_path, monkeypatch):
         assert agent_home.proto("p1", "todo").home.is_dir()
     finally:
         await host.stop("p1", "todo")
-    assert fake.stopped == [("proto", "p1", "todo")]
+    # Once when the start clears whatever held the name, once for the stop itself.
+    assert fake.stopped == [("proto", "p1", "todo")] * 2
     assert host.status("p1", "todo").state == "stopped"
 
 
@@ -367,6 +368,7 @@ async def test_hosting_hands_the_wrapper_exactly_this_argv(tmp_path, monkeypatch
         await host.stop("p1", "todo")
     prefix = ["sudo", "-n", launcher.LAUNCH]
     assert argvs == [
+        prefix + ["stop", "proto", "p1", "todo"],
         prefix + ["run", "host-build", "p1", "todo", "--", "install"],
         prefix + ["run", "host-build", "p1", "todo", "--", "run", "build"],
         prefix + ["run", "proto", "p1", "todo", "--", "run", "start"],
@@ -398,6 +400,34 @@ async def test_hosting_is_refused_before_touching_what_runs(tmp_path):
     with pytest.raises(launcher.LauncherUnavailable):
         await host.start("p1", "todo", cwd=served)
     assert fake.stopped == [] and fake.argvs == []
+
+
+async def test_stop_clears_the_unit_even_when_the_client_is_gone(tmp_path):
+    """The stuck state measured in operation: the entry's systemd-run client had exited (its
+    start was refused with "unit already loaded"), so `stop` -- which stopped the unit only
+    while the client lived -- skipped it on every retry, and the server from an earlier start
+    kept the unit name until a backend restart."""
+    from aipds.proto.host import ProtoHost, _HostEntry
+
+    fake = FakeLauncher()
+    host = ProtoHost(root=tmp_path / "protos", launcher=fake)
+    dead = await asyncio.create_subprocess_exec("true")
+    await dead.wait()
+    host._registry[("p1", "todo")] = _HostEntry(
+        dir=tmp_path, log_path=tmp_path / "log", state="failed", proc=dead, launched=True)
+    await host.stop("p1", "todo")
+    assert fake.stopped == [("proto", "p1", "todo")]
+
+
+async def test_stop_clears_the_unit_of_a_prototype_it_does_not_remember(tmp_path):
+    """Two starts overlapped and the second overwrote the first's entry, so the running server
+    was nowhere in the registry. Stopping by name does not depend on the registry."""
+    from aipds.proto.host import ProtoHost
+
+    fake = FakeLauncher()
+    host = ProtoHost(root=tmp_path / "protos", launcher=fake)
+    await host.stop("p1", "never-seen")
+    assert fake.stopped == [("proto", "p1", "never-seen")]
 
 
 def test_sweep_goes_through_the_launcher(tmp_path):
