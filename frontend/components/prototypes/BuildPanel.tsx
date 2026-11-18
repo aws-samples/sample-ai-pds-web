@@ -22,6 +22,7 @@ export function BuildPanel({
   slug,
   onClose,
   autoStart = false,
+  readOnly = false,
 }: {
   projectId: string;
   slug: string;
@@ -31,13 +32,17 @@ export function BuildPanel({
   // reopen of an already-live session must NOT re-fire it (the harness would
   // otherwise receive a second "turn already in progress" style conflict).
   autoStart?: boolean;
+  /** A read-only member watching the owner's build (viewer role). The panel opens without a
+   *  session of its own, follows the owner's turns (usePrototypeStream's `follow`), and offers no
+   *  input, answers, or session actions — those are writes, which the backend refuses anyway. */
+  readOnly?: boolean;
 }) {
   const t = useT();
   const {
     items, streaming, agents, pendingQuestions, buildComplete, changedPaths,
     historyLoading, context, startBuild, restoreHistory, send, submitAnswers, interrupt,
     restartForImprovement, resume,
-  } = usePrototypeStream(projectId, slug);
+  } = usePrototypeStream(projectId, slug, { follow: readOnly });
   const [closing, setClosing] = useState(false);
   const [submittingAnswers, setSubmittingAnswers] = useState(false);
   const [hosting, setHosting] = useState(false);
@@ -52,7 +57,7 @@ export function BuildPanel({
     // session's conversation and attaches to the running turn — not being able to see a stalled turn
     // in an empty panel is the reason for this branch. Either way, the conversations of past sessions
     // are laid out before it (resume lays them out itself).
-    if (autoStart) {
+    if (autoStart && !readOnly) {
       startBuild();
       void restoreHistory();
     } else void resume();
@@ -82,6 +87,11 @@ export function BuildPanel({
   }
 
   async function handleDone() {
+    // Watching closes only this screen — the session is the owner's.
+    if (readOnly) {
+      onClose();
+      return;
+    }
     setClosing(true);
     try {
       await closeSession(projectId, slug);
@@ -154,7 +164,7 @@ export function BuildPanel({
               disabled={closing}
               className="px-3.5 py-2 rounded-lg bg-violet-600 hover:bg-violet-700 disabled:opacity-50 text-white text-sm font-medium"
             >
-              {t("proto.done")}
+              {t(readOnly ? "proto.close" : "proto.done")}
             </button>
           </div>
         </header>
@@ -179,8 +189,14 @@ export function BuildPanel({
                 a moment with nothing on screen, so say what to do. */}
             {items.length === 0 && !streaming && !historyLoading && (
               <div className="shrink-0 px-4 md:px-8 pb-2 text-center">
-                <p className="text-sm text-slate-500">{t("proto.modifyPrompt")}</p>
-                <p className="mt-1 text-xs text-slate-400">{t("proto.modifyExample")}</p>
+                {readOnly ? (
+                  <p className="text-sm text-slate-500">{t("proto.watchEmpty")}</p>
+                ) : (
+                  <>
+                    <p className="text-sm text-slate-500">{t("proto.modifyPrompt")}</p>
+                    <p className="mt-1 text-xs text-slate-400">{t("proto.modifyExample")}</p>
+                  </>
+                )}
               </div>
             )}
             {/* After the completion declaration this session closes shortly (5-second grace) or is
@@ -189,7 +205,7 @@ export function BuildPanel({
                 onError would show "연결이 끊어졌습니다" (Connection lost) (when in fact the build has
                 simply finished). Block input and instead point to the buttons on
                 the completion card on the right. */}
-            {buildComplete !== null && (
+            {buildComplete !== null && !readOnly && (
               <p className="shrink-0 px-4 md:px-8 pt-2 text-xs text-slate-400 text-center">
                 {t("proto.sessionClosedNotice")}
               </p>
@@ -202,13 +218,19 @@ export function BuildPanel({
                 flickered among three agents and none of them read as progress
                 (lib/protoAgents.ts header). */}
             {live && <LiveActivityBar activity={live} agents={agents} />}
-            <ChatInput
-              onSend={send}
-              disabled={streaming || buildComplete !== null}
-              onInterrupt={() => void interrupt()}
-              interrupting={streaming}
-              context={context}
-            />
+            {readOnly ? (
+              <p className="mx-4 md:mx-8 mb-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+                {t("readOnly.buildChat")}
+              </p>
+            ) : (
+              <ChatInput
+                onSend={send}
+                disabled={streaming || buildComplete !== null}
+                onInterrupt={() => void interrupt()}
+                interrupting={streaming}
+                context={context}
+              />
+            )}
           </div>
 
           {/* basis-1/2 — must sum to exactly 100% with the chat. The old 2/3 was a leftover
@@ -223,6 +245,7 @@ export function BuildPanel({
                   file={pendingQuestions.questions}
                   onSubmit={handleSubmitAnswers}
                   submitting={submittingAnswers}
+                  readOnly={readOnly}
                 />
               </div>
             )}
@@ -284,11 +307,12 @@ export function BuildPanel({
                     new action get tangled (a real case: a race where session A's stream was
                     not cleaned up while continuing the improvement opened session B
                     anew) — all three buttons are blocked while streaming. */}
-                {streaming && (
+                {streaming && !readOnly && (
                   <p className="mt-3 text-xs text-slate-400">
                     {t("proto.finishingBuild")}
                   </p>
                 )}
+                {!readOnly && (
                 <div className="mt-3 flex flex-wrap items-center gap-2">
                   <button
                     type="button"
@@ -315,6 +339,7 @@ export function BuildPanel({
                     {t("proto.close")}
                   </button>
                 </div>
+                )}
               </div>
             )}
           </aside>

@@ -330,6 +330,11 @@ export default function PrototypesPage({ params }: { params: Promise<{ projectId
                   setSurveySlug((cur) => (cur === info.slug ? null : info.slug))
                 }
                 onReset={handleReset}
+                // Watching opens no session (that is a write) — the panel only reads.
+                onWatch={() => {
+                  setOpenAutoStart(false);
+                  setOpenSlug(info.slug);
+                }}
                 archiveUrl={prototypeArchiveUrl(projectId, info.slug)}
                 shareUrl={info.access_url
                   ? absoluteShareUrl(info.access_url) : undefined}
@@ -351,7 +356,8 @@ export default function PrototypesPage({ params }: { params: Promise<{ projectId
       </main>
 
       {openSlug && (
-        <BuildPanel projectId={projectId} slug={openSlug} autoStart={openAutoStart} onClose={closeBuildPanel} />
+        <BuildPanel projectId={projectId} slug={openSlug} autoStart={openAutoStart}
+                    readOnly={readOnly} onClose={closeBuildPanel} />
       )}
 
       {logsSlug && (
