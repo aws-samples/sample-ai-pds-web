@@ -70,6 +70,12 @@ feature you had taken out does not come back. When the Discovery conversation de
 validation, it applies that history to the approved spec as \`spec-as-built.md\` — the approved spec
 itself stays as it was — and asks you to approve it before carrying on.
 
+When Discovery decides to **iterate** after validation, it rewrites the build instructions
+(\`build-instructions.md\`) with that iteration and records it in \`iteration-log.md\`. A session opened
+with **Modify** gets both, along with the validation results behind them (\`validation-results.md\`),
+and if the instructions changed since the last finished build the AI offers that iteration as the work
+to do first. There is no need to paste the iteration log into the chat.
+
 The **values the builder decided** where the spec was silent are kept apart too — input fields,
 default deadlines, option lists, eligibility rules. Every finished build has to list them, one per
 line (or *none*), and they go into that entry of \`change-history.md\` as a *Builder decisions (not
