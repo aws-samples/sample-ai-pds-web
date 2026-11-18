@@ -15,7 +15,7 @@ import {
 } from "@/lib/api/prototypes";
 import { ApiError } from "@/lib/api/client";
 import type { StreamHandlers, TurnCreated } from "@/lib/api/sse";
-import { RECONNECT_DELAYS_MS } from "@/lib/useWorkspaceStream";
+import { FOLLOW_POLL_MS, RECONNECT_DELAYS_MS } from "@/lib/useWorkspaceStream";
 import { redirectIfSessionExpired } from "@/lib/auth/sessionRecovery";
 import { answerSummary } from "@/lib/answerSummary";
 import type { AgentEvent } from "@/lib/api/types";
@@ -104,7 +104,16 @@ export interface PrototypeStream {
   resume: () => Promise<void>;
 }
 
-export function usePrototypeStream(projectId: string, slug: string): PrototypeStream {
+export interface PrototypeStreamOptions {
+  /** Watch someone else's build: after `resume()`, keep checking the session and attach to
+   *  every turn this screen has not shown yet. For read-only members (viewer role), who cannot
+   *  open a session or send anything — the owner drives the build, and this screen follows it the
+   *  way the workspace follows a Discovery turn (useWorkspaceStream's `follow`). */
+  follow?: boolean;
+}
+
+export function usePrototypeStream(projectId: string, slug: string,
+                                   { follow = false }: PrototypeStreamOptions = {}): PrototypeStream {
   const t = useT();
   const [items, setItems] = useState<ChatItem[]>([]);
   const [streaming, setStreaming] = useState(false);
@@ -138,6 +147,12 @@ export function usePrototypeStream(projectId: string, slug: string): PrototypeSt
   // joined via a ref.
   const attachRef = useRef<(turnId: string) => void>(() => {});
   const resumingRef = useRef(false);
+  // Turns this screen has already shown (replayed or attached). The follow loop attaches only to
+  // turns outside this set, so a turn is never drawn twice.
+  const seenTurnsRef = useRef(new Set<string>());
+  // Whether `resume()` has laid down the conversation once. Following starts only after it —
+  // otherwise the loop could attach to a turn that resume is about to replay.
+  const [resumed, setResumed] = useState(false);
   // The AI bubble that events are landing in RIGHT NOW — not the bubble the
   // turn started with. A "questions" event does NOT close the stream (the
   // harness parks on its pending-answer future, builder.py's
@@ -491,6 +506,7 @@ export function usePrototypeStream(projectId: string, slug: string): PrototypeSt
   const attach = useCallback(
     (turnId: string) => {
       if (stopRef.current) return;
+      seenTurnsRef.current.add(turnId);
       const aiId = openAiBubble();
       runTurn((handlers) => watchBuildTurn(projectId, slug, turnId, 0, handlers), aiId, turnId);
     },
@@ -540,6 +556,7 @@ export function usePrototypeStream(projectId: string, slug: string): PrototypeSt
         ?? (await getBuildSession(projectId, slug))?.turns ?? [];
       for (const turn of turns) {
         if (stopRef.current) return;
+        seenTurnsRef.current.add(turn.turn_id);
         const between: ChatItem[] = turn.input
           ? [{ id: nextId(), role: "user", text: turn.input }] : [];
         const aiId = openAiBubble(between);
@@ -558,8 +575,46 @@ export function usePrototypeStream(projectId: string, slug: string): PrototypeSt
       /* Even if restoring fails the panel is usable — just keep talking in an empty conversation */
     } finally {
       resumingRef.current = false;
+      setResumed(true);
     }
   }, [projectId, slug, runTurn, openAiBubble, loadHistory]);
+
+  // Follow: while nothing is streaming, look for a turn of the open session this screen has not
+  // shown and play it — the next one only after it ends, so bubbles stay in conversation order.
+  // A session the owner opens later is found the same way (its turns are all new). The build
+  // session lives in the backend process (app.proto_sessions), so every viewer reads the same
+  // turn log the owner's screen reads.
+  useEffect(() => {
+    if (!follow || !resumed) return;
+    let cancelled = false;
+    let inFlight = false;
+    const tick = () => {
+      if (inFlight || stopRef.current || resumingRef.current
+          || document.visibilityState === "hidden") return;
+      inFlight = true;
+      getBuildSession(projectId, slug)
+        .then((sess) => {
+          if (cancelled || stopRef.current || !sess) return;
+          const turn = sess.turns.find((x) => !seenTurnsRef.current.has(x.turn_id));
+          if (!turn) return;
+          seenTurnsRef.current.add(turn.turn_id);
+          const between: ChatItem[] = turn.input
+            ? [{ id: nextId(), role: "user", text: turn.input }] : [];
+          const aiId = openAiBubble(between);
+          runTurn((handlers) => watchBuildTurn(projectId, slug, turn.turn_id, 0, handlers),
+                  aiId, turn.turn_id);
+        })
+        .catch(() => {}) // the next tick asks again
+        .finally(() => {
+          inFlight = false;
+        });
+    };
+    const id = setInterval(tick, FOLLOW_POLL_MS);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, [follow, resumed, projectId, slug, runTurn, openAiBubble]);
 
   // The auto first-build turn: opens the events stream with the "__first__"
   // sentinel (routes.py substitutes session.first_prompt() server-side) and

@@ -604,3 +604,35 @@ describe("PrototypeCard — 호스팅 실패 후", () => {
     expect(screen.queryByRole("button", { name: "호스팅 중지" })).not.toBeInTheDocument();
   });
 });
+
+
+// ---- Watching the build (read-only members) ----
+// Requested in a workshop run: team leads with the viewer role wanted to follow the build chat.
+
+describe("PrototypeCard — watching the build", () => {
+  it("a read-only member can open the build chat once something was built", async () => {
+    const onWatch = vi.fn();
+    render(<PrototypeCard info={info({ state: "built" })} busy={false} readOnly
+                          {...noop} onWatch={onWatch} />);
+    await userEvent.click(screen.getByRole("button", { name: "빌드 대화 보기" }));
+    expect(onWatch).toHaveBeenCalledTimes(1);
+  });
+
+  it("an open session reads as a live build", () => {
+    render(<PrototypeCard info={info({ state: "building", session_open: true })} busy={false}
+                          readOnly {...noop} onWatch={vi.fn()} />);
+    expect(screen.getByRole("button", { name: "진행 중인 빌드 보기" })).toBeInTheDocument();
+  });
+
+  it("the owner does not get the watch button", () => {
+    render(<PrototypeCard info={info({ state: "built" })} busy={false}
+                          {...noop} onWatch={vi.fn()} />);
+    expect(screen.queryByRole("button", { name: "빌드 대화 보기" })).toBeNull();
+  });
+
+  it("nothing to watch before the first build", () => {
+    render(<PrototypeCard info={info({ state: "none" })} busy={false} readOnly
+                          {...noop} onWatch={vi.fn()} />);
+    expect(screen.queryAllByRole("button")).toHaveLength(0);
+  });
+});

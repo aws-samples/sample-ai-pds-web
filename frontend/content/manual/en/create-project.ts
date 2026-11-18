@@ -109,7 +109,11 @@ ones you were added to as a **viewer**; administrators see every project.
 
 Viewers **only look**. They can follow the conversation, read documents, prototypes and survey
 results, and download files, but the owner is the one who moves the project forward. When a viewer
-opens a project the header shows **Read-only**.`,
+opens a project the header shows **Read-only**.
+
+On the Prototypes tab, **View build chat** on a card shows the owner's build conversation. While the
+owner has a build session open the button reads **Watch the build**, and new turns appear as they
+start. Open question forms are shown too, but the owner answers them.`,
     },
     {
       kind: "steps",

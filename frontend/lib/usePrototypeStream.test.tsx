@@ -1031,3 +1031,75 @@ describe("usePrototypeStream — reconnect", () => {
     expect(result.current.streaming).toBe(false);
   });
 });
+
+// A read-only member (viewer role) watches the owner's build. Requested in a workshop run: team
+// leads wanted to follow the build the way they follow the Discovery conversation.
+describe("usePrototypeStream — follow", () => {
+  beforeEach(() => { vi.clearAllMocks(); vi.useFakeTimers(); });
+  afterEach(() => vi.useRealTimers());
+
+  function playTurn(texts: Record<string, string>) {
+    vi.mocked(prototypesApi.watchBuildTurn).mockImplementation(
+      (_pid: any, _slug: any, turnId: any, _after: any, handlers: any) => {
+        handlers.onEvent(ev("message", texts[turnId] ?? "?"), 1);
+        handlers.onEvent(ev("done"), 2);
+        handlers.onDone();
+        return () => {};
+      },
+    );
+  }
+
+  it("attaches to a turn the owner starts after the screen opened", async () => {
+    vi.mocked(prototypesApi.getBuildHistory).mockResolvedValue({
+      items: [], turns: [{ turn_id: "t1", state: "done", last_seq: 2, input: null }],
+    });
+    playTurn({ t1: "첫 빌드", t2: "버튼을 옮겼습니다" });
+    const { result } = renderHook(() => usePrototypeStream("p1", "todo-app", { follow: true }));
+    await act(async () => { await result.current.resume(); });
+
+    vi.mocked(prototypesApi.getBuildSession).mockResolvedValue({
+      status: "ready",
+      turns: [
+        { turn_id: "t1", state: "done", last_seq: 2, input: null },
+        { turn_id: "t2", state: "done", last_seq: 2, input: "버튼 옮겨 줘" },
+      ],
+    });
+    await act(async () => { await vi.advanceTimersByTimeAsync(4000); });
+    await act(async () => { await vi.advanceTimersByTimeAsync(20); });
+
+    expect(result.current.items.map((i) => [i.role, textOf(i)])).toEqual([
+      ["ai", "첫 빌드"],
+      ["user", "버튼 옮겨 줘"],
+      ["ai", "버튼을 옮겼습니다"],
+    ]);
+    // A turn already shown is not attached again.
+    await act(async () => { await vi.advanceTimersByTimeAsync(8000); });
+    expect(vi.mocked(prototypesApi.watchBuildTurn).mock.calls.map((c) => c[2]))
+      .toEqual(["t1", "t2"]);
+  });
+
+  it("finds the turns of a session the owner opens later", async () => {
+    vi.mocked(prototypesApi.getBuildHistory).mockResolvedValue({ items: [], turns: [] });
+    vi.mocked(prototypesApi.getBuildSession).mockResolvedValue(null);
+    playTurn({ n1: "새 세션" });
+    const { result } = renderHook(() => usePrototypeStream("p1", "todo-app", { follow: true }));
+    await act(async () => { await result.current.resume(); });
+    await act(async () => { await vi.advanceTimersByTimeAsync(4000); });
+    expect(result.current.items).toEqual([]);
+
+    vi.mocked(prototypesApi.getBuildSession).mockResolvedValue({
+      status: "building", turns: [{ turn_id: "n1", state: "done", last_seq: 2, input: null }],
+    });
+    await act(async () => { await vi.advanceTimersByTimeAsync(4000); });
+    await act(async () => { await vi.advanceTimersByTimeAsync(20); });
+    expect(result.current.items.map((i) => textOf(i))).toEqual(["새 세션"]);
+  });
+
+  it("does not poll without follow", async () => {
+    vi.mocked(prototypesApi.getBuildHistory).mockResolvedValue({ items: [], turns: [] });
+    const { result } = renderHook(() => usePrototypeStream("p1", "todo-app"));
+    await act(async () => { await result.current.resume(); });
+    await act(async () => { await vi.advanceTimersByTimeAsync(12000); });
+    expect(prototypesApi.getBuildSession).not.toHaveBeenCalled();
+  });
+});

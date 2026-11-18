@@ -45,6 +45,7 @@ export function PrototypeCard({
   onShowLogs,
   onOpenSurvey,
   onReset,
+  onWatch,
   startingPhase,
   hostError,
   archiveUrl,
@@ -62,6 +63,9 @@ export function PrototypeCard({
   /** Wipe build + session + survey, keeping the spec. Rendered only when
    *  `info.state !== "none"` — there is nothing accumulated to clear. */
   onReset?: (slug: string) => void;
+  /** Read-only members: open the build conversation to watch it (live while the owner's session is
+   *  open, the past conversation otherwise). Shown once anything has been built or started. */
+  onWatch?: () => void;
   /** The step while starting hosting is in progress. `POST /host` awaits all of npm install → build →
    *  port wait (routes/prototypes.py), so in the meantime the card had only disabled
    *  buttons and read as "nothing happening". The caller polls `GET /host` and
@@ -268,6 +272,12 @@ export function PrototypeCard({
               </button>
             )}
           </>
+        )}
+        {readOnly && onWatch && info.state !== "none" && (
+          <button type="button" className={info.session_open ? PRIMARY_BTN : SECONDARY_BTN}
+                  disabled={busy} onClick={onWatch}>
+            {t(info.session_open ? "proto.watchLive" : "proto.watchBuild")}
+          </button>
         )}
         {info.state !== "none" && onReset && !readOnly && (
           <button

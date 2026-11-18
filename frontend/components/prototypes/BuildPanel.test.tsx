@@ -486,3 +486,50 @@ describe("BuildPanel — 빈 수정 세션", () => {
     expect(screen.queryByText("무엇을 고칠지 알려주세요.")).toBeNull();
   });
 });
+
+
+// ---- Read-only: a viewer watching the owner's build ----
+
+describe("BuildPanel — read-only", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it("follows the owner's turns and never starts a turn of its own", () => {
+    const stream = mockStream();
+    render(<BuildPanel projectId="p1" slug="todo-app" readOnly autoStart onClose={vi.fn()} />);
+    expect(vi.mocked(prototypeStream.usePrototypeStream).mock.calls[0][2])
+      .toEqual({ follow: true });
+    expect(stream.startBuild).not.toHaveBeenCalled();
+    expect(stream.resume).toHaveBeenCalledTimes(1);
+  });
+
+  it("has no input — it says who runs the build", () => {
+    mockStream();
+    render(<BuildPanel projectId="p1" slug="todo-app" readOnly onClose={vi.fn()} />);
+    expect(screen.queryByRole("textbox")).toBeNull();
+    expect(screen.getByText(/빌드는 프로젝트 소유자가 진행합니다/)).toBeInTheDocument();
+  });
+
+  it("shows the owner's open question without letting the viewer answer", () => {
+    mockStream({ pendingQuestions: QP });
+    render(<BuildPanel projectId="p1" slug="todo-app" readOnly onClose={vi.fn()} />);
+    expect(screen.getByText(/누구\?/)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /답변 제출/ })).toBeNull();
+  });
+
+  it("closing leaves the owner's session alone", async () => {
+    mockStream();
+    const onClose = vi.fn();
+    render(<BuildPanel projectId="p1" slug="todo-app" readOnly onClose={onClose} />);
+    await userEvent.click(screen.getByRole("button", { name: "닫기" }));
+    expect(prototypesApi.closeSession).not.toHaveBeenCalled();
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("the completion card shows the summary but no session actions", () => {
+    mockStream({ buildComplete: { summary: "할 일 앱을 만들었다", remaining: "" } as any });
+    render(<BuildPanel projectId="p1" slug="todo-app" readOnly onClose={vi.fn()} />);
+    expect(screen.getByText("할 일 앱을 만들었다")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "호스팅 시작" })).toBeNull();
+    expect(screen.getAllByRole("button").map((b) => b.textContent)).toEqual(["닫기"]);
+  });
+});
