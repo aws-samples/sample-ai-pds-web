@@ -186,7 +186,7 @@ def _origin(present: set[str], envision: bool, spec_ids: set[str]) -> Origin | N
     return None
 
 
-def _reconcile(history: str | None, as_built: str | None) -> ReconcileStatus:
+def reconcile_status(history: str | None, as_built: str | None) -> ReconcileStatus:
     """Whether the timestamp of the last change history entry is cited in `spec-as-built.md`.
 
     **It checks by content, not by file time.** File modification times are rewritten by bundle import and sync,
@@ -221,7 +221,7 @@ def _prototype(pid: str, spec: str, present: set[str],
         status, evidence = "none", []
     return Prototype(id=pid, spec=as_built if as_built in present else spec,
                      validation=status, evidence=evidence,
-                     reconcile=_reconcile(contents.get(history),
+                     reconcile=reconcile_status(contents.get(history),
                                           contents.get(as_built) if as_built in present else None),
                      history=history if history in present else None)
 

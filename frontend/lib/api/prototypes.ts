@@ -78,6 +78,11 @@ export interface PrototypeInfo {
    *  warns with it: after a reset and rebuild, that spec describes a build that is gone until
    *  Discovery reconciles it again. */
   spec_as_built: boolean;
+  /** Whether `spec-as-built.md` covers the latest change-history entry — the same judgment as
+   *  the handoff tab's reconciliation check. `missing`/`stale` mean builds changed the prototype
+   *  since the spec was last brought up to date; the card then offers to ask Discovery for it.
+   *  Optional for responses from before the field existed (read as `not_needed`). */
+  spec_reconcile?: "not_needed" | "current" | "missing" | "stale";
 }
 
 // Mirrors backend/aipds/proto/host.py's HostState Literal exactly.

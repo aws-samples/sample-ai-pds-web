@@ -261,6 +261,9 @@ export const ko = {
   "proto.surveyNone": "설문 없음",
   "proto.surveyResponses": "설문 · 응답 {n}건",
   "proto.download": "다운로드",
+  "proto.reconcileMissing": "빌드에서 바뀐 내용이 명세(spec-as-built.md)에 아직 반영되지 않았습니다.",
+  "proto.reconcileStale": "최근 수정한 내용이 명세(spec-as-built.md)에 아직 반영되지 않았습니다.",
+  "proto.reconcile": "명세에 반영",
   // 설문 패널·대시보드
   "demo.title": "시연 기록",
   "demo.hint": "현업 사용자 몇 명에게 화면을 직접 보여 줬다면 여기에 기록하세요. 저장할 때마다 명세 옆의 demo-notes.md에 정리되고, Discovery는 이를 인터뷰·데모 피드백으로 읽습니다. 기록하지 않아도 진행할 수 있습니다.",
