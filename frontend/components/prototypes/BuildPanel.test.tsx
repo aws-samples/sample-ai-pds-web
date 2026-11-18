@@ -10,6 +10,7 @@ import { ApiError } from "@/lib/api/client";
 vi.mock("@/lib/api/prototypes", async (orig) => ({
   ...(await orig<typeof import("@/lib/api/prototypes")>()),
   closeSession: vi.fn().mockResolvedValue(undefined),
+  uploadBuildAttachment: vi.fn(),
   startHost: vi.fn().mockResolvedValue({ state: "running", port: 4001, log_tail: "" }),
 }));
 
@@ -531,5 +532,60 @@ describe("BuildPanel — read-only", () => {
     expect(screen.getByText("할 일 앱을 만들었다")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "호스팅 시작" })).toBeNull();
     expect(screen.getAllByRole("button").map((b) => b.textContent)).toEqual(["닫기"]);
+  });
+});
+
+
+// ---- Attachments: images and Markdown for the builder ----
+// Requested in a workshop run: a logo and notes had to reach the builder from the build chat.
+
+describe("BuildPanel — attachments", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it("an attached file's mention goes in front of the next message", async () => {
+    const stream = mockStream();
+    vi.mocked(prototypesApi.uploadBuildAttachment).mockResolvedValue({
+      path: "attachments/ab12cd34/logo.png", kind: "image",
+      mention: "[첨부 이미지: attachments/ab12cd34/logo.png — …]",
+    });
+    const user = userEvent.setup();
+    render(<BuildPanel projectId="p1" slug="todo-app" onClose={vi.fn()} />);
+
+    await user.click(screen.getByRole("button", { name: "파일 첨부" }));
+    const dialog = screen.getByRole("dialog");
+    // The build chat says what it takes, and that real data is not one of them.
+    expect(dialog).toHaveTextContent(".png");
+    expect(dialog).toHaveTextContent(".md");
+    expect(dialog).not.toHaveTextContent(".xlsx");
+    expect(dialog).toHaveTextContent(/실제 업무 데이터/);
+
+    const input = dialog.querySelector("input[type=file]") as HTMLInputElement;
+    await user.upload(input, new File([new Uint8Array([137, 80, 78, 71])], "logo.png",
+                                      { type: "image/png" }));
+    expect(prototypesApi.uploadBuildAttachment).toHaveBeenCalledWith("p1", "todo-app", expect.any(File));
+    await user.click(screen.getByRole("button", { name: "닫기" }));
+    expect(screen.getByText("ab12cd34/logo.png")).toBeInTheDocument();
+
+    await user.type(screen.getByRole("textbox"), "로고를 헤더에 넣어 줘{Enter}");
+    expect(stream.send).toHaveBeenCalledWith(
+      "[첨부 이미지: attachments/ab12cd34/logo.png — …]\n\n로고를 헤더에 넣어 줘");
+    expect(screen.queryByText("ab12cd34/logo.png")).toBeNull();
+  });
+
+  it("a data file is refused before it is sent", async () => {
+    mockStream();
+    const user = userEvent.setup({ applyAccept: false });
+    render(<BuildPanel projectId="p1" slug="todo-app" onClose={vi.fn()} />);
+    await user.click(screen.getByRole("button", { name: "파일 첨부" }));
+    const input = screen.getByRole("dialog").querySelector("input[type=file]") as HTMLInputElement;
+    await user.upload(input, new File(["a,b"], "sales.xlsx"));
+    expect(prototypesApi.uploadBuildAttachment).not.toHaveBeenCalled();
+    expect(screen.getByText(/지원하지 않는 형식/)).toBeInTheDocument();
+  });
+
+  it("read-only members have nothing to attach to", () => {
+    mockStream();
+    render(<BuildPanel projectId="p1" slug="todo-app" readOnly onClose={vi.fn()} />);
+    expect(screen.queryByRole("button", { name: "파일 첨부" })).toBeNull();
   });
 });

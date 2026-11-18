@@ -61,7 +61,9 @@ for every prototype you want to validate.`,
       md: `**Modify** does **not** throw away what was built. A build session opens with the AI
 waiting, and **you say what to change first** — write it plainly ("move the cart button to the top
 right", "make this screen mobile-first") and the AI gets on with it instead of asking you to pick
-from a list. The earlier builds' conversation stays on screen above, but the AI is handed **only a
+from a list. Attach **images** such as a logo, or **Markdown** notes, with 📎 in the input box (5MB per file). Real
+business data (Excel, CSV and the like) is not accepted: files in the prototype reach its source history,
+downloads, exports and the shared preview. If the prototype needs data, ask for generated sample data. The earlier builds' conversation stays on screen above, but the AI is handed **only a
 summary** of it, so changing one button's colour does not drag the entire build's context with it.
 
 What each finished build changed against the spec is kept as well, in \`change-history.md\` next to the

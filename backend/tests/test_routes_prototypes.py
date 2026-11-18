@@ -2595,3 +2595,82 @@ def test_a_newer_entry_makes_spec_as_built_stale(proto_env):
         _HISTORY + "\n## 2026-01-05 10:00 UTC · gen 2\n\n**변경**\nB\n")
     s3.blobs[f"{_ART}/spec-as-built.md"] = "# as built\n반영: 2026-01-02 03:04 UTC\n"
     assert _reconcile_of(s3) == "stale"
+
+
+# ---- Build-chat attachments (images and Markdown only) ----
+#
+# Requested in a workshop run: teams wanted to hand the builder a logo and notes from the build
+# chat. Real data is refused on purpose — what enters the build tree reaches source generations,
+# downloads, exports, and (once copied into prototype/) the shared preview.
+
+_PNG = b"\x89PNG\r\n\x1a\n" + b"\x00" * 32
+
+
+def _open_session_at(root):
+    session = FakePrototypeSession()
+    session.status = "ready"
+    session.build_dir = lambda: root / PID / SLUG
+    app_module.proto_sessions[(PID, SLUG)] = session
+    return session
+
+
+def _attach(name: str, data: bytes):
+    return client.post(f"/projects/{PID}/prototypes/{SLUG}/attachments",
+                       files={"file": (name, data)})
+
+
+def test_an_image_lands_in_the_build_directory_with_a_mention(proto_env):
+    _seed_spec(proto_env["s3"])
+    _open_session_at(proto_env["root"])
+
+    r = _attach("logo.png", _PNG)
+
+    assert r.status_code == 201
+    body = r.json()
+    assert body["kind"] == "image"
+    assert body["path"].startswith("attachments/") and body["path"].endswith("/logo.png")
+    assert (proto_env["root"] / PID / SLUG / body["path"]).read_bytes() == _PNG
+    # The builder is told to copy it under prototype/ rather than serve the original.
+    assert body["path"] in body["mention"] and "prototype/" in body["mention"]
+
+
+def test_markdown_is_accepted(proto_env):
+    _seed_spec(proto_env["s3"])
+    _open_session_at(proto_env["root"])
+    r = _attach("notes.md", "# 메모\n색은 남색".encode("utf-8"))
+    assert r.status_code == 201
+    assert r.json()["kind"] == "markdown"
+
+
+@pytest.mark.parametrize("name", ["data.xlsx", "data.csv", "report.pdf", "spec.docx",
+                                  "logo.svg", "noext"])
+def test_anything_but_images_and_markdown_is_refused(proto_env, name):
+    _seed_spec(proto_env["s3"])
+    _open_session_at(proto_env["root"])
+    r = _attach(name, b"a,b\n1,2\n")
+    assert r.status_code == 415
+    assert "unsupported extension" in r.json()["detail"]
+
+
+def test_an_image_whose_bytes_are_not_an_image_is_refused(proto_env):
+    _seed_spec(proto_env["s3"])
+    _open_session_at(proto_env["root"])
+    assert _attach("logo.png", b"<svg onload=alert(1)>").status_code == 415
+
+
+def test_markdown_that_is_not_utf8_is_refused(proto_env):
+    _seed_spec(proto_env["s3"])
+    _open_session_at(proto_env["root"])
+    assert _attach("notes.md", b"\xff\xfe\x00bad").status_code == 415
+
+
+def test_an_oversized_attachment_is_refused(proto_env):
+    from aipds.proto.attachments import MAX_ATTACHMENT_BYTES
+    _seed_spec(proto_env["s3"])
+    _open_session_at(proto_env["root"])
+    assert _attach("big.png", _PNG + b"\x00" * MAX_ATTACHMENT_BYTES).status_code == 413
+
+
+def test_attaching_needs_an_open_session(proto_env):
+    _seed_spec(proto_env["s3"])
+    assert _attach("logo.png", _PNG).status_code == 404
