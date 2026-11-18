@@ -69,6 +69,8 @@ spec, and every later session reads it first. Where it disagrees with the spec t
 feature you had taken out does not come back. When the Discovery conversation decides to proceed past
 validation, it applies that history to the approved spec as \`spec-as-built.md\` — the approved spec
 itself stays as it was — and asks you to approve it before carrying on.
+To bring the spec up to date before that, press **Update the spec** when a card says the changes are
+*not in the spec yet*. The request is drafted into the Discovery chat and goes through the same approval.
 
 When Discovery decides to **iterate** after validation, it rewrites the build instructions
 (\`build-instructions.md\`) with that iteration and records it in \`iteration-log.md\`. A session opened

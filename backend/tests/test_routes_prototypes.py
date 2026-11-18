@@ -335,7 +335,8 @@ def test_list_state_none(proto_env):
                                    "preview_stale": False,
                                    "access_url": None, "host_failed": False, "host_starting": False,
                                    "response_count": 0,
-                                   "has_survey": False, "spec_as_built": False}]
+                                   "has_survey": False, "spec_as_built": False,
+                                   "spec_reconcile": "not_needed"}]
 
 
 def _seed_source_generation(s3, files=None):
@@ -1157,7 +1158,8 @@ def test_reset_leaves_the_card_listable_as_none(proto_env, monkeypatch):
                                    "preview_stale": False,
                                    "access_url": None, "host_failed": False, "host_starting": False,
                                    "response_count": 0,
-                                   "has_survey": False, "spec_as_built": False}]
+                                   "has_survey": False, "spec_as_built": False,
+                                   "spec_reconcile": "not_needed"}]
 
 
 def test_reset_closes_a_live_session_and_frees_its_build_slot(proto_env, monkeypatch):
@@ -2550,3 +2552,46 @@ def test_the_list_says_when_a_start_is_under_way(proto_env, monkeypatch):
     card = next(c for c in client.get(f"/projects/{PID}/prototypes").json()["prototypes"]
                 if c["slug"] == SLUG)
     assert card["host_starting"] is True and card["host_failed"] is False
+
+
+# ---- Bringing the spec up to date (spec-as-built) ----
+#
+# Requested in a workshop run: what "수정하기" (Modify) changed should flow back into the
+# documents. The card says when `spec-as-built.md` no longer covers the change history, with the
+# same judgment as the handoff tab (handoff/readiness.reconcile_status).
+
+_ART = f"aiplc-docs/discovery/prototypes/{SLUG}"
+_HISTORY = ("# 수정 이력\n\n## 2026-01-02 03:04 UTC · gen 1\n\n**변경**\nA\n")
+
+
+def _reconcile_of(s3) -> str:
+    return client.get(f"/projects/{PID}/prototypes").json()["prototypes"][0]["spec_reconcile"]
+
+
+def test_no_history_needs_no_reconciliation(proto_env):
+    _seed_spec(proto_env["s3"])
+    assert _reconcile_of(proto_env["s3"]) == "not_needed"
+
+
+def test_a_history_without_spec_as_built_is_missing(proto_env):
+    s3 = proto_env["s3"]
+    _seed_spec(s3)
+    s3.blobs[f"{_ART}/change-history.md"] = _HISTORY
+    assert _reconcile_of(s3) == "missing"
+
+
+def test_spec_as_built_that_cites_the_last_entry_is_current(proto_env):
+    s3 = proto_env["s3"]
+    _seed_spec(s3)
+    s3.blobs[f"{_ART}/change-history.md"] = _HISTORY
+    s3.blobs[f"{_ART}/spec-as-built.md"] = "# as built\n반영: 2026-01-02 03:04 UTC\n"
+    assert _reconcile_of(s3) == "current"
+
+
+def test_a_newer_entry_makes_spec_as_built_stale(proto_env):
+    s3 = proto_env["s3"]
+    _seed_spec(s3)
+    s3.blobs[f"{_ART}/change-history.md"] = (
+        _HISTORY + "\n## 2026-01-05 10:00 UTC · gen 2\n\n**변경**\nB\n")
+    s3.blobs[f"{_ART}/spec-as-built.md"] = "# as built\n반영: 2026-01-02 03:04 UTC\n"
+    assert _reconcile_of(s3) == "stale"

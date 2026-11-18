@@ -265,6 +265,14 @@ export default function PrototypesPage({ params }: { params: Promise<{ projectId
     }
   }
 
+  // The same request the handoff tab drafts (ReadinessPanel), so both entry points ask Discovery
+  // for the same reconciliation. The history sits next to the spec (backend proto/layout).
+  function reconcileHref(specPath: string): string {
+    const history = specPath.replace(/[^/]+$/, "change-history.md");
+    const draft = t("handoff.reconcile.draft").replace("{list}", history);
+    return `/projects/${projectId}/workspace?draft=${encodeURIComponent(draft)}`;
+  }
+
   function closeBuildPanel() {
     // Returning from the panel may have changed the session state — do not leave a stale rejection reason.
     setHostError(null);
@@ -335,6 +343,7 @@ export default function PrototypesPage({ params }: { params: Promise<{ projectId
                   setOpenAutoStart(false);
                   setOpenSlug(info.slug);
                 }}
+                reconcileHref={reconcileHref(info.spec_path)}
                 archiveUrl={prototypeArchiveUrl(projectId, info.slug)}
                 shareUrl={info.access_url
                   ? absoluteShareUrl(info.access_url) : undefined}

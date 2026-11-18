@@ -45,6 +45,7 @@ from aipds.proto.source import newest_source_mtime, source_entries
 # create a cycle.
 from aipds.routes.proto_public import access_url_path
 from aipds.survey.store import survey_summary
+from aipds.handoff.readiness import ReconcileStatus, reconcile_status
 from aipds.proto import demo_notes
 from aipds.proto import layout as proto_layout
 
@@ -208,6 +209,27 @@ def _local_build_exists(pid: str, slug: str) -> bool:
     return has_build_output(_prototype_dir(pid, slug).parent)
 
 
+async def _spec_reconcile(s3, slug: str, keys: set[str]) -> ReconcileStatus:
+    """Whether `spec-as-built.md` covers this prototype's latest change-history entry.
+
+    The same judgment as the handoff tab's reconciliation check (handoff/readiness), so the card
+    and that tab never disagree. Asked only when a history exists -- most cards have none, and
+    then nothing is read. A read failure reads as `not_needed`: the card offers nothing rather
+    than a wrong prompt (same discipline as `_card_name`).
+    """
+    history_key = proto_layout.change_history_key(slug)
+    if history_key not in keys:
+        return "not_needed"
+    as_built_key = f"{proto_layout.artifact_dir(slug)}/{_SPEC_AS_BUILT}"
+    try:
+        history = await s3.get(history_key)
+        as_built = await s3.get(as_built_key) if as_built_key in keys else None
+    except Exception:
+        _log.warning("could not read the reconciliation state of %s", slug, exc_info=True)
+        return "not_needed"
+    return reconcile_status(history, as_built)
+
+
 async def _card_name(s3, spec_path: str) -> str | None:
     """Read the name to show on the card from the spec body. None if it cannot be read.
 
@@ -267,14 +289,16 @@ async def list_prototypes(pid: str):
     # moves the round trips to the client and creates two copies of the parsing
     # rules.
     store = PrototypeStore(s3)
-    s3_built, surveys, names = await asyncio.gather(
+    s3_built, surveys, names, reconciles = await asyncio.gather(
         asyncio.gather(*(_has_s3_source(store, slug) for slug, _ in ordered)),
         asyncio.gather(*(survey_summary(s3, slug) for slug, _ in ordered)),
         asyncio.gather(*(_card_name(s3, spec_path) for _, spec_path in ordered)),
+        asyncio.gather(*(_spec_reconcile(s3, slug, discovery_key_set)
+                         for slug, _ in ordered)),
     )
     out = []
-    for (slug, spec_path), has_s3_source, survey, name in zip(
-            ordered, s3_built, surveys, names):
+    for (slug, spec_path), has_s3_source, survey, name, spec_reconcile in zip(
+            ordered, s3_built, surveys, names, reconciles):
         state = "none"
         port: int | None = None
 
@@ -394,7 +418,13 @@ async def list_prototypes(pid: str):
                     # reconciled again, or the handoff ships a spec of a build that is gone.
                     # Read from the listing above, so it costs no round trip.
                     "spec_as_built": (f"{proto_layout.artifact_dir(slug)}/{_SPEC_AS_BUILT}"
-                                      in discovery_key_set)})
+                                      in discovery_key_set),
+                    # Whether the builds changed the prototype since `spec-as-built.md` was last
+                    # brought up to date (`missing` / `stale`). Requested in a workshop run:
+                    # changes made with "수정하기" (Modify) should flow back into the documents.
+                    # Discovery's rules already reconcile on request (discovery-config/CLAUDE.md),
+                    # so the card only has to say when it is due and hand over the request.
+                    "spec_reconcile": spec_reconcile})
     # Capacity travels with the list so a card can explain a 429 before the
     # user clicks (the cap is new -- MicroVM builds had no ceiling).
     return {"prototypes": out, **app_module.build_semaphore.snapshot()}
