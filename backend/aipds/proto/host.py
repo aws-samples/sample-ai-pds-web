@@ -22,7 +22,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
 from aipds import agent_home
-from aipds.pathsafe import read_text_beneath, reject_unsafe_segment, stat_beneath
+from aipds.pathsafe import (beneath, inside, read_text_beneath, reject_unsafe_segment,
+                            stat_beneath)
 
 if TYPE_CHECKING:
     from aipds.launcher import Launcher
@@ -208,9 +209,9 @@ class ProtoHost:
     # ---- access tokens ----
 
     def _state_dir(self, pid: str, slug: str) -> Path:
-        reject_unsafe_segment(pid)
-        reject_unsafe_segment(slug)
-        return self._state_root / pid / slug
+        # `beneath` validates both segments, as `reject_unsafe_segment` did here, and states the
+        # containment in a form static analysis recognises (pathsafe.beneath).
+        return beneath(self._state_root, pid, slug)
 
     def _token_path(self, pid: str, slug: str) -> Path:
         return self._state_dir(pid, slug) / _STATE_TOKEN
@@ -495,7 +496,8 @@ class ProtoHost:
         # previous process first.
         await self.stop(pid, slug)
 
-        target_dir = Path(cwd) if cwd is not None else self._root / pid / slug
+        target_dir = (inside(self._root, cwd) if cwd is not None
+                      else beneath(self._root, pid, slug))
         # NOT rmtree + re-download: the builder writes into this very
         # directory, so wiping it would delete a live build.
         if not target_dir.is_dir():
@@ -504,7 +506,7 @@ class ProtoHost:
             # The wrapper computes the tree itself (`<root>/<pid>/<slug>/prototype`). If
             # told to run elsewhere
             # it still runs where it computed, so the mismatch is surfaced here.
-            expected = self._root / pid / slug / "prototype"
+            expected = beneath(self._root, pid, slug, "prototype")
             if target_dir != expected:
                 raise ValueError(f"launcher hosts {expected}, not {target_dir}")
             agent_home.proto(pid, slug).prepare(with_config=False)
@@ -729,7 +731,7 @@ class ProtoHost:
         await agent_home.purge_prototype(pid, slug)
         await asyncio.to_thread(shutil.rmtree, self._state_dir(pid, slug),
                                 ignore_errors=True)
-        target = self._root / pid / slug
+        target = beneath(self._root, pid, slug)
         if not target.is_dir():
             return
         await asyncio.to_thread(shutil.rmtree, target, ignore_errors=True)
@@ -753,10 +755,9 @@ class ProtoHost:
         Raises `RuntimeError` on residue, and `ValueError` on a `pid` that is not
         one ordinary path segment -- same reasoning as `purge`.
         """
-        reject_unsafe_segment(pid)
-        await asyncio.to_thread(shutil.rmtree, self._state_root / pid,
+        await asyncio.to_thread(shutil.rmtree, beneath(self._state_root, pid),
                                 ignore_errors=True)
-        target = self._root / pid
+        target = beneath(self._root, pid)
         if not target.is_dir():
             return
         await asyncio.to_thread(shutil.rmtree, target, ignore_errors=True)
@@ -848,7 +849,7 @@ class ProtoHost:
         reject_unsafe_segment(pid)
         found = {slug for (p, slug) in self._registry if p == pid}
         found |= {slug for (p, slug) in self._tokens.values() if p == pid}
-        for base in (self._root / pid, self._state_root / pid):
+        for base in (beneath(self._root, pid), beneath(self._state_root, pid)):
             try:
                 if base.is_dir():
                     found |= {child.name for child in base.iterdir() if child.is_dir()}
