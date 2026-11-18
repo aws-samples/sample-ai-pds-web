@@ -39,6 +39,11 @@ async def upload_file(pid: str, file: UploadFile, request: Request):
     if upload.original_key is not None and not await ws.runner.write_bytes_if_absent(
             upload.original_key, upload.original):
         raise HTTPException(status_code=409, detail="upload key already exists")
+    # A data file's sheet CSVs go in before its profile: the profile is the file the mention
+    # points at, so once it exists every path it names exists too.
+    for key, content in upload.extras:
+        if not await ws.runner.write_file_if_absent(key, content):
+            raise HTTPException(status_code=409, detail="upload key already exists")
     if upload.text_key is not None and not await ws.runner.write_file_if_absent(
             upload.text_key, upload.text):
         raise HTTPException(status_code=409, detail="upload key already exists")
@@ -69,7 +74,7 @@ async def _same_upload(runner, upload) -> dict | None:
     """
     if upload.text_key is None:
         return None
-    name = upload.text_key.rsplit("/", 1)[-1]
+    folder, name = upload.text_key.rsplit("/", 1)
     try:
         candidates = await runner.list_files(f"uploads/*/{name}")
     except Exception:
@@ -78,16 +83,19 @@ async def _same_upload(runner, upload) -> dict | None:
     for key in candidates:
         if key.count("/") != 2:
             continue
+        # A data file's profile names its own folder (the paths of its CSVs), so the earlier
+        # copy is compared with its folder written as this upload's.
+        earlier = key.rsplit("/", 1)[0]
         try:
-            if await runner.read_file(key) != upload.text:
+            stored = await runner.read_file(key)
+            if stored.replace(f"{earlier}/", f"{folder}/") != upload.text:
                 continue
         except Exception:
             continue
         original = None
         if upload.original_key is not None:
-            folder = key.rsplit("/", 1)[0]
-            sibling = f"{folder}/{upload.original_key.rsplit('/', 1)[-1]}"
-            if sibling in await runner.list_files(f"{folder}/*"):
+            sibling = f"{earlier}/{upload.original_key.rsplit('/', 1)[-1]}"
+            if sibling in await runner.list_files(f"{earlier}/*"):
                 original = sibling
         return {"path": key, "original": original, "chars": len(upload.text or ""),
                 "truncated": upload.truncated, "duplicate": True}

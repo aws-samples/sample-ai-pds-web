@@ -3,14 +3,16 @@
 
 There are two branches.
 
-- **Convert to text.** Documents, spreadsheets, slide decks, web pages, and transcripts (md/txt/csv, xlsx,
-  docx, pptx, hwpx, html, vtt/srt, pdf) are converted to markdown at upload time.
+- **Convert to text.** Documents, slide decks, web pages, and transcripts (md/txt, docx, pptx, hwpx,
+  html, vtt/srt, pdf) are converted to markdown at upload time.
   The agent cannot open binary formats directly, and even if it could, there is no reason to re-parse
   them every turn. The conversion result is truncated at the same 50,000-character limit as the rules' URL mode (spec §6).
 - **Keep the original as is.** Images and PDFs. The agent's (Claude Code CLI) `Read` views both
   directly — screen captures and whiteboard photos have nothing to convert to text, and PDF charts and
   scanned pages are lost in text extraction. PDFs also keep a converted copy: text is enough for
   most, and reading the original costs far more tokens per page.
+- **Profile + data.** Data files (xlsx, csv) get a short profile the agent reads first and the
+  full rows as UTF-8 CSV it queries with Bash (parsers/tables.py has the why).
 
 The content is untrusted input — it is only stored, never executed.
 """
@@ -23,6 +25,9 @@ import uuid
 import zipfile
 from dataclasses import dataclass
 from pathlib import PurePosixPath
+
+from aipds.parsers import tables
+from aipds.parsers.tables import md_table as _md_table
 
 #: Cap on the original size. The two front layers the request passes through are aligned to this value too — nginx's
 #: `client_max_body_size` (infra/lib/user-data.ts, infra/scripts/aipds-update) and the Next
@@ -38,7 +43,8 @@ _TRUNC_MARK = "\n[... 50,000자 초과분 생략]"
 _MAX_UNZIPPED_BYTES = 100 * 1024 * 1024
 _ZIP_EXTS = frozenset({".xlsx", ".docx", ".pptx", ".hwpx"})
 
-_TEXT_EXTS = frozenset({".md", ".txt", ".csv"})
+_TEXT_EXTS = frozenset({".md", ".txt"})
+DATA_EXTS = frozenset({".xlsx", ".csv"})
 
 #: Extension → format determined by content. A JPEG saved as `.png` (common for images from the web)
 #: gets the original key's extension adjusted to match its content — if extension and content differ,
@@ -52,33 +58,6 @@ IMAGE_EXTS = frozenset(_IMAGE_KINDS)
 def _ext(filename: str) -> str:
     dot = filename.rfind(".")
     return filename[dot:].lower() if dot >= 0 else ""
-
-
-def _cell(text: str) -> str:
-    # Line breaks and pipes inside a cell break the markdown table.
-    return " ".join(text.split()).replace("|", "\\|")
-
-
-def _md_table(rows: list[list[str]]) -> str:
-    width = max(len(row) for row in rows)
-    rows = [[_cell(c) for c in row] + [""] * (width - len(row)) for row in rows]
-    lines = ["| " + " | ".join(rows[0]) + " |", "|" + "---|" * width]
-    lines += ["| " + " | ".join(row) + " |" for row in rows[1:]]
-    return "\n".join(lines)
-
-
-def _xlsx_to_markdown(data: bytes) -> str:
-    from openpyxl import load_workbook
-    wb = load_workbook(io.BytesIO(data), read_only=True, data_only=True)
-    parts: list[str] = []
-    for ws in wb.worksheets:
-        rows = [[("" if c is None else str(c)) for c in row]
-                for row in ws.iter_rows(values_only=True)]
-        if not rows:
-            continue
-        parts.append(f"## {ws.title}")
-        parts.append(_md_table(rows))
-    return "\n".join(parts)
 
 
 def _pdf_to_text(data: bytes) -> str:
@@ -374,7 +353,6 @@ def _hwpx_to_markdown(data: bytes) -> str:
 
 
 _CONVERTERS = {
-    ".xlsx": _xlsx_to_markdown,
     ".docx": _docx_to_markdown,
     ".pptx": _pptx_to_markdown,
     ".hwpx": _hwpx_to_markdown,
@@ -387,7 +365,7 @@ _CONVERTERS = {
 
 #: Every accepted extension. The frontend's file picker filter (accept in ChatInput.tsx) must match this
 #: set — tests/test_uploads_parser.py cross-checks them.
-ALLOWED = _TEXT_EXTS | frozenset(_CONVERTERS) | IMAGE_EXTS
+ALLOWED = _TEXT_EXTS | DATA_EXTS | frozenset(_CONVERTERS) | IMAGE_EXTS
 
 
 def _check_zip(ext: str, data: bytes) -> None:
@@ -401,8 +379,18 @@ def _check_zip(ext: str, data: bytes) -> None:
                          f"{_MAX_UNZIPPED_BYTES // (1024 * 1024)}MB")
 
 
+def _cap(content: str) -> tuple[str, bool]:
+    if len(content) > MAX_CHARS:
+        cut = MAX_CHARS - len(_TRUNC_MARK)
+        return content[:cut] + _TRUNC_MARK, True
+    return content, False
+
+
 def convert(filename: str, data: bytes) -> tuple[str, bool]:
-    """Upload that can be converted to text → (markdown, whether truncated)."""
+    """Document that can be converted to text → (markdown, whether truncated).
+
+    Data files (DATA_EXTS) are not documents — `prepare` routes them to `_prepare_data`.
+    """
     ext = _ext(filename)
     if ext in _TEXT_EXTS:   # text as is (lossy decode)
         content = data.decode("utf-8", errors="replace")
@@ -419,10 +407,7 @@ def convert(filename: str, data: bytes) -> tuple[str, bool]:
             raise ValueError(f"cannot parse {ext} file: corrupted or invalid") from e
     else:
         raise ValueError(f"unsupported extension: {ext or '(none)'}")
-    if len(content) > MAX_CHARS:
-        cut = MAX_CHARS - len(_TRUNC_MARK)
-        return content[:cut] + _TRUNC_MARK, True
-    return content, False
+    return _cap(content)
 
 
 def _image_kind(data: bytes) -> str | None:
@@ -445,12 +430,17 @@ class PreparedUpload:
     - PDF: converted copy and original (`요구사항.pdf.md`, `요구사항.pdf`). If the text layer is empty
       (a scan), original only — pointing at an empty converted copy makes the agent read it as "no content".
     - Images: original only (`화면.png`)
+    - Data files: profile, original, and the rows as CSV. xlsx: `매출.xlsx.md`, `매출.xlsx`, and one
+      `매출.xlsx.<sheet>.csv` per sheet in `extras`. csv: `매출.csv.md` and `매출.csv` — the CSV
+      itself, re-encoded to UTF-8 and comma-separated, so it is both the original and the data.
     """
     text_key: str | None
     text: str | None
     truncated: bool
     original_key: str | None
     original: bytes | None
+    #: Further text files to store with the upload (key, content) — a data file's sheet CSVs.
+    extras: tuple[tuple[str, str], ...] = ()
 
 
 def _safe_name(filename: str) -> str:
@@ -461,6 +451,36 @@ def _safe_name(filename: str) -> str:
     # call). One normal form for keys makes the path in the mention readable as is.
     name = PurePosixPath(unicodedata.normalize("NFC", filename or "")).name  # drop any path parts
     return re.sub(r"[^\w가-힣.-]+", "-", name).strip("-.") or "upload"
+
+
+def _prepare_data(ext: str, folder: str, name: str, data: bytes) -> PreparedUpload:
+    original_key = f"{folder}/{name}"
+    if ext == ".xlsx":
+        _check_zip(ext, data)
+    try:
+        if ext == ".xlsx":
+            sheets = tables.read_xlsx(data)
+            original = data
+            extras: list[tuple[str, str]] = []
+            pairs = []
+            for sheet in sheets:
+                key, n = f"{original_key}.{_safe_name(sheet.title)}.csv", 2
+                while any(key == k for k, _ in extras):
+                    key, n = f"{original_key}.{_safe_name(sheet.title)}-{n}.csv", n + 1
+                extras.append((key, tables.to_csv(sheet)))
+                pairs.append((sheet, key))
+        else:
+            sheet = tables.read_csv(data, name)
+            original = tables.to_csv(sheet).encode("utf-8")
+            extras = []
+            pairs = [(sheet, original_key)] if sheet.rows else []
+        text = tables.profile(name, original_key, pairs)
+    except Exception as e:
+        # Same contract as `convert`: unreadable bytes under a valid extension are a 415, not a 500.
+        raise ValueError(f"cannot parse {ext} file: corrupted or invalid") from e
+    text, truncated = _cap(text)
+    return PreparedUpload(f"{original_key}.md", text, truncated, original_key, original,
+                          tuple(extras))
 
 
 def prepare(filename: str, data: bytes) -> PreparedUpload:
@@ -483,6 +503,8 @@ def prepare(filename: str, data: bytes) -> PreparedUpload:
         if _IMAGE_KINDS[ext] != kind:
             name = name[:len(name) - len(ext)] + _KIND_EXT[kind]
         return PreparedUpload(None, None, False, f"{folder}/{name}", data)
+    if ext in DATA_EXTS:
+        return _prepare_data(ext, folder, name, data)
     text, truncated = convert(filename, data)
     # A markdown upload is already what the key would say, so it keeps its own name. Appending
     # `.md` again produced `의견.md.md`.

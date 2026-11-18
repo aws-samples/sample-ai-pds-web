@@ -45,6 +45,24 @@ import {
 // opens at every width — full width on a narrow screen.
 const STAGES_COLLAPSED_KEY = "aipds.workspace.stagesCollapsed";
 
+/** Data files whose upload is a profile plus the rows as CSV (backend parsers/tables.py). */
+const DATA_FILE = /\.(xlsx|csv)$/i;
+
+/** The line that tells the agent about one attachment. Each sentence stays on one line — the
+ *  no-hardcoded-Korean check allows Korean on this file's lines only next to "첨부 파일".
+ *  - Data file: the path is a profile. Reading the CSV whole would fill the context with rows the
+ *    agent does not need, so it is told to query only what it needs.
+ *  - PDF: the path is the text copy; figures and scans are only in the original. */
+function attachmentMention(path: string, original: string | null): string {
+  if (original && DATA_FILE.test(original)) {
+    return `[첨부 파일: ${path} — 사용자가 제공한 데이터 파일의 요약입니다. 먼저 이 요약을 읽고, 세부 값이 필요하면 요약에 적힌 CSV에서 필요한 부분만 Bash로 조회하세요(CSV를 통째로 읽지 마세요). 원본 첨부 파일은 ${original}에 있습니다.]`;
+  }
+  if (original) {
+    return `[첨부 파일: ${path} — 사용자가 컨텍스트로 제공한 파일을 텍스트로 변환한 것입니다. 필요 시 이 파일을 읽어보세요. 도표·그림·스캔 페이지는 원본 ${original}에 있습니다.]`;
+  }
+  return `[첨부 파일: ${path} — 사용자가 컨텍스트로 제공한 파일입니다. 필요 시 이 파일을 읽어보세요.]`;
+}
+
 export default function WorkspacePage({ params }: { params: Promise<{ projectId: string }> }) {
   const { projectId } = use(params);
   const state = useAsync(() => getState(projectId), [projectId]);
@@ -174,6 +192,9 @@ export default function WorkspacePage({ params }: { params: Promise<{ projectId:
     try {
       const r = await uploadFile(projectId, file);
       if (r.duplicate) setUploadNotice(t("upload.duplicateReused").replace("{name}", file.name));
+      // The backend has always reported a cut text copy; nothing on screen said so, and the
+      // user read the agent's partial picture as the whole file.
+      if (r.truncated) setUploadNotice(t("upload.truncated").replace("{name}", file.name));
       // A repeat points at the earlier copy, so one chip per path is enough.
       setAttachments((prev) => prev.some((a) => a.path === r.path)
         ? prev
@@ -207,10 +228,7 @@ export default function WorkspacePage({ params }: { params: Promise<{ projectId:
   // one-shot mention on the NEXT message, not a standing context.
   function sendWithAttachments(text: string) {
     setStickSignal((n) => n + 1);
-    const mentions = attachments.map(({ path, original }) => original
-      ? `[첨부 파일: ${path} — 사용자가 컨텍스트로 제공한 파일을 텍스트로 변환한 것입니다. 필요 시 이 파일을 읽어보세요. 도표·그림·스캔 페이지는 원본 ${original}에 있습니다.]`
-      : `[첨부 파일: ${path} — 사용자가 컨텍스트로 제공한 파일입니다. 필요 시 이 파일을 읽어보세요.]`,
-    );
+    const mentions = attachments.map(({ path, original }) => attachmentMention(path, original));
     send(mentions.length ? `${mentions.join("\n")}\n\n${text}` : text);
     setAttachments([]);
     setUploadNotice(null);

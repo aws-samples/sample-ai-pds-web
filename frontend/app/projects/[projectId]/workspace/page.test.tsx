@@ -429,6 +429,45 @@ describe("Workspace page", () => {
       );
     });
 
+    it("tells the agent a data file is a profile to query, not to read whole", async () => {
+      const send = setup();
+      vi.mocked(client.uploadFile).mockResolvedValue({
+        path: "uploads/ab12cd34/매출.xlsx.md", original: "uploads/ab12cd34/매출.xlsx",
+        chars: 10, truncated: false,
+      });
+      render(<WorkspacePage params={params} />);
+      await screen.findByLabelText("단계 진행 상황");
+
+      const dialog = await attachViaModal(new File(["PK"], "매출.xlsx"));
+      await within(dialog).findByText(/첨부됨/);
+      await closeModal();
+
+      const user = userEvent.setup();
+      await user.type(screen.getByLabelText("채팅 메시지 입력"), "분석해줘");
+      await user.click(screen.getByRole("button", { name: "전송" }));
+
+      const text = vi.mocked(send).mock.calls[0][0] as string;
+      expect(text).toContain("[첨부 파일: uploads/ab12cd34/매출.xlsx.md — 사용자가 제공한 데이터 파일의 요약입니다.");
+      expect(text).toContain("CSV를 통째로 읽지 마세요");
+      expect(text).toContain("원본 첨부 파일은 uploads/ab12cd34/매출.xlsx에 있습니다.");
+      expect(text).not.toContain("도표");
+    });
+
+    it("says so when an upload's text was cut at the limit", async () => {
+      setup();
+      vi.mocked(client.uploadFile).mockResolvedValue({
+        path: "uploads/ab12cd34/긴문서.docx.md", original: null, chars: 50000, truncated: true,
+      });
+      render(<WorkspacePage params={params} />);
+      await screen.findByLabelText("단계 진행 상황");
+
+      const dialog = await attachViaModal(new File(["PK"], "긴문서.docx"));
+      await within(dialog).findByText(/첨부됨/);
+      await closeModal();
+
+      expect(await screen.findByText(/긴문서\.docx은\(는\) 텍스트로 바꾸면 5만 자를 넘어/)).toBeInTheDocument();
+    });
+
     it("refuses legacy formats and oversized files before uploading, and says why", async () => {
       setup();
       render(<WorkspacePage params={params} />);

@@ -149,13 +149,17 @@ def test_md_passthrough():
     assert content == "# 제목\n내용" and truncated is False
 
 
-def test_xlsx_becomes_markdown_table():
-    content, _ = convert("survey.xlsx", _xlsx_bytes())
-    assert "## 의견" in content            # sheet name header
-    assert "| 이름 | 의견 |" in content
-    assert "| 김PM | 너무 느려요 |" in content
-    # Line breaks and pipes inside cells do not break the table.
-    assert "| 이PO | 줄바꿈 있음 \\| 파이프 |" in content
+def test_an_xlsx_is_stored_as_a_profile_its_original_and_a_csv_per_sheet():
+    data = _xlsx_bytes()
+    up = prepare("survey.xlsx", data)
+    assert _KEY_RE.match(up.text_key).group(1) == "survey.xlsx.md"
+    assert up.original_key == up.text_key[:-len(".md")] and up.original == data
+    [(csv_key, csv_text)] = up.extras
+    assert csv_key == f"{up.original_key}.의견.csv"
+    assert csv_text.splitlines()[0] == "이름,의견"
+    assert "## 시트: 의견" in up.text and f"`{csv_key}`" in up.text
+    # Line breaks and pipes inside cells do not break the sample table.
+    assert "| 이PO | 줄바꿈 있음 \\| 파이프 |" in up.text
 
 
 def test_docx_keeps_headings_lists_and_tables_in_order():

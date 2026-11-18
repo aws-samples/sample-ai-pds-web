@@ -148,9 +148,17 @@ export and the developer handoff package. For confidential originals or material
 contact details, keep only the parts needed or mask them before attaching.
 
 Documents are **converted to text** before they reach the conversation. Formatting and
-pictures inside a document are dropped, and anything past 50,000 characters is cut. Images
-reach the AI as pictures. A PDF is both — the AI reads the converted text, and looks at the
-original when it needs a chart or a scanned page.
+pictures inside a document are dropped, and anything past 50,000 characters is cut — a notice
+above the input says so when that happens. Images reach the AI as pictures. A PDF is both — the
+AI reads the converted text, and looks at the original when it needs a chart or a scanned page.
+
+Data files (\`.xlsx\` · \`.csv\`) **keep every row**, however many there are. The AI first reads a
+**profile** — for each sheet, its size, each column's kind, blanks, range and most common values,
+and the first few rows — and looks up specific values in the full data only when it needs them.
+It does not read the whole file, so a large table does not weigh down the conversation. CSVs saved
+by Korean Excel, merged cells, and display formats such as \`15%\` or \`00123\` are read as shown.
+Formulas are read as the value Excel saved — a file never opened and saved in Excel has no saved
+value, so the formula itself is kept.
 
 Legacy formats (\`.doc\` · \`.ppt\` · \`.xls\` · \`.hwp\`) are not accepted. Save them in the newer format first.
 
