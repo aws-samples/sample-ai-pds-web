@@ -323,7 +323,7 @@ def test_list_state_none(proto_env):
                                    "state": "none", "port": None,
                                    "session_open": False,
                                    "preview_stale": False,
-                                   "access_url": None,
+                                   "access_url": None, "host_failed": False,
                                    "response_count": 0,
                                    "has_survey": False, "spec_as_built": False}]
 
@@ -1145,7 +1145,7 @@ def test_reset_leaves_the_card_listable_as_none(proto_env, monkeypatch):
                                    "state": "none", "port": None,
                                    "session_open": False,
                                    "preview_stale": False,
-                                   "access_url": None,
+                                   "access_url": None, "host_failed": False,
                                    "response_count": 0,
                                    "has_survey": False, "spec_as_built": False}]
 
@@ -2465,3 +2465,34 @@ def test_deleting_an_unknown_demo_record_is_404(proto_env):
     _seed_spec(proto_env["s3"])
     assert client.delete(
         f"/projects/{PID}/prototypes/{SLUG}/demo-records/nope").status_code == 404
+
+
+def test_a_second_start_while_one_is_under_way_is_409(proto_env, monkeypatch):
+    """Two overlapping starts of one prototype lost track of the first one's server unit
+    (measured in operation), so the second is refused while the first runs."""
+    import aipds.proto.hosting as hosting
+    monkeypatch.setattr(hosting, "_starting", {(PID, SLUG)})
+    resp = client.post(f"/projects/{PID}/prototypes/{SLUG}/host")
+    assert resp.status_code == 409
+    assert resp.json()["detail"] == "host_starting"
+    assert proto_env["host"].start_cwds == []      # nothing was started
+
+
+def test_the_start_guard_is_released_when_a_start_fails(proto_env):
+    import aipds.proto.hosting as hosting
+    proto_env["host"].infos[(PID, SLUG)] = HostInfo(state="failed", port=None, log_tail="x")
+    assert client.post(f"/projects/{PID}/prototypes/{SLUG}/host").status_code == 502
+    assert hosting._starting == set()
+    proto_env["host"].start_exc = RuntimeError("boom")
+    import pytest as _pytest
+    with _pytest.raises(RuntimeError):
+        client.post(f"/projects/{PID}/prototypes/{SLUG}/host")
+    assert hosting._starting == set()
+
+
+def test_the_list_says_when_the_last_start_failed(proto_env):
+    _seed_spec(proto_env["s3"])
+    proto_env["host"].infos[(PID, SLUG)] = HostInfo(state="failed", port=None, log_tail="x")
+    cards = client.get(f"/projects/{PID}/prototypes").json()["prototypes"]
+    card = next(c for c in cards if c["slug"] == SLUG)
+    assert card["host_failed"] is True

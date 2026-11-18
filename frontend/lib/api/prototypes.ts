@@ -40,6 +40,9 @@ export interface PrototypeInfo {
    *  The card's build button branches on this value: if open, "세션 열기" (open session);
    *  otherwise "수정하기" (modify) / "이어서 하기" (continue) depending on the state. */
   session_open: boolean;
+  /** The last hosting start failed. A failed start keeps its build, so `state` reads `built`; the
+   *  card uses this to say so and to offer the log and a stop. */
+  host_failed: boolean;
   /** Whether the running server is older than the source — that is, whether the preview and
    *  participant link are showing **a previous version**.
    *

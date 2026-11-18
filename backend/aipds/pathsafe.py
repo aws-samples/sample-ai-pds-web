@@ -77,6 +77,34 @@ def reject_unsafe_segment(value: str) -> None:
         raise ValueError(f"unsafe path segment: {value!r}")
 
 
+def beneath(root: str | os.PathLike, *segments: str) -> Path:
+    """`root/segment/…` — each segment exactly one ordinary path segment, and the joined path
+    checked to lie strictly inside `root`.
+
+    The segment check (`reject_unsafe_segment`) is what makes this safe; the containment check
+    after it can never fail for a path built that way. It is here so static analysis can see
+    the guard: CodeQL's path-injection query does not know `reject_unsafe_segment`, and flagged
+    every path built from a URL parameter, but it does know "normalise, then check the prefix".
+
+    `abspath`, not `realpath`: links are **not** followed. Following them would change what
+    callers act on — `rmtree` of a resolved path deletes the target a link points to, where
+    the unresolved path is refused as a link.
+    """
+    for segment in segments:
+        reject_unsafe_segment(segment)
+    return inside(root, os.path.join(root, *segments))
+
+
+def inside(root: str | os.PathLike, path: str | os.PathLike) -> Path:
+    """`path`, normalised, if it lies strictly inside `root` (links not followed); else
+    ValueError. For a path a caller built itself; `beneath` builds one from segments."""
+    base = os.path.abspath(root)
+    candidate = os.path.abspath(path)
+    if not candidate.startswith(base + os.sep):
+        raise ValueError(f"path outside {base}: {candidate}")
+    return Path(candidate)
+
+
 # ---- When the backend touches trees the agent can write to ----
 #
 # Workspace and build trees are shared by the agent inside the sandbox (a different uid)

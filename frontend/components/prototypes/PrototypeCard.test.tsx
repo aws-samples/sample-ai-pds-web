@@ -12,6 +12,7 @@ function info(overrides: Partial<PrototypeInfo>): PrototypeInfo {
     state: "none",
     port: null,
     session_open: false,
+    host_failed: false,
     preview_stale: false,
     access_url: null,
     response_count: 0,
@@ -481,6 +482,7 @@ const BUILT_Q: PrototypeInfo = {
   state: "built",
   port: null,
   session_open: false,
+  host_failed: false,
   preview_stale: false,
   access_url: null,
   response_count: 0,
@@ -564,3 +566,39 @@ describe("PrototypeCard — 설문 표시", () => {
   });
 });
 
+
+// ---- After a failed hosting start ----
+// A failed start keeps its build, so the card reads `built`, and `built` had no log button: the
+// reason a start failed was nowhere on screen, and whatever the start left running could only be
+// stopped from a running card.
+
+describe("PrototypeCard — 호스팅 실패 후", () => {
+  it("실패를 표시하고 로그와 중지를 제공한다", async () => {
+    const onShowLogs = vi.fn();
+    const onStopHost = vi.fn();
+    render(<PrototypeCard info={info({ state: "built", host_failed: true })} busy={false}
+                          {...noop} onStopHost={onStopHost} onShowLogs={onShowLogs} />);
+    expect(screen.getByText("호스팅 실패")).toBeInTheDocument();
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "로그" }));
+    await user.click(screen.getByRole("button", { name: "호스팅 중지" }));
+    expect(onShowLogs).toHaveBeenCalledTimes(1);
+    expect(onStopHost).toHaveBeenCalledTimes(1);
+    // Starting again stays available — it is the usual next step.
+    expect(screen.getByRole("button", { name: "호스팅 시작" })).toBeInTheDocument();
+  });
+
+  it("실패가 없으면 빌드 완료 카드는 그대로다", () => {
+    render(<PrototypeCard info={info({ state: "built" })} busy={false} {...noop} onShowLogs={vi.fn()} />);
+    expect(screen.queryByText("호스팅 실패")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "로그" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "호스팅 중지" })).not.toBeInTheDocument();
+  });
+
+  it("읽기 전용이면 로그만 보여 준다", () => {
+    render(<PrototypeCard info={info({ state: "built", host_failed: true })} busy={false}
+                          {...noop} onShowLogs={vi.fn()} readOnly />);
+    expect(screen.getByRole("button", { name: "로그" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "호스팅 중지" })).not.toBeInTheDocument();
+  });
+});

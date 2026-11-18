@@ -534,3 +534,32 @@ describe("Prototypes page — next step after a build", () => {
     expect(screen.queryByRole("note")).not.toBeInTheDocument();
   });
 });
+
+// ---- A failed hosting start shows why ----
+// The 502's detail is the tail of the host log. It used to be swapped for a generic sentence and
+// dropped, so the reason never reached the screen.
+
+describe("Prototypes page — 호스팅 실패", () => {
+  it("502로 실패하면 그 로그를 바로 연다", async () => {
+    const built = [{ ...PROTOTYPES[0], state: "built", session_open: false }];
+    server.use(
+      http.get(`${API_BASE_URL}/projects/p1/prototypes`, () => HttpResponse.json(listing(built))),
+      http.get(`${API_BASE_URL}/projects/p1/prototypes/todo-app/host`,
+        () => HttpResponse.json({ detail: "not hosted" }, { status: 404 })),
+      http.post(`${API_BASE_URL}/projects/p1/prototypes/todo-app/host`,
+        () => HttpResponse.json(
+          { detail: "Failed to start transient service unit: Unit aipds-run-proto-x.service was already loaded" },
+          { status: 502 })),
+    );
+    mockStream();
+    await act(async () => {
+      render(<PrototypesPage params={params} />);
+    });
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: "호스팅 시작" }));
+
+    expect(await screen.findByRole("dialog")).toBeInTheDocument();
+    expect(screen.getByText(/was already loaded/)).toBeInTheDocument();
+    expect(screen.getByText(/로그에서 원인을 확인한 뒤/)).toBeInTheDocument();
+  });
+});

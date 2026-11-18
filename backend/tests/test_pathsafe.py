@@ -1,8 +1,9 @@
 import os
 
 import pytest
-from aipds.pathsafe import (read_text_beneath, reject_unsafe, reject_unsafe_segment,
-                            stat_beneath, unlink_beneath, write_beneath)
+from aipds.pathsafe import (beneath, inside, read_text_beneath, reject_unsafe,
+                            reject_unsafe_segment, stat_beneath, unlink_beneath,
+                            write_beneath)
 
 def test_accepts_normal_relative_paths():
     for ok in ("aiplc-docs/audit.md", "aiplc-docs/discovery/x.md", "a-questions.md",
@@ -117,3 +118,34 @@ def test_beneath_helpers_reject_escaping_paths(tmp_path):
             write_beneath(tmp_path, rel, "x")
         with pytest.raises(ValueError):
             read_text_beneath(tmp_path, rel)
+
+
+# ---- beneath / inside: containment stated in a form static analysis recognises ----
+
+
+
+def test_beneath_joins_ordinary_segments(tmp_path):
+    assert beneath(tmp_path, "p1", "todo") == tmp_path / "p1" / "todo"
+    assert beneath(tmp_path, "한글-프로젝트", "..foo") == tmp_path / "한글-프로젝트" / "..foo"
+
+
+@pytest.mark.parametrize("bad", ["..", ".", "", "a/b", "/etc", "../x"])
+def test_beneath_refuses_anything_but_one_ordinary_segment(tmp_path, bad):
+    with pytest.raises(ValueError):
+        beneath(tmp_path, "p1", bad)
+
+
+def test_inside_refuses_the_root_itself_and_anything_outside(tmp_path):
+    assert inside(tmp_path, tmp_path / "a" / "b") == tmp_path / "a" / "b"
+    for outside in (tmp_path, tmp_path / ".." / "x", tmp_path.parent,
+                    f"{tmp_path}-sibling/x"):
+        with pytest.raises(ValueError):
+            inside(tmp_path, outside)
+
+
+def test_links_are_not_followed(tmp_path):
+    """Following a link would change what callers act on — `purge` rmtrees what it gets, and
+    the resolved target of a link inside the root is not the path it asked for."""
+    (tmp_path / "real").mkdir()
+    (tmp_path / "link").symlink_to(tmp_path / "real")
+    assert beneath(tmp_path, "link") == tmp_path / "link"

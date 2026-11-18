@@ -275,11 +275,66 @@ def test_unit_names(launch):
 
 
 def test_stop_is_only_for_hosting_kinds(launch):
-    assert launch.build_stop("proto", "p1", "todo")[:2] == ["/usr/bin/systemctl", "stop"]
+    unit = launch.unit_name("proto", "p1", "todo")
+    assert launch.build_stop("proto", "p1", "todo") == [
+        ["/usr/bin/systemctl", "stop", unit], ["/usr/bin/systemctl", "reset-failed", unit]]
     with pytest.raises(launch.LaunchError):
         launch.build_stop("discovery", "p1", "todo")
     with pytest.raises(launch.LaunchError):
         launch.build_stop("proto", "..", "todo")
+
+
+class _Systemctl:
+    """Records the systemctl calls the wrapper makes, answering each with a given exit code."""
+
+    def __init__(self, codes=None):
+        self.calls: list[list[str]] = []
+        self.codes = codes or {}
+
+    def __call__(self, argv, **kwargs):
+        self.calls.append(list(argv))
+        return subprocess.CompletedProcess(argv, self.codes.get(argv[1], 0))
+
+
+def test_stopping_a_unit_that_is_not_there_is_success(launch, monkeypatch):
+    """`stop` now runs on every start, for prototypes that were never hosted too — a unit that
+    does not exist (systemctl exit 5, "not loaded") must not read as a failure."""
+    fake = _Systemctl({"stop": 5, "reset-failed": 1})
+    monkeypatch.setattr(launch.subprocess, "run", fake)
+    assert launch.clear_unit("proto", "p1", "todo") == 0
+    assert [c[1] for c in fake.calls] == ["stop", "reset-failed"]
+    fake = _Systemctl({"stop": 1})
+    monkeypatch.setattr(launch.subprocess, "run", fake)
+    assert launch.clear_unit("proto", "p1", "todo") == 1
+
+
+def test_a_hosting_run_frees_its_unit_name_before_creating_the_unit(launch, monkeypatch):
+    """Measured in operation: a server unit left from an earlier start kept its fixed name, and
+    every later start died on systemd-run's "Unit … was already loaded". The wrapper clears the
+    name first — whatever holds it is an earlier run of this same prototype."""
+    _tree(launch, "proto", slug="todo")
+    fake = _Systemctl()
+    execs = []
+    monkeypatch.setattr(launch.os, "geteuid", lambda: 0)
+    monkeypatch.setattr(launch.subprocess, "run", fake)
+    monkeypatch.setattr(launch.os, "execve", lambda path, argv, env: execs.append(argv))
+    launch.main(["run", "proto", "p1", "todo", "--", "run", "start"])
+    unit = launch.unit_name("proto", "p1", "todo")
+    assert fake.calls == [["/usr/bin/systemctl", "stop", unit],
+                          ["/usr/bin/systemctl", "reset-failed", unit]]
+    assert execs and f"--unit={unit}" in execs[0]
+
+
+def test_an_agent_run_clears_nothing(launch, monkeypatch):
+    """Agent units get a random suffix — there is no earlier run with the same name to clear."""
+    _tree(launch, "discovery")
+    fake = _Systemctl()
+    monkeypatch.setattr(launch.os, "geteuid", lambda: 0)
+    monkeypatch.setattr(launch.subprocess, "run", fake)
+    monkeypatch.setattr(launch.os, "execve", lambda path, argv, env: None)
+    monkeypatch.setattr(launch, "find_claude", lambda: CLAUDE)
+    launch.main(["run", "discovery", "p1", "--", "--print"])
+    assert fake.calls == []
 
 
 def test_conf_parsing(launch, tmp_path):

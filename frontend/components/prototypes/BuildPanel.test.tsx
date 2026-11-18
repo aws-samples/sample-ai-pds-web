@@ -325,8 +325,10 @@ describe("BuildPanel", () => {
       expect(screen.getByText(/호스팅을 시작하지 못했습니다/)).toBeInTheDocument();
     });
 
-    it("호스팅 시작의 502는 로그 꼬리를 싣지 않고 실패 문구를 보여준다", async () => {
-      // The 502's detail is the tail of the npm log (start_host in backend routes/prototypes).
+    it("호스팅 시작의 502는 실패 문구를 보여주고, 로그 꼬리는 문구가 아니라 그 아래 로그로 보여준다", async () => {
+      // The 502's detail is the tail of the host log (start_host in backend routes/prototypes).
+      // It is not a sentence, so it stays out of the error line — but it is the reason, so it
+      // is shown below it (it used to be dropped, leaving no way to see why a start failed).
       vi.mocked(prototypesApi.startHost).mockRejectedValueOnce(
         new ApiError(502, "npm ERR! code ELIFECYCLE\nnpm ERR! errno 1"));
       mockStream({ buildComplete: { summary: "완성", remaining: "" } });
@@ -335,8 +337,21 @@ describe("BuildPanel", () => {
       const user = userEvent.setup();
       await user.click(screen.getByRole("button", { name: "호스팅 시작" }));
 
-      expect(screen.getByText(/호스팅을 시작하지 못했습니다/)).toBeInTheDocument();
-      expect(screen.queryByText(/ELIFECYCLE/)).not.toBeInTheDocument();
+      const sentence = screen.getByText(/호스팅을 시작하지 못했습니다/);
+      expect(sentence.textContent).not.toMatch(/ELIFECYCLE/);
+      const log = screen.getByText(/ELIFECYCLE/);
+      expect(log.tagName).toBe("PRE");
+    });
+
+    it("호스팅 시작이 이미 진행 중이면 그렇다고 말한다", async () => {
+      vi.mocked(prototypesApi.startHost).mockRejectedValueOnce(new ApiError(409, "host_starting"));
+      mockStream({ buildComplete: { summary: "완성", remaining: "" } });
+      render(<BuildPanel projectId="proj-1" slug="todo-app" onClose={vi.fn()} />);
+
+      const user = userEvent.setup();
+      await user.click(screen.getByRole("button", { name: "호스팅 시작" }));
+
+      expect(screen.getByText(/이미 시작되는 중입니다/)).toBeInTheDocument();
     });
 
     it("호스팅 시작이 열린 세션에 막히면 무엇을 누를지 보여준다", async () => {
