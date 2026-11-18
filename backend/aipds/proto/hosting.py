@@ -34,6 +34,46 @@ class HostStarting(RuntimeError):
     """
 
 
+def claim_start(pid: str, slug: str) -> None:
+    """Mark this prototype's hosting as under way, or raise `HostStarting` if it already is.
+
+    Separate from running it because the route answers **before** the procedure runs (it
+    takes minutes, and CloudFront cuts a request after 60s), so the claim has to be in place
+    when the 202 goes out — a second press right after must already be refused.
+    """
+    key = (pid, slug)
+    if key in _starting:
+        raise HostStarting(f"{pid}/{slug}")
+    _starting.add(key)
+
+
+def is_starting(pid: str, slug: str) -> bool:
+    return (pid, slug) in _starting
+
+
+async def host_in_background(pid: str, slug: str) -> None:
+    """The route's background body: run a claimed start to the end. Never raises.
+
+    The screen learns the outcome from `GET /host`, so an exception must not vanish into the
+    task — it is recorded as a failed start with the reason in the host log
+    (`ProtoHost.record_failure`). The claim is released **after** that, so there is no moment
+    where the prototype is neither starting nor failed.
+    """
+    import aipds.app as app_module
+    try:
+        await _host_prototype(pid, slug)
+    except Exception as exc:
+        _log.exception("hosting %s/%s failed", pid, slug)
+        reason = ("no build to host" if isinstance(exc, FileNotFoundError)
+                  else f"{type(exc).__name__}: {exc}")
+        try:
+            app_module.proto_host().record_failure(pid, slug, reason)
+        except Exception:
+            _log.exception("recording the hosting failure of %s/%s failed", pid, slug)
+    finally:
+        _starting.discard((pid, slug))
+
+
 async def restore_local(pid: str, slug: str, build_dir, store: PrototypeStore) -> None:
     """Restore from the source of truth what is not present locally — build output and access tokens.
 
@@ -64,14 +104,11 @@ async def host_prototype(pid: str, slug: str) -> tuple[HostInfo, str | None]:
 
     If there is no build tree, `FileNotFoundError` (the route maps it to a 404).
     """
-    key = (pid, slug)
-    if key in _starting:
-        raise HostStarting(f"{pid}/{slug}")
-    _starting.add(key)
+    claim_start(pid, slug)
     try:
         return await _host_prototype(pid, slug)
     finally:
-        _starting.discard(key)
+        _starting.discard((pid, slug))
 
 
 async def _host_prototype(pid: str, slug: str) -> tuple[HostInfo, str | None]:

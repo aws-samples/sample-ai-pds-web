@@ -43,6 +43,9 @@ export interface PrototypeInfo {
   /** The last hosting start failed. A failed start keeps its build, so `state` reads `built`; the
    *  card uses this to say so and to offer the log and a stop. */
   host_failed: boolean;
+  /** A start is under way — begun elsewhere (another tab, the build panel) or before a reload.
+   *  The page follows it the same way as one it started itself. */
+  host_starting: boolean;
   /** Whether the running server is older than the source — that is, whether the preview and
    *  participant link are showing **a previous version**.
    *
@@ -86,6 +89,9 @@ export interface HostStatus {
   /** Same value as PrototypeInfo.access_url — null if not yet issued. */
   access_url: string | null;
   log_tail: string;
+  /** The start is still under way. Poll until false, then read the outcome from `state`
+   *  (`followHost`). While true, `state` is this attempt's step, never a previous outcome. */
+  starting: boolean;
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -166,8 +172,34 @@ export async function submitPrototypeAnswers(
   }
 }
 
-export async function startHost(pid: string, slug: string): Promise<HostStatus> {
-  return request<HostStatus>(sessionPath(pid, slug, "/host"), { method: "POST" });
+/** Start hosting. The server answers 202 **before** the start runs — the procedure takes a
+ *  minute to more than ten, and CloudFront cuts a response after 60s, so waiting for it made
+ *  every start read as failed while it went on and succeeded. Follow it with `followHost`. */
+export async function startHost(pid: string, slug: string): Promise<{ state: HostState; starting: boolean }> {
+  return request(sessionPath(pid, slug, "/host"), { method: "POST" });
+}
+
+/** Poll `GET /host` until the start is over, reporting each status; resolves with the last one
+ *  (null if the server has no record — nothing was started). A failed poll is retried, not
+ *  thrown: one dropped request must not end the wait for a start that is still running. */
+export async function followHost(
+  pid: string, slug: string, onStatus: (st: HostStatus) => void,
+  { intervalMs = 1500, maxErrors = 5 }: { intervalMs?: number; maxErrors?: number } = {},
+): Promise<HostStatus | null> {
+  let errors = 0;
+  for (;;) {
+    await new Promise((r) => setTimeout(r, intervalMs));
+    let st: HostStatus | null;
+    try {
+      st = await getHost(pid, slug);
+    } catch (err) {
+      if (++errors >= maxErrors) throw err;
+      continue;
+    }
+    errors = 0;
+    if (st === null || !st.starting) return st;
+    onStatus(st);
+  }
 }
 
 export async function stopHost(pid: string, slug: string): Promise<void> {

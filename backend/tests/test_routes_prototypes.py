@@ -127,6 +127,8 @@ class FakeProtoHost:
         self._root = root
         self.infos: dict[tuple[str, str], HostInfo] = {}
         self.start_exc = None
+        # Raised by require_launchable — the wrapper refusing, checked before the route answers.
+        self.require_exc = None
         # Mirrors start_exc for the purge path. Without it the route's
         # `failures.append("build-tree")` branch was unreachable from any test:
         # deleting that line left all 60 route tests green, i.e. a partial reset
@@ -194,6 +196,14 @@ class FakeProtoHost:
             if base.is_dir():
                 found |= {child.name for child in base.iterdir() if child.is_dir()}
         return sorted(found)
+
+    def require_launchable(self):
+        if self.require_exc is not None:
+            raise self.require_exc
+
+    def record_failure(self, pid, slug, reason):
+        self.infos[(pid, slug)] = HostInfo(state="failed", port=None,
+                                           log_tail=f"[AI-PDS] failed: {reason}")
 
     def log_tail(self, pid, slug, lines=100):
         info = self.infos.get((pid, slug))
@@ -323,7 +333,7 @@ def test_list_state_none(proto_env):
                                    "state": "none", "port": None,
                                    "session_open": False,
                                    "preview_stale": False,
-                                   "access_url": None, "host_failed": False,
+                                   "access_url": None, "host_failed": False, "host_starting": False,
                                    "response_count": 0,
                                    "has_survey": False, "spec_as_built": False}]
 
@@ -1145,7 +1155,7 @@ def test_reset_leaves_the_card_listable_as_none(proto_env, monkeypatch):
                                    "state": "none", "port": None,
                                    "session_open": False,
                                    "preview_stale": False,
-                                   "access_url": None, "host_failed": False,
+                                   "access_url": None, "host_failed": False, "host_starting": False,
                                    "response_count": 0,
                                    "has_survey": False, "spec_as_built": False}]
 
@@ -1514,20 +1524,26 @@ def test_an_ordinary_slug_still_passes_the_guard(proto_env):
 
 # ---- hosting ----
 
-def test_host_start_ok(proto_env):
+def test_host_start_answers_at_once_and_the_outcome_is_read_from_the_status(proto_env):
+    """The start answers 202 before the procedure runs — waiting for it outlived CloudFront's
+    60s origin timeout, so every start read as failed while the backend went on and succeeded.
+    (TestClient runs the background task before returning, so the outcome is already there.)"""
     resp = client.post(f"/projects/{PID}/prototypes/{SLUG}/host")
-    assert resp.status_code == 200
-    body = resp.json()
+    assert resp.status_code == 202
+    assert resp.json() == {"state": "installing", "starting": True}
+    body = client.get(f"/projects/{PID}/prototypes/{SLUG}/host").json()
     assert body["state"] == "running" and body["port"] == 4001
+    assert body["starting"] is False
 
 
 def test_host_start_says_the_sandbox_is_unavailable(proto_env):
     """When the wrapper is refusing (aipds/launcher.py), say it is for the operator to fix, not show the log tail."""
     from aipds.launcher import LauncherUnavailable
-    proto_env["host"].start_exc = LauncherUnavailable("no sudoers")
+    proto_env["host"].require_exc = LauncherUnavailable("no sudoers")
     resp = client.post(f"/projects/{PID}/prototypes/{SLUG}/host")
     assert resp.status_code == 503
     assert resp.json()["detail"] == "sandbox_unavailable"
+    assert proto_env["host"].start_cwds == []      # refused before anything ran
 
 
 def test_host_start_targets_the_prototype_subtree_not_the_build_dir(proto_env):
@@ -1546,7 +1562,7 @@ def test_host_start_targets_the_prototype_subtree_not_the_build_dir(proto_env):
     proto_dir.mkdir(parents=True)
     (proto_dir / "package.json").write_text("{}", encoding="utf-8")
 
-    assert client.post(f"/projects/{PID}/prototypes/{SLUG}/host").status_code == 200
+    assert client.post(f"/projects/{PID}/prototypes/{SLUG}/host").status_code == 202
 
     assert proto_env["host"].start_cwds == [proto_dir]
 
@@ -1570,7 +1586,7 @@ def test_host_start_base_path_is_the_browser_visible_prefix(proto_env, monkeypat
     proto_dir.mkdir(parents=True)
     (proto_dir / "package.json").write_text("{}", encoding="utf-8")
 
-    assert client.post(f"/projects/{PID}/prototypes/{SLUG}/host").status_code == 200
+    assert client.post(f"/projects/{PID}/prototypes/{SLUG}/host").status_code == 202
 
     assert proto_env["host"].start_base_paths == [f"/api/proto/{PID}/{SLUG}"]
 
@@ -1584,7 +1600,7 @@ def test_host_start_base_path_honours_an_empty_public_prefix(proto_env, monkeypa
     proto_dir.mkdir(parents=True)
     (proto_dir / "package.json").write_text("{}", encoding="utf-8")
 
-    assert client.post(f"/projects/{PID}/prototypes/{SLUG}/host").status_code == 200
+    assert client.post(f"/projects/{PID}/prototypes/{SLUG}/host").status_code == 202
 
     assert proto_env["host"].start_base_paths == [f"/proto/{PID}/{SLUG}"]
 
@@ -1604,23 +1620,51 @@ def test_host_start_passes_the_projects_model(proto_env, monkeypatch):
     proto_dir.mkdir(parents=True)
     (proto_dir / "package.json").write_text("{}", encoding="utf-8")
 
-    assert client.post(f"/projects/{PID}/prototypes/{SLUG}/host").status_code == 200
+    assert client.post(f"/projects/{PID}/prototypes/{SLUG}/host").status_code == 202
 
     assert proto_env["host"].start_model_ids == ["global.anthropic.claude-opus-5"]
 
 
-def test_host_start_no_bundle_404(proto_env):
+def test_a_missing_build_is_a_failed_start_that_says_so(proto_env):
     proto_env["host"].start_exc = FileNotFoundError("bundle")
-    assert client.post(
-        f"/projects/{PID}/prototypes/{SLUG}/host").status_code == 404
+    assert client.post(f"/projects/{PID}/prototypes/{SLUG}/host").status_code == 202
+    body = client.get(f"/projects/{PID}/prototypes/{SLUG}/host").json()
+    assert body["state"] == "failed" and body["starting"] is False
+    assert "no build to host" in body["log_tail"]
 
 
-def test_host_start_failed_502_with_log(proto_env):
+def test_a_failed_start_is_read_from_the_status_with_its_log(proto_env):
     proto_env["host"].infos[(PID, SLUG)] = HostInfo(
         state="failed", port=None, log_tail="npm ERR! broken")
-    resp = client.post(f"/projects/{PID}/prototypes/{SLUG}/host")
-    assert resp.status_code == 502
-    assert "npm ERR!" in resp.json()["detail"]
+    assert client.post(f"/projects/{PID}/prototypes/{SLUG}/host").status_code == 202
+    body = client.get(f"/projects/{PID}/prototypes/{SLUG}/host").json()
+    assert body["state"] == "failed"
+    assert "npm ERR!" in body["log_tail"]
+
+
+def test_an_exception_in_the_procedure_is_recorded_not_lost(proto_env):
+    """The procedure runs after the response, so an exception there has nowhere to go but the
+    log — the screen must still learn the start failed, and why."""
+    proto_env["host"].start_exc = RuntimeError("disk full")
+    assert client.post(f"/projects/{PID}/prototypes/{SLUG}/host").status_code == 202
+    body = client.get(f"/projects/{PID}/prototypes/{SLUG}/host").json()
+    assert body["state"] == "failed"
+    assert "RuntimeError: disk full" in body["log_tail"]
+
+
+def test_while_a_start_is_under_way_the_status_says_so(proto_env, monkeypatch):
+    """Before `start()` records its first step there is no entry (or only the previous
+    attempt's) — the status must still say "starting", not 404 or the old failure."""
+    import aipds.proto.hosting as hosting
+    monkeypatch.setattr(hosting, "_starting", {(PID, SLUG)})
+    body = client.get(f"/projects/{PID}/prototypes/{SLUG}/host").json()
+    assert body["starting"] is True and body["state"] == "installing"
+    proto_env["host"].infos[(PID, SLUG)] = HostInfo(state="failed", port=None, log_tail="old")
+    body = client.get(f"/projects/{PID}/prototypes/{SLUG}/host").json()
+    assert body["starting"] is True and body["state"] == "installing"
+    proto_env["host"].infos[(PID, SLUG)] = HostInfo(state="building", port=None, log_tail="")
+    body = client.get(f"/projects/{PID}/prototypes/{SLUG}/host").json()
+    assert body["state"] == "building"
 
 
 def test_host_start_409_while_a_build_session_is_live(proto_env, monkeypatch):
@@ -1688,7 +1732,7 @@ def test_host_start_refreshes_the_brand_theme_before_building(proto_env, monkeyp
 
     resp = client.post(f"/projects/{PID}/prototypes/{SLUG}/host")
 
-    assert resp.status_code == 200
+    assert resp.status_code == 202
     assert "#111111" in seen["css"]
 
 
@@ -1709,7 +1753,7 @@ def test_host_start_succeeds_even_if_the_brand_sync_fails(proto_env, monkeypatch
 
     resp = client.post(f"/projects/{PID}/prototypes/{SLUG}/host")
 
-    assert resp.status_code == 200
+    assert resp.status_code == 202
 
 
 def test_host_start_warns_when_no_theme_copy_exists_to_refresh(
@@ -1737,7 +1781,7 @@ def test_host_start_warns_when_no_theme_copy_exists_to_refresh(
     with caplog.at_level("WARNING"):
         resp = client.post(f"/projects/{PID}/prototypes/{SLUG}/host")
 
-    assert resp.status_code == 200
+    assert resp.status_code == 202
     assert any("theme copy" in r.message for r in caplog.records)
 
 
@@ -1763,7 +1807,7 @@ def test_host_start_does_not_warn_when_a_theme_copy_exists(
     with caplog.at_level("WARNING"):
         resp = client.post(f"/projects/{PID}/prototypes/{SLUG}/host")
 
-    assert resp.status_code == 200
+    assert resp.status_code == 202
     assert not any("theme copy" in r.message for r in caplog.records)
 
 
@@ -2061,8 +2105,8 @@ def test_a_completed_session_does_not_block_hosting(proto_env, monkeypatch):
 
     resp = client.post(f"/projects/{PID}/prototypes/{SLUG}/host")
 
-    assert resp.status_code == 200
-    assert resp.json()["state"] == "running"
+    assert resp.status_code == 202
+    assert client.get(f"/projects/{PID}/prototypes/{SLUG}/host").json()["state"] == "running"
 
 
 def test_a_completed_session_does_not_block_a_new_start(proto_env, monkeypatch):
@@ -2481,12 +2525,10 @@ def test_a_second_start_while_one_is_under_way_is_409(proto_env, monkeypatch):
 def test_the_start_guard_is_released_when_a_start_fails(proto_env):
     import aipds.proto.hosting as hosting
     proto_env["host"].infos[(PID, SLUG)] = HostInfo(state="failed", port=None, log_tail="x")
-    assert client.post(f"/projects/{PID}/prototypes/{SLUG}/host").status_code == 502
+    assert client.post(f"/projects/{PID}/prototypes/{SLUG}/host").status_code == 202
     assert hosting._starting == set()
     proto_env["host"].start_exc = RuntimeError("boom")
-    import pytest as _pytest
-    with _pytest.raises(RuntimeError):
-        client.post(f"/projects/{PID}/prototypes/{SLUG}/host")
+    assert client.post(f"/projects/{PID}/prototypes/{SLUG}/host").status_code == 202
     assert hosting._starting == set()
 
 
@@ -2496,3 +2538,15 @@ def test_the_list_says_when_the_last_start_failed(proto_env):
     cards = client.get(f"/projects/{PID}/prototypes").json()["prototypes"]
     card = next(c for c in cards if c["slug"] == SLUG)
     assert card["host_failed"] is True
+
+
+def test_the_list_says_when_a_start_is_under_way(proto_env, monkeypatch):
+    """So the screen can follow a start it did not begin itself — after a reload, or one begun
+    from the build panel — and so an old failure is not shown while a new start runs."""
+    import aipds.proto.hosting as hosting
+    _seed_spec(proto_env["s3"])
+    proto_env["host"].infos[(PID, SLUG)] = HostInfo(state="failed", port=None, log_tail="x")
+    monkeypatch.setattr(hosting, "_starting", {(PID, SLUG)})
+    card = next(c for c in client.get(f"/projects/{PID}/prototypes").json()["prototypes"]
+                if c["slug"] == SLUG)
+    assert card["host_starting"] is True and card["host_failed"] is False
