@@ -527,6 +527,8 @@ def _request_branches_ko(what: str) -> str:
         "선언해줘.\n"
         "- 질문이나 상의라면 채팅에 답하고 내 다음 말을 기다려줘. 아무것도 바꾸지 "
         "않았으면 `build_complete`를 부르지 마.\n"
+        "- 이후 메시지에서 변경을 요청받아 반영했다면, 그 작업을 마치는 턴에서 "
+        "`build_complete`로 완료를 선언해줘.\n"
     )
 
 
@@ -537,6 +539,8 @@ def _request_branches_en(what: str) -> str:
         "completion with `build_complete` when it is done.\n"
         "- If it is a question or a discussion, answer it in the chat and wait for my "
         "next message. If you changed nothing, do not call `build_complete`.\n"
+        "- If a later message asks for a change and you make it, declare completion "
+        "with `build_complete` in the turn that finishes that work.\n"
     )
 
 
@@ -636,7 +640,9 @@ def build_complete_description(language: str) -> str:
                 "session ends after this declaration, so do not call it while work "
                 "remains, and do not call it to answer a question — answer in the "
                 "chat instead (a declaration with nothing changed since the last "
-                "completion is rejected). `changes` is required: what this session changed in "
+                "completion is rejected). When a turn finishes work you changed under "
+                "`prototype/`, call it in that turn — whichever message of the session "
+                "asked for the work. `changes` is required: what this session changed in "
                 "features, flows or the data model relative to the spec and the "
                 "earlier change history (for a first build: where you deviated "
                 "from the spec). Write 'none' if nothing changed. `decisions` is "
@@ -651,6 +657,8 @@ def build_complete_description(language: str) -> str:
             "이 선언 뒤 빌드 세션이 종료되므로, 아직 작업이 남았으면 호출하지 마라. "
             "질문에 답하려고 호출하지도 마라 — 답은 채팅에 쓴다(지난 완료 이후 바뀐 "
             "것이 없으면 선언이 거부된다). "
+            "`prototype/`을 바꾼 작업을 마치는 턴에서는, 그 작업을 세션의 몇 번째 "
+            "메시지가 요청했든 그 턴에서 호출한다. "
             "`changes`는 필수다: 이번 세션이 명세와 이전 수정 이력 대비 바꾼 "
             "기능·흐름·데이터 모델(첫 빌드라면 명세와 다르게 만든 것)을 적는다. "
             "바뀐 것이 없으면 '없음'이라고 적는다. "
@@ -687,6 +695,30 @@ def build_complete_unchanged(language: str) -> str:
             "내 메시지가 질문이나 상의였다면 채팅에 텍스트로 답하고 내 다음 말을 "
             "기다려라 — 세션은 열려 있다. 변경을 요청받았다면 먼저 반영한 뒤 다시 "
             "선언해라.")
+
+
+def completion_pending_reminder(language: str) -> str:
+    """Sent back by the builder's Stop hook when a turn ends with `prototype/` changed since the
+    last completion and no declaration (proto/builder.py `_on_stop`).
+
+    It must leave a way out. The hook asks only once per stop, and a turn may rightly end
+    undeclared — work remains, or the model is waiting on the user — so the reminder names
+    those cases and says what to do instead (tell the user in the chat). Without that, the
+    model reads it as an order and declares half-finished work complete, which closes the
+    session.
+    """
+    if _lang(language) == "en":
+        return ("Files under `prototype/` have changed since the last completion, and "
+                "this turn is ending without `build_complete`. If the work I asked for is "
+                "done, declare completion with `build_complete` now — the change history "
+                "and the next session depend on it. If work remains, or you need my answer "
+                "before going on, say so in the chat in one or two sentences and end the "
+                "turn; do not declare it.")
+    return ("지난 완료 이후 `prototype/`의 파일이 바뀌었는데, 이번 턴이 `build_complete` "
+            "없이 끝나려 한다. 요청받은 작업을 마쳤다면 지금 `build_complete`로 완료를 "
+            "선언해라 — 수정 이력과 다음 세션이 이 선언에 기댄다. 아직 남은 작업이 있거나 "
+            "계속하기 전에 내 답이 필요하면, 채팅에 그렇다고 한두 문장으로 쓰고 턴을 "
+            "끝내라. 그때는 선언하지 마라.")
 
 
 def build_complete_changes_missing(language: str) -> str:

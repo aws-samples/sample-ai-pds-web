@@ -638,3 +638,82 @@ async def test_the_gate_opens_the_sites_the_user_gave(tmp_path):
     assert "other.example.org" in reason
     assert "store.example.com" in reason
     assert "채팅에 붙여" in reason
+
+
+# ---- A turn that changed prototype/ is not let go without a declaration (Stop hook) ----
+#
+# Observed in a workshop run: an improvement session changed `prototype/` and closed on the
+# idle timer with no `build_complete` — no change-history entry, no handoff, and the screen
+# never showed the build as finished.
+
+def test_the_completion_check_is_wired_as_a_stop_hook(tmp_path, monkeypatch):
+    from aipds.proto.builder import _default_client_factory
+
+    captured = {}
+
+    class FakeClient:
+        def __init__(self, options=None):
+            captured["options"] = options
+
+    import claude_agent_sdk
+    monkeypatch.setattr(claude_agent_sdk, "ClaudeSDKClient", FakeClient)
+
+    b = PrototypeBuilder(
+        workspace=str(tmp_path), config_dir=str(tmp_path / "config"),
+        session_id="11111111-2222-3333-4444-555555555555", resume=False)
+    _default_client_factory(b)()
+
+    stops = captured["options"].hooks["Stop"]
+    assert any(b._on_stop in m.hooks for m in stops)
+
+
+def _built(tmp_path, body="v1"):
+    page = tmp_path / "prototype" / "page.tsx"
+    page.parent.mkdir(parents=True, exist_ok=True)
+    page.write_text(body)
+    return page
+
+
+_STOP = {"hook_event_name": "Stop", "stop_hook_active": False}
+
+
+async def test_a_changed_tree_without_a_declaration_is_sent_back(tmp_path):
+    _built(tmp_path)
+    b = _builder(tmp_path, None)
+    out = await b._on_stop(_STOP, None, None)
+    assert out["decision"] == "block"
+    assert "build_complete" in out["reason"]
+
+
+async def test_the_reminder_is_sent_only_once_per_stop(tmp_path):
+    _built(tmp_path)
+    b = _builder(tmp_path, None)
+    assert await b._on_stop({**_STOP, "stop_hook_active": True}, None, None) == {}
+
+
+async def test_a_declared_or_untouched_tree_ends_the_turn(tmp_path):
+    from aipds.proto.store import mark_completed, output_digest
+
+    b = _builder(tmp_path, None)
+    assert await b._on_stop(_STOP, None, None) == {}       # plan turn: nothing built
+
+    page = _built(tmp_path)
+    mark_completed(tmp_path, output_digest(tmp_path))
+    assert await b._on_stop(_STOP, None, None) == {}       # declaration accepted
+
+    page.write_text("v2")
+    assert (await b._on_stop(_STOP, None, None))["decision"] == "block"
+
+
+async def test_an_interrupted_turn_is_never_sent_back(tmp_path):
+    _built(tmp_path)
+    b = _builder(tmp_path, None)
+    b._interrupted = True
+    assert await b._on_stop(_STOP, None, None) == {}
+
+
+async def test_the_reminder_follows_the_project_language(tmp_path):
+    _built(tmp_path)
+    b = _builder(tmp_path, None, language="en")
+    out = await b._on_stop(_STOP, None, None)
+    assert "Files under `prototype/` have changed" in out["reason"]
