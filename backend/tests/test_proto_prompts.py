@@ -550,3 +550,35 @@ def test_english_attachment_mentions_stay_english():
     for kind in ("image", "markdown"):
         line = prompts.attachment_mention("en", "attachments/x/a", kind)
         assert not any("가" <= c <= "힣" for c in line), line
+
+
+# ---- A change asked for after the opening turn still ends in a declaration ----
+#
+# Observed in a workshop run: an improvement session changed `prototype/` and closed on the idle
+# timer without `build_complete`. Only the opening turn carried the instruction.
+
+@pytest.mark.parametrize("language", ["ko", "en"])
+def test_request_openings_cover_a_change_asked_for_in_a_later_message(language):
+    text = handoff_prompt(language, spec_key="s.md", summary="s", remaining="r",
+                          request="이건 질문이야")
+    if language == "ko":
+        assert "이후 메시지에서 변경을 요청받아 반영했다면" in text
+    else:
+        assert "If a later message asks for a change and you make it" in text
+
+
+@pytest.mark.parametrize("language", ["ko", "en"])
+def test_the_tool_description_does_not_tie_the_declaration_to_the_first_message(language):
+    text = build_complete_description(language)
+    assert ("몇 번째 메시지" if language == "ko" else "whichever message") in text
+
+
+@pytest.mark.parametrize("language", ["ko", "en"])
+def test_the_stop_reminder_leaves_a_way_out(language):
+    """The hook asks once; a turn with work left or a question pending must be able to end."""
+    text = prompts.completion_pending_reminder(language)
+    assert "build_complete" in text
+    if language == "ko":
+        assert "선언하지 마라" in text and "채팅" in text
+    else:
+        assert "do not declare it" in text and "chat" in text

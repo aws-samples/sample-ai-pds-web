@@ -37,7 +37,9 @@ import json
 import logging
 import os
 from datetime import datetime, timezone
+from fnmatch import fnmatchcase
 from pathlib import Path
+from typing import Callable
 
 from aipds.pathsafe import (read_bytes_beneath, read_text_beneath, reject_unsafe,
                             write_beneath)
@@ -173,16 +175,92 @@ _DIGEST_EXCLUDED = frozenset({"package-lock.json", "tsconfig.tsbuildinfo",
                               "next-env.d.ts"})
 
 
+#: The prototype's own ignore list, read from `prototype/` (see `_runtime_matcher`).
+_IGNORE_FILE = ".gitignore"
+
+
+def _ignore_rules(text: str) -> list[tuple[str, bool, bool]]:
+    """`.gitignore` text -> (pattern, anchored, dir_only) rules.
+
+    A subset of the format, enough for what builds actually write (`data/db.json`,
+    `data/uploads`, `node_modules`, `*.log`): comments and blank lines are skipped, a
+    trailing `/` matches directories only, and a pattern with a `/` in it is anchored at
+    `prototype/`. Negations (`!`) are dropped rather than honoured -- a dropped rule only
+    ever makes the digest look at **more** files, which errs toward "changed".
+    """
+    rules: list[tuple[str, bool, bool]] = []
+    for line in text.splitlines():
+        line = line.strip()
+        if not line or line.startswith(("#", "!")):
+            continue
+        dir_only = line.endswith("/")
+        line = line.rstrip("/")
+        if line.startswith("**/"):
+            line, anchored = line[3:], False
+        else:
+            anchored = "/" in line
+            line = line.lstrip("/")
+        if line:
+            rules.append((line, anchored, dir_only))
+    return rules
+
+
+def _runtime_matcher(proto_dir: Path) -> Callable[[str], bool]:
+    """Predicate over paths relative to `prototype/`: does the prototype's own
+    `.gitignore` list it?
+
+    **Why the ignore list.** The running prototype writes into its own tree -- the store
+    the build contract has it keep apart from the seed (`data/db.json`), uploaded files,
+    extracted assets. Those bytes change whenever someone uses the preview, so hashing
+    them reported "changed" when the agent changed nothing: in a workshop run, 4 of 13
+    prototypes matched their completion marker again only once `data/db.json` was left
+    out. A fixed list of names cannot cover every build's layout, but every one of those
+    builds had listed exactly these files in `prototype/.gitignore` -- the agent already
+    says there which files are the app's data rather than its source, and the build
+    contract asks for it (proto-config/CLAUDE.md, "Data the running prototype collected").
+
+    Only the root `prototype/.gitignore` is read; nested ones are not.
+    """
+    try:
+        text = read_text_beneath(proto_dir, _IGNORE_FILE, errors="replace")
+    except (OSError, ValueError):
+        return lambda rel: False
+    rules = _ignore_rules(text)
+    if not rules:
+        return lambda rel: False
+
+    def ignored(rel: str) -> bool:
+        parts = rel.split("/")
+        for i, part in enumerate(parts):
+            is_dir = i < len(parts) - 1
+            prefix = "/".join(parts[:i + 1])
+            for pattern, anchored, dir_only in rules:
+                if dir_only and not is_dir:
+                    continue
+                if fnmatchcase(prefix if anchored else part, pattern):
+                    return True
+        return False
+    return ignored
+
+
 def output_digest(build_dir: Path) -> str:
     """Content hash of `prototype/`. Same rules as the generation hash, but only over the output.
 
     It must not look at the whole build tree — `start()` re-plants the spec, instructions, and
     change history every time, so the hash would change even if the agent changed nothing.
 
+    Files the prototype's `.gitignore` lists are left out too (`_runtime_matcher`): they are
+    what the running app wrote, not what a build session changed. **This is the digest
+    only** — generations, downloads and exports still carry those files, because the
+    build contract keeps what validation users entered.
+
     This is a sync function (same reason as `local_entries`).
     """
-    return _hash_entries([(rel, data) for rel, data in local_entries(build_dir / "prototype")
-                          if rel.rsplit("/", 1)[-1] not in _DIGEST_EXCLUDED])
+    proto_dir = build_dir / "prototype"
+    runtime = _runtime_matcher(proto_dir)
+    return _hash_entries([(rel, data) for rel, data in local_entries(proto_dir)
+                          if rel.rsplit("/", 1)[-1] not in _DIGEST_EXCLUDED
+                          and not runtime(rel)])
 
 
 def completed_digest(build_dir: Path) -> str | None:
@@ -195,6 +273,22 @@ def completed_digest(build_dir: Path) -> str | None:
 
 def mark_completed(build_dir: Path, digest: str) -> None:
     write_beneath(build_dir, COMPLETED_MARKER, digest)
+
+
+def completion_pending(build_dir: Path) -> bool:
+    """Whether `prototype/` holds work no completion declaration has covered yet.
+
+    True when there is output and its digest differs from the last accepted completion
+    (or there has been none). This is the same comparison the `build_complete` tool makes
+    to refuse an empty declaration, asked from the other side: the tool refuses a
+    declaration when this is False, and the builder's Stop hook asks for one when it is
+    True (proto/builder.py `_on_stop`).
+
+    This is a sync function (same reason as `local_entries`).
+    """
+    if not has_build_output(build_dir):
+        return False
+    return output_digest(build_dir) != completed_digest(build_dir)
 
 
 class PrototypeStore:

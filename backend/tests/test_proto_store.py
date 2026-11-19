@@ -157,3 +157,81 @@ async def test_desired_state_lists_only_what_should_run(store):
     await store.clear_desired("a")
     await store._s3.put("prototypes/c/session.json", json.dumps({}))
     assert await store.desired_running() == ["b"]
+
+
+# ---- What the running prototype writes is not a change (output_digest) ----
+#
+# Observed in a workshop run: the running prototype rewrote `data/db.json` whenever someone used
+# the preview, so the completion digest drifted with nobody touching the source. Every build had
+# already listed those files in `prototype/.gitignore`.
+
+from aipds.proto.store import (completed_digest, completion_pending,  # noqa: E402
+                               mark_completed, output_digest)
+
+
+def _proto(tmp_path, files):
+    _tree(tmp_path / "prototype", files)
+    return tmp_path
+
+
+def test_files_the_prototype_ignores_are_left_out_of_the_digest(tmp_path):
+    build = _proto(tmp_path, {
+        ".gitignore": "node_modules\n.next\ndata/db.json\ndata/uploads\n",
+        "src/page.tsx": "v1", "data/seed.json": "[]", "data/db.json": "[]",
+    })
+    before = output_digest(build)
+
+    _tree(build / "prototype", {"data/db.json": '[{"id": 1}]',
+                                "data/uploads/a.jpg": PNG})
+    assert output_digest(build) == before
+
+    _tree(build / "prototype", {"data/seed.json": '[{"id": 2}]'})
+    assert output_digest(build) != before
+
+
+def test_without_an_ignore_list_every_file_counts(tmp_path):
+    build = _proto(tmp_path, {"src/page.tsx": "v1", "data/db.json": "[]"})
+    before = output_digest(build)
+    _tree(build / "prototype", {"data/db.json": "[1]"})
+    assert output_digest(build) != before
+
+
+@pytest.mark.parametrize("pattern, ignored, kept", [
+    ("*.log", "logs/server.log", "src/log.ts"),
+    ("uploads/", "data/uploads/a.png", "src/uploads.ts"),
+    ("/data/db.json", "data/db.json", "src/data/db.json"),
+    ("**/cache", "a/b/cache/x", "src/cached.ts"),
+])
+def test_ignore_patterns_follow_the_gitignore_shapes_builds_write(tmp_path, pattern,
+                                                                  ignored, kept):
+    build = _proto(tmp_path, {".gitignore": pattern + "\n", ignored: "1", kept: "1"})
+    before = output_digest(build)
+    _tree(build / "prototype", {ignored: "2"})
+    assert output_digest(build) == before
+    _tree(build / "prototype", {kept: "2"})
+    assert output_digest(build) != before
+
+
+def test_a_negation_is_dropped_rather_than_read_as_a_rule(tmp_path):
+    """`!x` is not honoured, and must not turn into an ignore rule for `x` either."""
+    build = _proto(tmp_path, {".gitignore": "!data/seed.json\n", "data/seed.json": "1"})
+    before = output_digest(build)
+    _tree(build / "prototype", {"data/seed.json": "2"})
+    assert output_digest(build) != before
+
+
+def test_completion_is_pending_only_for_output_no_declaration_covered(tmp_path):
+    assert not completion_pending(tmp_path)          # nothing built yet
+
+    build = _proto(tmp_path, {".gitignore": "data/db.json\n", "src/page.tsx": "v1"})
+    assert completion_pending(build)                 # built, never declared
+
+    mark_completed(build, output_digest(build))
+    assert completed_digest(build) == output_digest(build)
+    assert not completion_pending(build)
+
+    _tree(build / "prototype", {"data/db.json": "[1]"})
+    assert not completion_pending(build)             # someone used the preview
+
+    _tree(build / "prototype", {"src/page.tsx": "v2"})
+    assert completion_pending(build)

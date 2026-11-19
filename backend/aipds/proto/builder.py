@@ -20,6 +20,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+from pathlib import Path
 from aipds.pathsafe import workspace_relative as _rel
 from typing import Any, AsyncIterator, Callable, Iterable
 
@@ -33,6 +34,7 @@ from aipds.cli_settings import SDK_MAX_BUFFER_BYTES, cli_context_env
 from aipds.context_usage import ContextMeter, wants_sample
 from aipds.models import AgentEvent
 from aipds.proto import prompts
+from aipds.proto.store import completion_pending
 from aipds.proto.build_guard import (FETCH_HOSTS, WRITE_TOOLS, bash_denial, fetch_denial,
                                      settings_write_denial)
 from aipds.token_usage import UsageRecorder
@@ -286,6 +288,9 @@ def _default_client_factory(builder: "PrototypeBuilder") -> Callable[[], Any]:
                     hooks=[builder._on_pre_tool_use])],
                 "PostToolUse": [HookMatcher(matcher="Write|Edit|MultiEdit",
                                             hooks=[builder._on_post_tool_use])],
+                # A turn that changed `prototype/` but is about to end without
+                # `build_complete` is sent back once (`_on_stop`).
+                "Stop": [HookMatcher(hooks=[builder._on_stop])],
             },
         )
         return ClaudeSDKClient(options=options)
@@ -691,6 +696,45 @@ class PrototypeBuilder:
             else:
                 self._queue.append(AgentEvent(kind="file_changed", path=rel))
         return {}
+
+    async def _on_stop(self, input_data, tool_use_id, context) -> dict:
+        """Send the turn back once if it changed `prototype/` without declaring completion.
+
+        **Why a hook and not more prompt wording.** The completion instruction rides only on
+        the opening turn (routes/prototypes.py wraps the first message; later messages go
+        through as typed). Observed in a workshop run: an improvement session opened, the
+        code under `prototype/` changed, and the session closed on the idle timer without a
+        declaration -- no change-history entry and no handoff, so Discovery went on
+        treating the previous generation as the latest, and the screen never showed the
+        build as finished. The likely path is the opening's question branch ("answer and
+        wait; do not call build_complete") followed by a change asked for in a later,
+        unwrapped message. Whatever the wording, this check runs at the end of every turn.
+
+        The test is the tool's own (`store.completion_pending`), so a turn that the tool
+        would refuse ("nothing changed") is never asked to declare, and a turn whose
+        declaration was accepted (marker updated) is let go.
+
+        Asked **once per stop**: `stop_hook_active` is set when the model is stopping again
+        right after this hook sent it back, and that stop always passes -- the reason tells
+        the model it may end the turn with work left or a question for the user, so a
+        second refusal would only loop. An interrupted turn is the user's stop, not the
+        model's, and is never sent back.
+        """
+        if input_data.get("stop_hook_active") or self._interrupted:
+            return {}
+        try:
+            pending = await asyncio.to_thread(completion_pending, Path(self._workspace))
+        except Exception:
+            # A failed check must not hold the turn open -- the session simply ends the
+            # way it did before this hook existed.
+            _log.exception("completion check failed: %s", self._workspace)
+            return {}
+        if not pending:
+            return {}
+        _log.info("turn ended with prototype/ changed and no build_complete: %s",
+                  self._workspace)
+        return {"decision": "block",
+                "reason": prompts.completion_pending_reminder(self._language)}
 
     def _answer_to_sdk(self, value: str, sdk_options: list[dict]) -> str:
         """QuestionForm answer value → SDK label(s). Accepted forms:

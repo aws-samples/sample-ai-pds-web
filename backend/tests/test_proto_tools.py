@@ -264,3 +264,21 @@ async def test_install_and_build_byproducts_are_not_a_change(tmp_path):
 
     assert len(seen) == 1
     assert "거부됨" in _text(refused)
+
+
+async def test_data_the_running_prototype_wrote_is_not_a_change(tmp_path):
+    """A question-only session while someone uses the preview: the store changed, the source did not."""
+    proto = _prototype_dir(tmp_path)
+    (proto / ".gitignore").write_text("data/db.json\ndata/uploads\n")
+    (proto / "index.html").write_text("x")
+    seen: list[AgentEvent] = []
+    handler = _handler(tmp_path, seen.append)
+    await handler(_ARGS)
+
+    (proto / "data" / "uploads").mkdir(parents=True)
+    (proto / "data" / "db.json").write_text('[{"id": 1}]')
+    (proto / "data" / "uploads" / "a.jpg").write_bytes(b"\xff")
+    refused = await handler(_ARGS)
+
+    assert len(seen) == 1
+    assert "거부됨" in _text(refused)
