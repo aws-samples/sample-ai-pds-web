@@ -69,7 +69,7 @@ def answer_first(language: str) -> str:
 
     It is **conversation text**, not screen text — it stays in the chat as an AI bubble and
     also goes into the transcript, so it follows the project language, not the UI language
-    (lib/startMessage.ts and approvalMarker.ts record the same judgment).
+    (lib/startMessage.ts records the same judgment).
     """
     if _lang(language) == "en":
         return ("Please answer the question that is still open — use the "
@@ -270,10 +270,9 @@ def file_answers_recorded(language: str, path: str, summary: str) -> str:
     (what the agent calls is `Write`). So **the transcript itself is made to hold the
     truth** — no join key, no new store, no ordering dependency.
 
-    **Why not join through an opaque marker**: `frontend/lib/approvalMarker.ts` has already written this
-    down for this class of text: "This text is not a machine signal. That turn **stays in the
-    transcript and chat history as a user bubble.** The agent must
-    understand it and **a person must read it.**" What a person who answered questions has to say is their
+    **Why not join through an opaque marker**: this class of text is not a machine signal. The turn
+    **stays in the transcript and chat history as a user bubble**, so the agent must understand it
+    and **a person must read it**. What a person who answered questions has to say is their
     answers, so carrying the answers goes in the same direction as that principle.
 
     **The file is still the authority.** The values live in two places (this sentence and the `[Answer]:` tags), but they are

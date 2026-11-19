@@ -18,8 +18,8 @@
 #
 # One more thing got fixed by the move: while it lived in the frontend, the
 # empty-submission text followed the **UI language**. Chat bubbles must be in the
-# project language (agent/prompts.py header; lib/approvalMarker.ts records the
-# same judgment).
+# project language (agent/prompts.py header; frontend lib/startMessage.ts records
+# the same judgment).
 #
 # **The contract to unwind.** QuestionCard packs four shapes into one string
 # (components/questions/QuestionCard.tsx):
@@ -73,7 +73,7 @@ def _expand_letter_list(options: list[QuestionOption],
     return ", ".join(expanded)
 
 
-def _render_answer(options: list[QuestionOption], value: str) -> str:
+def render_answer(options: list[QuestionOption], value: str) -> str:
     """The form the reader should see: the option text if it points to an option, the original if free text."""
     multi = _expand_letter_list(options, value)
     if multi is not None:
@@ -116,7 +116,7 @@ def answer_summary(qfile: QuestionFile, answers: dict[int, str],
         value = answers.get(q.number)
         if value is None or not value.strip():
             continue
-        blocks.append(f"Q{q.number}. {q.text}\n→ {_render_answer(q.options, value)}")
+        blocks.append(f"Q{q.number}. {q.text}\n→ {render_answer(q.options, value)}")
 
     for number, value in answers.items():
         if number in seen or not value.strip():

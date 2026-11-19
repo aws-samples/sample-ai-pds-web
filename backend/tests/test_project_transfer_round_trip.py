@@ -99,9 +99,9 @@ def _seed(s3: FakeS3Store, proto_root) -> None:
     s3.blobs["uploads/ab12/notes.md"] = "# 참고자료"
     s3.blobs["answers/t1.json"] = json.dumps(
         {"answers": {"1": "A"}, "questions": None}, ensure_ascii=False)
-    s3.blobs["approvals/2026-08-02T00-00-00-abcd1234.json"] = json.dumps(
-        {"document": "aiplc-docs/discovery/discovery-document.md",
-         "doc_hash": "deadbeef", "approved_at": "2026-08-02T00:00:00+00:00"})
+    s3.blobs["aiplc-docs/discovery/envision/envision-approval-questions.md"] = (
+        "# Envision 승인\n\n## Question 1\nEnvision 결과를 승인하십니까?\n\n"
+        "A) 승인한다\nB) 수정이 필요하다\n\n[Answer]: A\n")
     s3.blobs[SURVEY_KEY] = json.dumps(
         {"token": "live-token", "status": "open", "slug": SLUG,  # nosec B105 - a survey share token in a fixture
          "project_id": SOURCE, "created_at": "2026-08-03T00:00:00+00:00",
@@ -168,14 +168,14 @@ def test_the_stage_timeline_resumes_where_it_left_off(env):
     assert client.get(f"/projects/{TARGET}/state").json() == before
 
 
-def test_the_approval_gate_sees_the_same_evidence(env):
-    """The document hash at approval time must come along for the 'reapproval
-    required' verdict to match the original."""
-    before = client.get(f"/projects/{SOURCE}/approvals").json()
+def test_the_approval_status_survives_the_move(env):
+    """The answered approval question comes along, so the review screen reports the same approvals."""
+    before = client.get(f"/projects/{SOURCE}/approval-gates").json()
+    assert before["gates"][0]["status"] == "answered"
 
     _round_trip(env)
 
-    assert client.get(f"/projects/{TARGET}/approvals").json() == before
+    assert client.get(f"/projects/{TARGET}/approval-gates").json() == before
 
 
 def test_the_prototype_card_reports_built_and_keeps_its_name(env):

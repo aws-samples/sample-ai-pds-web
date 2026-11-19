@@ -15,8 +15,7 @@ import {
   getHistory,
   uploadFile,
   getProject,
-  listApprovals,
-  approveDocument,
+  listApprovalGates,
   getTurn,
 } from "./client";
 
@@ -109,45 +108,18 @@ describe("api client request shaping + response typing", () => {
     expect((await getState("p1")).project_type).toBe("Greenfield");
   });
 
-  it("listApprovals returns the history and the backend's current doc hash", async () => {
-    // The current hash is computed by the backend — if the frontend computed it separately, the algorithm would live in two
-    // places, and if they diverged, approvals would silently go unrecognized.
+  it("listApprovalGates unwraps the gates", async () => {
+    const gate = {
+      path: "aiplc-docs/discovery/envision/envision-approval-questions.md",
+      gate: "aiplc-docs/discovery/envision/envision-approval-questions.md",
+      stage: "envision", round: 1, status: "answered",
+      answers: [{ number: 1, question: "승인하십니까?", answer: "A. 승인한다" }],
+      headline: "A. 승인한다", answered_at: "2026-11-18T04:36:58+00:00",
+    };
     server.use(
-      http.get(`${API_BASE_URL}/projects/p1/approvals`, () =>
-        HttpResponse.json({
-          approvals: [{ document: "d.md", doc_hash: "h1", approved_at: "2026-08-10T01:00:00Z" }],
-          current_doc_hash: "h1",
-        }),
-      ),
+      http.get(`${API_BASE_URL}/projects/p1/approval-gates`, () => HttpResponse.json({ gates: [gate] })),
     );
-    const r = await listApprovals("p1");
-    expect(r.approvals).toHaveLength(1);
-    expect(r.currentDocHash).toBe("h1");
-  });
-
-  it("listApprovals surfaces a null current hash (no document yet)", async () => {
-    server.use(
-      http.get(`${API_BASE_URL}/projects/p1/approvals`, () =>
-        HttpResponse.json({ approvals: [], current_doc_hash: null }),
-      ),
-    );
-    const r = await listApprovals("p1");
-    expect(r).toEqual({ approvals: [], currentDocHash: null });
-  });
-
-  it("approveDocument POSTs and needs no body", async () => {
-    // The document to approve and its hash are decided by the backend — trusting values the client sent
-    // could let the screen approve stale content.
-    let method: string | null = null;
-    server.use(
-      http.post(`${API_BASE_URL}/projects/p1/approve`, ({ request }) => {
-        method = request.method;
-        return HttpResponse.json({ approved: true, turn_id: "t-approve" });
-      }),
-    );
-    // Approval only starts the next stage's turn — it returns that turn's id.
-    expect(await approveDocument("p1")).toEqual({ turnId: "t-approve" });
-    expect(method).toBe("POST");
+    expect(await listApprovalGates("p1")).toEqual([gate]);
   });
 
   it("getTurn unwraps the current turn (or null)", async () => {

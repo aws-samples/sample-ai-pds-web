@@ -202,10 +202,9 @@ def test_a_failing_state_probe_does_not_break_answer_submission(monkeypatch):
 # no such tool call at all (what the agent calls is `Write`), so there was no id to join on and
 # no record.
 #
-# **We do not join through an opaque marker.** `frontend/lib/approvalMarker.ts` records the
-# decision for this class — "this text is not a machine signal. That turn stays in the
-# transcript and chat history as a user bubble. The agent must understand it and a person must
-# read it." So the turn text itself carries the human-readable answers: the transcript holds
+# **We do not join through an opaque marker.** This class of text is not a machine signal: the
+# turn stays in the transcript and chat history as a user bubble, so the agent must understand it
+# and a person must read it. So the turn text itself carries the human-readable answers: the transcript holds
 # the truth, so there is no join, no new state, and no ordering dependency.
 
 def test_the_resume_turn_carries_the_answers_the_user_actually_gave(monkeypatch):
@@ -238,7 +237,7 @@ def test_the_resume_turn_keeps_free_text_answers_verbatim(monkeypatch):
 
 def test_the_resume_turn_follows_the_project_language(monkeypatch):
     """It is conversation text that remains as a bubble — the project language, not the UI
-    language (`answer_first` and `approvalMarker.ts` record the same judgment)."""
+    language (`answer_first` and `lib/startMessage.ts` record the same judgment)."""
     _seed(monkeypatch, "fqans3", language="en")
     handle = _submit("fqans3", {"1": "B"}).json()["turn_id"]
     text = _turn("fqans3")["text"]
