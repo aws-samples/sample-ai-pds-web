@@ -132,9 +132,9 @@ _INTERRUPTED_TERMINAL_REASONS = frozenset({"aborted_streaming", "aborted_tools"}
 #: drawn by the frontend in the UI language. proto/builder.py uses the same value -- if
 #: the two drivers diverge, the frontend behaves differently depending on the path.
 #:
-#: Note that the reason it is language-neutral differs from the approval marker
-#: (frontend/lib/approvalMarker.ts): that one goes to the agent and stays in the
-#: transcript as a user bubble, so it must be a word in the project language. This
+#: Note that the reason it is language-neutral differs from turn text such as the
+#: opening sentence (frontend/lib/startMessage.ts): that goes to the agent and stays in
+#: the transcript as a user bubble, so it must be in the project language. This
 #: marker lives only in the live SSE queue and nobody reads it.
 INTERRUPTED_MARKER = "interrupted"
 

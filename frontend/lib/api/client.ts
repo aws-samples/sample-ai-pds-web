@@ -1,6 +1,6 @@
 import { CREDENTIALS } from "@/lib/auth";
-import type { ApprovalEvidence, ApprovalRecord } from "@/lib/approvalState";
 import type {
+  ApprovalGate,
   AuditEntry,
   ContextUsage,
   HistoryItem,
@@ -127,30 +127,12 @@ export async function getAudit(pid: string): Promise<AuditEntry[]> {
   return request<AuditEntry[]>(`/projects/${encodeURIComponent(pid)}/audit`);
 }
 
-// Approval history + current document hash — the primary basis for gate judgment
-// (see lib/approvalState.ts). Audit log parsing is used only as a fallback for existing
-// projects whose history is empty.
-//
-// The hash is not computed on the frontend: if the algorithm exists in two places, the moment they
-// diverge, approvals silently go unrecognized (the gate just does not open, so tracing the cause is hard).
-// The return shape is exactly deriveApprovalState's second argument (ApprovalEvidence).
-export async function listApprovals(pid: string): Promise<ApprovalEvidence> {
-  const r = await request<{ approvals: ApprovalRecord[]; current_doc_hash: string | null }>(
-    `/projects/${encodeURIComponent(pid)}/approvals`);
-  return { approvals: r.approvals, currentDocHash: r.current_doc_hash };
-}
-
-/** Approve a document. The backend writes the record first and then runs the agent turn.
- *
- *  Why there is no body: **the backend** decides the document to approve and its hash. Trusting
- *  values sent by the screen could approve content different from (staler than) what the user was looking at.
- */
-/** Approve. Leaves a record and **only starts** the next stage's turn — the workspace attaches to and
- *  watches that turn via `GET /turn`. If a turn is running, it is a 409 `turn_in_progress`. */
-export async function approveDocument(pid: string): Promise<{ turnId: string }> {
-  const r = await request<{ approved: boolean; turn_id: string }>(
-    `/projects/${encodeURIComponent(pid)}/approve`, { method: "POST" });
-  return { turnId: r.turn_id };
+// Where each Discovery approval stands — read from the approval question files the agent opens at the end of a
+// stage (backend aipds/approval_gates.py). Read-only: approvals are given by answering those files in the workspace.
+export async function listApprovalGates(pid: string): Promise<ApprovalGate[]> {
+  const r = await request<{ gates: ApprovalGate[] }>(
+    `/projects/${encodeURIComponent(pid)}/approval-gates`);
+  return r.gates;
 }
 
 export async function listQuestionFiles(pid: string): Promise<string[]> {

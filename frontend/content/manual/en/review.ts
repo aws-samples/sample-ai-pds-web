@@ -9,31 +9,32 @@ export const review: ManualSection = {
       kind: "md",
       md: `Documents are listed as a tree on the left and the one you select renders in the middle. For
 the Discovery document (\`discovery-document.md\`), the AI verification summary sits in a column to its
-right, and the approval state is shown across the top of the screen — the **Approval gate** marked
-*Draft under review* until you approve it, then *✓ Approved*.`,
+right, and **Approvals by stage** is shown across the top of the screen.`,
     },
     {
       kind: "mockup",
       id: "approval-gate",
-      caption: "The approval gate at the top, with the file list · the document · the AI verification summary below",
+      caption: "Approvals by stage at the top, with the file list · the document · the AI verification summary below",
     },
-    { kind: "heading", id: "gate", text: "The approval gate" },
+    { kind: "heading", id: "gate", text: "Approvals by stage" },
     {
       kind: "md",
-      md: `While the Discovery document is not yet approved, the gate sits at the top of the screen whenever
-that document is open. You have two choices.
+      md: `Approvals happen **in the workspace**. At the end of Envision, Prototype & Validation, Product
+Strategy and Go-to-Market, the AI opens an approval question. Answering it settles that stage, and
+the AI moves on to the next one.
 
-- **✓ Approve and continue** — the stage is settled with this document and the work moves on.
-  Pressing it takes you to the workspace, where the AI works through the next stage. If the AI is
-  still busy with another task, the approval is refused — press it again once that task is done.
-- **✏️ Request a revision** — takes you to the workspace chat with a revision draft prefilled in
-  the input. You describe there what should change and how.
+This screen shows the results.
 
-Both decisions are recorded in \`audit.md\` immediately, and everything that passed through the
-gate accumulates under **Approval gate history**, below the verification summary.
+- **Approvals by stage** — each answered approval question, with the stage, the answer you chose and
+  when you answered. If the same approval was asked again, the latest round is shown.
+- **An approval question is waiting for your answer** — a yellow notice that appears only while the
+  AI has opened an approval question you have not answered yet. **Answer in the workspace** takes
+  you there.
+- **✏️ Request a revision** — takes you to the workspace chat with a revision draft prefilled in the
+  input. Nothing is sent until you write what should change and send it.
 
-Once approved, the gate gives way to a green *✓ Approved* notice. Its **✏️ Request a revision**
-button is still there — use it to reopen the document.`,
+Answers to approval questions and revision requests are all recorded in \`audit.md\`. They also
+appear under **Approval gate history**, below the verification summary.`,
     },
     { kind: "heading", id: "verification", text: "The AI verification summary" },
     {
@@ -64,9 +65,9 @@ documents.`,
     {
       kind: "callout",
       tone: "note",
-      md: `Revising a document after approving it means it **needs approval again.** An approval applies
-to a particular state of the document; once the content changes, that approval no longer points at
-the content.`,
+      md: `\`discovery-document.md\` grows as each stage is completed. An earlier stage's approval still stands
+when a later stage writes into the document. If a part that was already approved is changed, the AI
+may ask for that approval again, as another approval question.`,
     },
     {
       kind: "details",

@@ -6,7 +6,7 @@
 //   - the opening sentence sent via onStart = project language (startMessage)
 // The latter goes to the agent and stays in the transcript, so it must not follow the UI language —
 // starting a Korean project from an English UI must still run the conversation in Korean
-// (same judgment as the approval words in lib/approvalMarker.ts).
+// (the reason is in the lib/startMessage.ts header).
 import { DEFAULT_LOCALE, type Locale } from "@/lib/i18n";
 import { useT } from "@/lib/i18n/provider";
 import { startMessage } from "@/lib/startMessage";

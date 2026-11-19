@@ -70,6 +70,23 @@ export interface ProjectState {
   capabilities: CapabilityState[];
 }
 
+/** One approval question round (backend aipds/approval_gates.ApprovalGate). Stage values match handoff's `Stage`. */
+export interface ApprovalGate {
+  path: string;
+  /** Rounds of one approval (`…-questions.md`, `…-questions-2.md`) share this. */
+  gate: string;
+  stage: "envision" | "solution_analysis" | "use_case_intake" | "prioritization"
+    | "prototype" | "product_strategy" | "go_to_market" | "other";
+  round: number;
+  /** pending: some question still has no answer — the agent is waiting in the workspace. */
+  status: "pending" | "answered";
+  /** The answers as given, an option letter expanded to its words. */
+  answers: { number: number; question: string; answer: string }[];
+  /** The answer to the approval question itself — what the screen shows first. null while nothing is answered. */
+  headline: string | null;
+  answered_at: string | null;
+}
+
 export interface AuditEntry {
   index: number;
   timestamp: string;

@@ -7,7 +7,7 @@
 #
 # Moving the classification to the backend leaves a single representation that cannot diverge. There is one
 # more gain from the move: this text is a chat bubble, so it must follow the **project language**
-# (agent/prompts.py header, the same judgment in lib/approvalMarker.ts), but while it lived on the frontend
+# (agent/prompts.py header, the same judgment in lib/startMessage.ts), but while it lived on the frontend
 # it followed the UI language.
 #
 # The contract to reverse is QuestionCard's value convention — one string holds four shapes:

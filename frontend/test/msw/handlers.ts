@@ -14,10 +14,8 @@ export const handlers = [
   http.get(`${API_BASE_URL}/projects/:pid/artifacts`, () => HttpResponse.json({ artifacts: [] })),
   http.get(`${API_BASE_URL}/projects/:pid/artifacts/missing-references`, () =>
     HttpResponse.json({ document: null, missing: [] })),
-  // Called by the document review screen for the approval gate judgment. The default is "not yet
-  // approved" (empty history) — in that state, the gate showing is normal.
-  http.get(`${API_BASE_URL}/projects/:pid/approvals`, () =>
-    HttpResponse.json({ approvals: [], current_doc_hash: null })),
+  // Called by the document review screen for the approval status. The default is "no approval question yet".
+  http.get(`${API_BASE_URL}/projects/:pid/approval-gates`, () => HttpResponse.json({ gates: [] })),
   // Every document viewer asks for comparison baselines (components/DocChanges.tsx). The default is
   // "none" — the plain document, which is what screens that do not test the comparison expect.
   http.get(`${API_BASE_URL}/projects/:pid/revisions`, () => HttpResponse.json({ baselines: [] })),

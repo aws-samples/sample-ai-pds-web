@@ -34,7 +34,7 @@
 # prefix but outside the workspace. It matches none of the prefixes the runner restores (`aiplc-docs/`,
 # `prototype/`, `uploads/`) nor the globs uploaded as the source of truth (workspace_sync.SYNC_GLOBS), so it never
 # lands in the agent's local workspace. Export and delete handle the whole project prefix, so it goes along with them.
-# Same discipline as `approvals/` and `pending/`.
+# Same discipline as `pending/`.
 #
 # **The frontend owns the question wording.** This module only defines ids and sections — on-screen text follows the UI
 # language (i18n), and package composition finds answers by id.
@@ -285,7 +285,7 @@ def _kept(old: Answer | None, given: AnswerIn, stamp: str,
 
 async def load(s3: S3StoreLike) -> Supplement:
     """Empty record if absent. A corrupt record is read as empty with a warning — it does not block the screen
-    (same judgment as approval_store skipping corrupt records)."""
+    (same judgment as pending_store returning None for a corrupt payload)."""
     try:
         raw = await s3.get(SUPPLEMENT_KEY)
     except FileNotFoundError:

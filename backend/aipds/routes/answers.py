@@ -128,8 +128,8 @@ async def submit_file_answers(pid: str, name: str, body: AnswersBody):
             "state probe for the resume turn failed — continuing without the note")
     # `summary` is the string the frontend uses **as is** in the bubble. `text` (the turn
     # text the model reads) contains it and appends instructions — the human-readable part
-    # comes first and the machine instructions form the tail, which is the principle recorded
-    # in `approvalMarker.ts`.
+    # comes first and the machine instructions form the tail: turn text stays in the transcript
+    # as a user bubble, so a person must be able to read it.
     # Only what the user chose goes into the audit log — the tail of `text` is instructions for the agent.
     record = UserInput(text=summary, source="answers", language=language,
                        detail=name.rsplit("/", 1)[-1])

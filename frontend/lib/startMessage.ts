@@ -1,7 +1,6 @@
 // frontend/lib/startMessage.ts — the opening sentence the start card sends to the agent.
 //
-// **It takes the project language, not the UI locale.** The same judgment as approvalMarker.ts:
-// this string is not screen text; it goes to the agent as the first user utterance in the workspace
+// **It takes the project language, not the UI locale.** This string is not screen text; it goes to the agent as the first user utterance in the workspace
 // chat and remains in the transcript as a user bubble. If a Korean project is started from the English
 // UI, that project's conversation must proceed in Korean, so a Korean sentence must be sent. Only the
 // button labels (welcome.*) are translated into the UI language.

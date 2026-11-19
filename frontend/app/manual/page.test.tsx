@@ -48,7 +48,7 @@ describe("매뉴얼 화면", () => {
     // The button in the project creation mockup — exactly the value of "project.create" in ko.ts.
     // If the mockup wrote the sentence directly, this assertion would lose its meaning.
     expect(screen.getAllByText("프로젝트 생성").length).toBeGreaterThan(0);
-    expect(screen.getAllByText("승인 게이트").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("단계별 승인").length).toBeGreaterThan(0);
   });
 });
 

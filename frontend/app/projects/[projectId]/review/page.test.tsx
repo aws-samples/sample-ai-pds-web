@@ -10,9 +10,8 @@ import { auditEntries } from "@/test/fixtures/auditEntries";
 // The LanguageSwitcher that AppHeader draws calls useRouter() — in a unit test with no app router
 // mounted, that hook throws. The switcher's behavior is verified by
 // components/LanguageSwitcher.test.tsx, so here it only needs to mount.
-const pushMock = vi.fn();
 vi.mock("next/navigation", () => ({
-  useRouter: () => ({ refresh: vi.fn(), push: pushMock }),
+  useRouter: () => ({ refresh: vi.fn(), push: vi.fn() }),
 }));
 
 import ReviewPage from "./page";
@@ -22,6 +21,14 @@ const params = Promise.resolve({ projectId: "ws-m" });
 const DISCOVERY_PATH = "aiplc-docs/discovery/discovery-document.md";
 const AUDIT_PATH = "aiplc-docs/audit.md";
 const AUDIT_CONTENT = "# Audit Log\n\n감사 로그 원문입니다.";
+
+const ENVISION_GATE = "aiplc-docs/discovery/envision/envision-approval-questions.md";
+const ENVISION_ANSWERED = {
+  path: ENVISION_GATE, gate: ENVISION_GATE, stage: "envision", round: 1, status: "answered",
+  answers: [{ number: 1, question: "Envision 결과를 승인하십니까?", answer: "A. 승인한다 — Solution Analysis로 진행한다" }],
+  headline: "A. 승인한다 — Solution Analysis로 진행한다",
+  answered_at: "2026-11-18T04:36:58+00:00",
+};
 
 function mockTreeAndAudit() {
   server.use(
@@ -35,16 +42,16 @@ function mockTreeAndAudit() {
       HttpResponse.json({ content: AUDIT_CONTENT }),
     ),
     http.get(`${API_BASE_URL}/projects/ws-m/audit`, () => HttpResponse.json(auditEntries)),
-    // Approval history — the primary basis for the gate judgment (lib/approvalState.ts). The
-    // default is "not yet approved", so the gate is showing.
-    http.get(`${API_BASE_URL}/projects/ws-m/approvals`, () =>
-      HttpResponse.json({ approvals: [], current_doc_hash: "h-current" }),
+    // Approval status — read from the approval question files (backend aipds/approval_gates.py).
+    // The default is the shape of a workshop mid-way: Envision approved in the workspace.
+    http.get(`${API_BASE_URL}/projects/ws-m/approval-gates`, () =>
+      HttpResponse.json({ gates: [ENVISION_ANSWERED] }),
     ),
   );
 }
 
 describe("Review page", () => {
-  it("renders the doc tree, defaults to discovery-document.md, and shows the approval gate", async () => {
+  it("renders the doc tree, defaults to discovery-document.md, and shows the approval status", async () => {
     mockTreeAndAudit();
     // `use(params)` suspends on the first render because the test's plain
     // Promise.resolve(...) params (unlike Next's internally-tracked params
@@ -58,9 +65,9 @@ describe("Review page", () => {
     const docButton = await screen.findByRole("button", { name: /discovery-document\.md/ });
     expect(docButton).toHaveAttribute("aria-current", "true");
     expect(screen.getByRole("button", { name: /audit\.md/ })).toBeInTheDocument();
-    // Default selection loads its content and the gate shows for it.
+    // Default selection loads its content and the approval status shows for it.
     expect(await screen.findByText("Press Release")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /승인하고 다음 단계로/ })).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "단계별 승인" })).toBeInTheDocument();
   });
 
   it("warns before download when the discovery document cites files that are missing", async () => {
@@ -95,7 +102,7 @@ describe("Review page", () => {
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 
-  it("selecting a non-discovery-document file hides the gate and drops the DocumentPanel/VerificationSummary chrome", async () => {
+  it("selecting a non-discovery-document file hides the approval status and drops the DocumentPanel/VerificationSummary chrome", async () => {
     mockTreeAndAudit();
     await act(async () => {
       render(<ReviewPage params={params} />);
@@ -105,90 +112,83 @@ describe("Review page", () => {
     await userEvent.click(screen.getByRole("button", { name: /audit\.md/ }));
 
     expect(await screen.findByText("Audit Log")).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /승인하고 다음 단계로/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "단계별 승인" })).not.toBeInTheDocument();
     expect(screen.queryByText("AI 검증 요약")).not.toBeInTheDocument();
     expect(screen.queryByText("Press Release")).not.toBeInTheDocument();
   });
 
-  it("clicking Approve POSTs to /approve, not a chat message", async () => {
-    // Replaces sending "승인" (approve) text as a chat turn. On that path the only record of the
-    // approval was the audit.md the agent writes, and if the agent transcribed the wording
-    // differently, the fact that the user pressed the button vanished — measured, 3 of 5 approval
-    // gates were not recognized (lib/approvalState.ts header).
-    //
-    // The approval text and target document hash are now decided by the backend. Trusting values
-    // the screen sent could approve content different from (stale relative to) what the user saw.
+  it("an approval answered in the workspace shows as approved — no approve button, nothing to send", async () => {
+    // Observed in a workshop export: Envision was approved through its approval question, yet the
+    // old gate kept asking, and pressing it dropped a bare "승인" into the conversation.
     mockTreeAndAudit();
-    let approveCalls = 0;
-    let messageCalls = 0;
+    let turnCalls = 0;
     server.use(
-      http.post(`${API_BASE_URL}/projects/ws-m/approve`, () => {
-        approveCalls += 1;
-        return HttpResponse.json({ approved: true, turn_id: "t-approve" });
-      }),
       http.post(`${API_BASE_URL}/projects/ws-m/turns`, () => {
-        messageCalls += 1;
+        turnCalls += 1;
         return HttpResponse.json({ turn_id: "t-1" });
       }),
     );
-    render(<ReviewPage params={params} />);
-    await screen.findByText("Press Release");
-    await userEvent.click(screen.getByRole("button", { name: /승인하고 다음 단계로/ }));
-
-    await waitFor(() => expect(approveCalls).toBe(1));
-    expect(messageCalls).toBe(0);
-    // The next stage's turn is shown by the workspace — approval does not wait for that turn.
-    await waitFor(() => expect(pushMock).toHaveBeenCalledWith("/projects/ws-m/workspace"));
+    await act(async () => {
+      render(<ReviewPage params={params} />);
+    });
+    const status = await screen.findByRole("region", { name: "단계별 승인" });
+    await waitFor(() => expect(status).toHaveTextContent("PR/FAQ · 문제 정의"));
+    expect(status).toHaveTextContent("A. 승인한다 — Solution Analysis로 진행한다");
+    expect(status).toHaveTextContent("2026-11-18 04:36 UTC");
+    expect(screen.queryByRole("button", { name: /승인/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: /답을 기다리고/ })).not.toBeInTheDocument();
+    expect(turnCalls).toBe(0);
   });
 
-  it("AI가 아직 작업 중이면 승인을 거절하고 그 이유를 말한다", async () => {
+  it("an open approval question points to the workspace where it waits", async () => {
     mockTreeAndAudit();
-    pushMock.mockClear();
+    const strategy = "aiplc-docs/discovery/product-strategy/strategy-approval-questions.md";
     server.use(
-      http.post(`${API_BASE_URL}/projects/ws-m/approve`, () =>
-        HttpResponse.json({ detail: { code: "turn_in_progress", turn_id: "t-run" } },
-                          { status: 409 })),
+      http.get(`${API_BASE_URL}/projects/ws-m/approval-gates`, () =>
+        HttpResponse.json({ gates: [ENVISION_ANSWERED, {
+          path: strategy, gate: strategy, stage: "product_strategy", round: 1, status: "pending",
+          answers: [], headline: null, answered_at: null,
+        }] })),
     );
-    render(<ReviewPage params={params} />);
-    await screen.findByText("Press Release");
-    await userEvent.click(screen.getByRole("button", { name: /승인하고 다음 단계로/ }));
-
-    expect(await screen.findByText(/작업이 끝난 뒤 승인/)).toBeInTheDocument();
-    expect(pushMock).not.toHaveBeenCalled();
+    await act(async () => {
+      render(<ReviewPage params={params} />);
+    });
+    const pending = await screen.findByRole("region", { name: /답을 기다리고/ });
+    expect(pending).toHaveTextContent("제품 전략");
+    expect(screen.getByRole("link", { name: "워크스페이스에서 답하기" }))
+      .toHaveAttribute("href", "/projects/ws-m/workspace");
   });
 
-  it("승인 레코드가 있고 해시가 일치하면 게이트가 뜨지 않는다", async () => {
-    // It is judged regardless of the audit log's wording — this is the core of this feature.
+  it("a re-approval round replaces the earlier round on screen", async () => {
     mockTreeAndAudit();
+    const round2 = "aiplc-docs/discovery/envision/envision-approval-questions-2.md";
     server.use(
-      http.get(`${API_BASE_URL}/projects/ws-m/approvals`, () =>
-        HttpResponse.json({
-          approvals: [{ document: DISCOVERY_PATH, doc_hash: "h-current",
-                        approved_at: "2026-08-10T01:00:00Z" }],
-          current_doc_hash: "h-current",
-        }),
-      ),
+      http.get(`${API_BASE_URL}/projects/ws-m/approval-gates`, () =>
+        HttpResponse.json({ gates: [
+          { ...ENVISION_ANSWERED, headline: "B. 수정이 필요하다 — 2절 보강" },
+          { ...ENVISION_ANSWERED, path: round2, round: 2, headline: "A. 승인한다" },
+        ] })),
     );
-    render(<ReviewPage params={params} />);
-    await screen.findByText("Press Release");
-    await waitFor(() =>
-      expect(screen.queryByRole("button", { name: /승인하고 다음 단계로/ })).not.toBeInTheDocument());
+    await act(async () => {
+      render(<ReviewPage params={params} />);
+    });
+    const status = await screen.findByRole("region", { name: "단계별 승인" });
+    await waitFor(() => expect(status).toHaveTextContent("A. 승인한다"));
+    expect(status).toHaveTextContent("2회차");
+    expect(status).not.toHaveTextContent("수정이 필요하다");
   });
 
-  it("승인 이후 문서가 바뀌면(해시 불일치) 게이트가 다시 뜬다", async () => {
+  it("with no approval question yet, it says how approvals are given", async () => {
     mockTreeAndAudit();
     server.use(
-      http.get(`${API_BASE_URL}/projects/ws-m/approvals`, () =>
-        HttpResponse.json({
-          approvals: [{ document: DISCOVERY_PATH, doc_hash: "h-old",
-                        approved_at: "2026-08-10T01:00:00Z" }],
-          current_doc_hash: "h-current",
-        }),
-      ),
+      http.get(`${API_BASE_URL}/projects/ws-m/approval-gates`, () => HttpResponse.json({ gates: [] })),
     );
-    render(<ReviewPage params={params} />);
-    await screen.findByText("Press Release");
-    expect(await screen.findByRole("button", { name: /승인하고 다음 단계로/ })).toBeInTheDocument();
+    await act(async () => {
+      render(<ReviewPage params={params} />);
+    });
+    const status = await screen.findByRole("region", { name: "단계별 승인" });
+    await waitFor(() => expect(status).toHaveTextContent("아직 답한 승인 질문이 없습니다"));
+    expect(status).toHaveTextContent("워크스페이스에 여는 승인 질문");
   });
 
   it("수정 요청 링크는 워크스페이스 채팅으로 이동하며 문서명이 담긴 초안을 ?draft=로 전달한다", async () => {
@@ -227,11 +227,9 @@ describe("Review page", () => {
     expect(screen.queryByText(/아직 작성된 문서가 없습니다/)).not.toBeInTheDocument();
   });
 
-  // Regression: the gate previously rendered whenever discovery-document.md
-  // was selected, even if its content failed to load — letting a user
-  // approve a document they can never actually see. The gate must stay
-  // hidden while the load-error panel is showing.
-  it("hides the approval gate when the discovery document's content fails to load", async () => {
+  // The approval status belongs to the document on screen; it stays hidden while
+  // the load-error panel is showing.
+  it("hides the approval status when the discovery document's content fails to load", async () => {
     server.use(
       http.get(`${API_BASE_URL}/projects/ws-m/artifacts`, () =>
         HttpResponse.json({ artifacts: [DISCOVERY_PATH] }),
@@ -247,11 +245,11 @@ describe("Review page", () => {
     expect(
       await screen.findByText(/문서를 불러오지 못했습니다. 백엔드 연결을 확인하세요\./),
     ).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /승인하고 다음 단계로/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "단계별 승인" })).not.toBeInTheDocument();
   });
 });
 
-describe("Review page — width, download, status badge", () => {
+describe("Review page — width, download", () => {
   it("uses the widened layout instead of max-w-7xl", async () => {
     mockTreeAndAudit();
     let container: HTMLElement;
@@ -316,93 +314,6 @@ describe("Review page — width, download, status badge", () => {
     clickSpy.mockRestore();
   });
 
-  it("shows a document status badge from aiplc-state and explains the gate actions", async () => {
-    mockTreeAndAudit();
-    server.use(
-      http.get(`${API_BASE_URL}/projects/ws-m/state`, () =>
-        HttpResponse.json({
-          project_type: "Greenfield", current_stage: "Discovery Document",
-          stages: [{ name: "Discovery Document", status: "in_progress", note: null }],
-        })),
-    );
-    await act(async () => {
-      render(<ReviewPage params={params} />);
-    });
-    expect(await screen.findByText("초안 검토 중")).toBeInTheDocument();
-    // The gate must have guidance text on what approve and revise each do.
-    //
-    // Find it by a named region — this banner is a resident area, not a sudden event
-    // (the role comment in ApprovalGate).
-    const gate = screen.getByRole("region", { name: "승인 게이트" });
-    // **The wording must not name a specific stage.** The former assertion required
-    // "Discovery 단계를 완료" (complete the Discovery stage), but this banner always appears when
-    // discovery-document.md exists and is unapproved, and the document is created by Envision
-    // (upstream envision.md:255). That is, it was saying "Discovery 완료" (Discovery complete)
-    // even at Envision approval time. In fact this button passes whatever gate the agent is
-    // sitting at.
-    expect(gate.textContent).toMatch(/승인.*다음 단계로 넘어갑니다/);
-    expect(gate.textContent).not.toMatch(/최종|Discovery 단계를 완료/);
-    expect(gate.textContent).toMatch(/수정 요청.*워크스페이스 채팅으로 이동/);
-  });
-
-  it("hides the gate and shows a completion banner once approved", async () => {
-    // Approval state comes from the AUDIT LOG, not aiplc-state: nothing in the
-    // rules or the agent ever writes a "Discovery Document" stage, so the old
-    // stage lookup was always undefined and the gate never went away.
-    server.use(
-      http.get(`${API_BASE_URL}/projects/ws-m/artifacts`, () =>
-        HttpResponse.json({ artifacts: [DISCOVERY_PATH, AUDIT_PATH] })),
-      http.get(`${API_BASE_URL}/projects/ws-m/files/${DISCOVERY_PATH}`, () =>
-        HttpResponse.json({ content: discoveryDocument })),
-      http.get(`${API_BASE_URL}/projects/ws-m/files/${AUDIT_PATH}`, () =>
-        HttpResponse.json({ content: AUDIT_CONTENT })),
-      http.get(`${API_BASE_URL}/projects/ws-m/audit`, () =>
-        HttpResponse.json([
-          { index: 1, timestamp: "2026-07-25T00:00:01Z", user_input: "시작",
-            ai_response: "Discovery 시작", context: "Session Start" },
-          { index: 2, timestamp: "2026-07-25T00:00:02Z", user_input: "승인",
-            ai_response: "승인 완료 — Discovery 단계를 종료합니다.", context: "최종 승인" },
-        ])),
-    );
-    await act(async () => {
-      render(<ReviewPage params={params} />);
-    });
-    // Scoped to the banner's role: "승인 완료" also appears in the audit
-    // panel, so a bare text query is ambiguous.
-    const banner = await screen.findByRole("status");
-    expect(banner).toHaveTextContent("승인 완료");
-    // The re-approval condition is not "was a revision requested" but "did the document change" —
-    // the judgment is a comparison with the hash at approval time (approval_store.py), and the
-    // wording says so too.
-    expect(banner).toHaveTextContent("문서가 바뀌면 다시 승인이 필요합니다");
-    // The gate itself is gone — no further approval is pending.
-    expect(screen.queryByRole("button", { name: /승인하고 다음 단계로/ })).not.toBeInTheDocument();
-    // ...but a way back in remains.
-    expect(screen.getAllByRole("link", { name: /수정 요청/ }).length).toBeGreaterThan(0);
-  });
-
-  it("keeps the gate visible when a revision followed the approval", async () => {
-    server.use(
-      http.get(`${API_BASE_URL}/projects/ws-m/artifacts`, () =>
-        HttpResponse.json({ artifacts: [DISCOVERY_PATH, AUDIT_PATH] })),
-      http.get(`${API_BASE_URL}/projects/ws-m/files/${DISCOVERY_PATH}`, () =>
-        HttpResponse.json({ content: discoveryDocument })),
-      http.get(`${API_BASE_URL}/projects/ws-m/files/${AUDIT_PATH}`, () =>
-        HttpResponse.json({ content: AUDIT_CONTENT })),
-      http.get(`${API_BASE_URL}/projects/ws-m/audit`, () =>
-        HttpResponse.json([
-          { index: 2, timestamp: "2026-07-25T00:00:02Z", user_input: "승인",
-            ai_response: "승인 완료", context: "최종 승인" },
-          { index: 3, timestamp: "2026-07-25T00:00:03Z",
-            user_input: "discovery-document.md 수정 요청: 3장 보강",
-            ai_response: "문서를 수정했습니다", context: "수정 요청" },
-        ])),
-    );
-    await act(async () => {
-      render(<ReviewPage params={params} />);
-    });
-    expect(await screen.findByRole("button", { name: /승인하고 다음 단계로/ })).toBeInTheDocument();
-  });
 });
 
 describe("Review page — document list auto-refresh", () => {

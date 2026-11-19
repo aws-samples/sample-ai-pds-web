@@ -218,16 +218,14 @@ function ApprovalGate() {
   return (
     <Frame>
       <div className="space-y-2">
-        {/* The gate appears at the top of the screen when discovery-document.md is open and not yet approved. */}
-        <Panel className="border-amber-200 bg-amber-50">
-          <div className="flex items-center gap-1.5">
-            <p className="font-semibold text-amber-900">{t("review.gateTitle")}</p>
-            <Badge tone="amber">{t("review.badgeDraft")}</Badge>
-          </div>
-          <p className="mb-2 mt-0.5 text-[9px] text-amber-900">{t("review.gateIntro")}</p>
-          <div className="flex justify-end gap-1.5">
-            <Btn tone="ghost">{t("review.gateReviseBtn")}</Btn>
-            <Btn tone="primary">{t("review.gateApproveBtn")}</Btn>
+        {/* The approval status sits at the top of the screen when discovery-document.md is open: what each stage's
+            approval question was answered with. It reports only — approvals are answered in the workspace. */}
+        <Panel>
+          <p className="font-semibold text-slate-800">{t("review.approvalStatusTitle")}</p>
+          <p className="mt-0.5 text-[9px] text-emerald-700">✓ {t("handoff.stage.envision")}</p>
+          <Lines n={1} />
+          <div className="mt-1 flex justify-end">
+            <Btn tone="ghost">{t("page.requestRevision")}</Btn>
           </div>
         </Panel>
         <div className="flex justify-end gap-1.5">

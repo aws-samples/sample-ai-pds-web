@@ -1,26 +1,22 @@
 "use client";
 import { use, useEffect, useState } from "react";
-import Link from "next/link";
-import { useRouter } from "next/navigation";
 import { AppHeader } from "@/components/AppHeader";
 import { DocTree } from "@/components/review/DocTree";
 import { DocumentPanel } from "@/components/review/DocumentPanel";
-import { ApprovalGate } from "@/components/review/ApprovalGate";
+import { ApprovalStatus } from "@/components/review/ApprovalStatus";
 import { VerificationSummary } from "@/components/review/VerificationSummary";
 import { DocChanges } from "@/components/DocChanges";
 import {
   listArtifacts,
   readArtifact,
   getAudit,
-  listApprovals,
-  approveDocument,
+  listApprovalGates,
   downloadArtifactsArchive,
   getMissingReferences,
   ApiError,
 } from "@/lib/api/client";
 import { useAsync } from "@/lib/useAsync";
 import { useProjectMeta } from "@/lib/useProjectModel";
-import { deriveApprovalState } from "@/lib/approvalState";
 import { useT } from "@/lib/i18n/provider";
 
 // Client-side Blob download — saves the currently loaded markdown without a
@@ -50,26 +46,17 @@ async function downloadZip(projectId: string) {
 
 export default function ReviewPage({ params }: { params: Promise<{ projectId: string }> }) {
   const { projectId } = use(params);
-  const [busy, setBusy] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
   const t = useT();
-  const router = useRouter();
   const { modelLabel, language, readOnly } = useProjectMeta(projectId);
 
   const tree = useAsync(() => listArtifacts(projectId), [projectId]);
   const audit = useAsync(() => getAudit(projectId), [projectId]);
-  // The primary basis for the approval decision is the **approval record** (GET
-  // /approvals). Audit log parsing is used only as a fallback for existing
-  // projects without records — the reason is in the lib/approvalState.ts header
-  // (in short: reconstructing the decision from prose the agent transcribed loses
-  // approvals whenever the wording drifts; 3 of 5 measured cases failed).
-  //
-  // The reason for not looking at aiplc-state.md still stands: it has no
-  // "Discovery Document" stage (neither the rules nor the agent use such a
-  // stage), so the old lookup was always undefined.
-  const approvals = useAsync(() => listApprovals(projectId), [projectId]);
-  const approval = deriveApprovalState(audit.data ?? [], approvals.data ?? undefined);
+  // Where each stage's approval stands, read from the approval question files (backend aipds/approval_gates.py).
+  // The screen reports it; approvals are answered in the workspace (components/review/ApprovalStatus.tsx header).
+  // Re-read with the tree poll below, so an approval answered in another tab shows up here.
+  const approvalGates = useAsync(() => listApprovalGates(projectId), [projectId]);
 
   // Default selection: once the artifact tree loads, select
   // discovery-document.md if present. Guarded by `selected === null` so a
@@ -115,50 +102,27 @@ export default function ReviewPage({ params }: { params: Promise<{ projectId: st
   const docName = selected ? selected.slice(selected.lastIndexOf("/") + 1) : "discovery-document.md";
   const reviseHref = `/projects/${projectId}/workspace?draft=${encodeURIComponent(`${docName} ${t("page.reviseDraftSuffix")}`)}`;
 
-  /** Approve button. POST /approve writes the record first and then **starts**
-   *  the agent turn.
-   *
-   *  Not sending "승인" (approve) as a chat turn is the core of this feature: on
-   *  that path the only record of the approval was audit.md, written by the
-   *  agent, and when the agent transcribed the wording differently, the fact that
-   *  the user clicked was lost (lib/approvalState.ts header).
-   *
-   *  The approval request does not wait for the turn. The turn that moves to the
-   *  next stage takes minutes, so we move straight to the workspace, where it is
-   *  watched — it attaches to the turn that runs as the workspace opens
-   *  (`GET /turn` in useWorkspaceStream). If the AI is still busy with other work, the
-   *  server rejects with 409 before writing the record.
-   */
-  async function approve() {
-    setBusy(true);
-    setActionError(null);
-    try {
-      await approveDocument(projectId);
-      router.push(`/projects/${encodeURIComponent(projectId)}/workspace`);
-    } catch (e) {
-      setActionError(t(e instanceof ApiError && e.status === 409
-        && e.detail === "turn_in_progress" ? "page.approveBusy" : "page.turnFailed"));
-      setBusy(false);
-    }
-  }
-
   // Auto-refresh the artifact list (spec: new documents should appear without
   // a manual reload). This route has no SSE stream — documents can be created
   // from the workspace chat or an async turn — so a gentle poll is the only
   // cross-route signal available. `tree.reload()` preserves the user's current
   // selection (the default-selection effect is guarded on `selected === null`),
   // and DocTree doesn't gate on `tree.loading`, so a reload never flashes the
-  // pane empty. Paused while a turn is in flight — sendTurn reloads the tree
-  // itself on completion, so polling during `busy` would only add races.
+  // pane empty. The approval status rides the same poll: an approval question
+  // answered in the workspace tab shows up here without a reload.
   //
   // Also paused while the tab is hidden: a review tab left open behind the
   // workspace would otherwise list the bucket every 5s for nobody. Coming back
   // reloads once immediately, so the list is never a full interval stale.
+  const reloadApprovals = approvalGates.reload;
   useEffect(() => {
-    if (busy) return;
+    const refresh = () => {
+      tree.reload();
+      reloadApprovals();
+    };
     let id: ReturnType<typeof setInterval> | null = null;
     const start = () => {
-      if (id === null) id = setInterval(() => tree.reload(), 5000);
+      if (id === null) id = setInterval(refresh, 5000);
     };
     const stop = () => {
       if (id !== null) clearInterval(id);
@@ -168,7 +132,7 @@ export default function ReviewPage({ params }: { params: Promise<{ projectId: st
       if (document.visibilityState === "hidden") {
         stop();
       } else {
-        tree.reload();
+        refresh();
         start();
       }
     };
@@ -178,54 +142,23 @@ export default function ReviewPage({ params }: { params: Promise<{ projectId: st
       stop();
       document.removeEventListener("visibilitychange", onVisibility);
     };
-  }, [busy, tree.reload]);
+  }, [tree.reload, reloadApprovals]);
 
   return (
     <>
       <AppHeader activeTab="review" projectId={projectId} modelLabel={modelLabel}
                  projectLanguage={language} readOnly={readOnly} />
       <main className="max-w-[1720px] mx-auto px-6 py-8">
-        {/* Viewer members do not get the approval gate — approval and change
-            requests both start a turn. */}
-        {isDiscoveryDocument && !contentLoadError && !approval.approved && !readOnly && (
-          <>
-            <ApprovalGate
-              // Send the approval word in the project's language — this text goes
-              // to the agent and remains in the transcript, so it must be in the
-              // language of the conversation. When language is null (older
-              // backend, lookup failure), it falls back to ko — that is the
-              // language of every project before this feature.
-              onApprove={approve}
-              busy={busy}
-              reviseHref={reviseHref}
-            />
-            {actionError && <p className="text-sm text-rose-600 mb-4">{actionError}</p>}
-            {busy && <p className="text-sm text-slate-400 mb-4">{t("page.aiWorking")}</p>}
-          </>
+        {/* Status only — approvals are answered in the workspace. Viewers see it too, without the links. */}
+        {isDiscoveryDocument && !contentLoadError && (
+          <ApprovalStatus
+            gates={approvalGates.data ?? []}
+            workspaceHref={`/projects/${encodeURIComponent(projectId)}/workspace`}
+            reviseHref={reviseHref}
+            readOnly={readOnly}
+          />
         )}
-
-        {/* After approval, remove the gate but keep the state and the way back:
-            making a change request invalidates the approval and the gate
-            reappears. */}
-        {isDiscoveryDocument && !contentLoadError && approval.approved && (
-          <div
-            role="status"
-            className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 mb-6 flex flex-col sm:flex-row sm:items-center justify-between gap-3"
-          >
-            <p className="text-sm text-emerald-800">
-              <span className="font-bold">{t("page.approvedBanner")}</span>{" "}
-              {t("page.approvedBannerBody")}
-            </p>
-            {!readOnly && (
-              <Link
-                href={reviseHref}
-                className="shrink-0 px-4 py-2 rounded-lg border border-emerald-300 bg-white text-emerald-800 text-sm font-medium hover:bg-emerald-100"
-              >
-                {t("page.requestRevision")}
-              </Link>
-            )}
-          </div>
-        )}
+        {actionError && <p className="text-sm text-rose-600 mb-4">{actionError}</p>}
 
         {/* Width: at max width (1720px), file list ≈330 · body ≈1015 · validation
             summary ≈275px. Minimum widths are set on the ratios so that on narrow
