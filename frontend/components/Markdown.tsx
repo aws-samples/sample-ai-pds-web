@@ -22,9 +22,16 @@
 import { memo, useMemo } from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
+import type { PluggableList } from "unified";
 import { prepareQuestionMarkdown } from "@/lib/questionMarkdown";
 
-const REMARK_PLUGINS = [remarkGfm];
+// `singleTilde: false` — remark-gfm's default also treats `~text~` as strikethrough. Korean
+// documents write ranges with a tilde (`일 10~20명, 일 10~100개`), so two ranges in one paragraph
+// or table cell struck through the text between them. Only `~~text~~` strikes through now.
+// lib/docDiff.ts parses with the same option so blocks split the same way.
+const REMARK_GFM_OPTIONS = { singleTilde: false } as const;
+
+const REMARK_PLUGINS: PluggableList = [[remarkGfm, REMARK_GFM_OPTIONS]];
 
 const BLOCK_COMPONENTS: Components = {
   a: ({ children, href }) => (

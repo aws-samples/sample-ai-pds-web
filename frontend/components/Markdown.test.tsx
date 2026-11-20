@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { render, screen } from "@testing-library/react";
-import { Markdown } from "./Markdown";
+import { InlineMarkdown, Markdown } from "./Markdown";
 
 describe("Markdown", () => {
   it("renders headings, bold, and GFM tables", () => {
@@ -25,6 +25,34 @@ describe("Markdown", () => {
   it("renders incomplete markdown as plain text (streaming fallback)", () => {
     render(<Markdown text={"**미완성 굵"} />);
     expect(screen.getByText(/미완성 굵/)).toBeInTheDocument(); // rendered without crashing
+  });
+});
+
+// Korean documents write ranges with a tilde. With remark-gfm's default `singleTilde`, two
+// ranges in one paragraph or table cell struck through everything between them.
+describe("tilde ranges", () => {
+  it("keeps two tilde ranges in one paragraph as plain text", () => {
+    const { container } = render(<Markdown text={"일 10~20명, 일 10~100개 질문"} />);
+    expect(container.querySelector("del")).toBeNull();
+    expect(container.textContent).toContain("일 10~20명, 일 10~100개 질문");
+  });
+
+  it("keeps two tilde ranges in one table cell as plain text", () => {
+    const { container } = render(
+      <Markdown text={"| 항목 | 현황 |\n|---|---|\n| 사용량 | 일 10~20명, 일 10~100개 질문 |"} />,
+    );
+    expect(container.querySelector("del")).toBeNull();
+    expect(screen.getByRole("cell", { name: "일 10~20명, 일 10~100개 질문" })).toBeInTheDocument();
+  });
+
+  it("keeps tilde ranges in inline labels as plain text", () => {
+    const { container } = render(<InlineMarkdown text={"A) 10~20명, 30~40명"} />);
+    expect(container.querySelector("del")).toBeNull();
+  });
+
+  it("still strikes through a double-tilde span", () => {
+    render(<Markdown text={"~~삭제됨~~ 유지"} />);
+    expect(screen.getByText("삭제됨").tagName).toBe("DEL");
   });
 });
 
