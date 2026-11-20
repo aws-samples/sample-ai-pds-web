@@ -36,7 +36,8 @@ export type Change =
   // rows of the earlier table are gone.
   | { op: "modified"; block: Block; before: Block; rows?: { changed: Set<number>; removed: number } };
 
-const parser = unified().use(remarkParse).use(remarkGfm);
+// Same GFM options as the renderer (components/Markdown.tsx) — see REMARK_GFM_OPTIONS there.
+const parser = unified().use(remarkParse).use(remarkGfm, { singleTilde: false });
 
 function plainText(node: RootContent | Root): string {
   if ("value" in node && typeof node.value === "string") return node.value;
