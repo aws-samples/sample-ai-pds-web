@@ -285,6 +285,30 @@ def test_a_history_without_spec_as_built_needs_reconciling():
     assert proto.history == _HISTORY
 
 
+_FIRST_BUILD = "# 수정 이력\n\n머리말\n\n## 2026-10-13 16:27 UTC · gen 1\n\n**변경**\n최초 빌드\n\n**요약**\n명세대로\n"
+
+
+def test_a_plain_first_build_has_nothing_to_reconcile():
+    """Every build_complete writes an entry, the first build included. One that followed the spec is not a change."""
+    assert _proto([_HISTORY], {_HISTORY: _FIRST_BUILD}).reconcile == "not_needed"
+
+
+@pytest.mark.parametrize("block", ["**빌더 결정 (명세에 없던 값)**\n정렬은 최신순\n\n",
+                                   "**사용자 요청 (빌드 대화 원문)**\n> - 로그인 빼줘\n\n",
+                                   "**Builder decisions (not in the spec)**\nnewest first\n\n",
+                                   "**User requests (verbatim, from the build chat)**\n> - drop login\n\n"])
+def test_a_first_build_with_decisions_or_requests_needs_reconciling(block):
+    history = _FIRST_BUILD.replace("**요약**", block + "**요약**")
+    assert _proto([_HISTORY], {_HISTORY: history}).reconcile == "missing"
+
+
+def test_a_plain_first_build_after_an_old_spec_as_built_is_still_stale():
+    """After a reset the old spec-as-built describes a build that is gone; the rebuild still has to be reconciled."""
+    as_built = "# Spec as Built\n\n근거: 2026-09-01 10:00 UTC · gen 1\n"
+    proto = _proto([_HISTORY, _AS_BUILT], {_HISTORY: _FIRST_BUILD, _AS_BUILT: as_built})
+    assert proto.reconcile == "stale"
+
+
 def test_spec_as_built_that_stops_before_the_newest_entry_is_stale():
     """Entries with no change are also in scope for reflection — the reconciliation pass records every entry it read."""
     as_built = "# Spec as Built\n\n근거: 2026-10-13 16:27 UTC · gen 1\n"

@@ -27,6 +27,7 @@ from pydantic import BaseModel
 from aipds.models import Question
 from aipds.parsers.doc_references import missing_references
 from aipds.proto import layout
+from aipds.proto.prompts import BUILDER_DECISIONS_HEADING, USER_REQUESTS_HEADING
 
 _DISCOVERY = layout.DISCOVERY_PREFIX
 _ENVISION = _DISCOVERY + "envision/"
@@ -54,6 +55,9 @@ _SPEC_AS_BUILT = "spec-as-built.md"
 #: Heading of a change history entry — `## 2026-10-13 16:27 UTC · gen 1` (proto/prompts.change_history_entry).
 #: The timestamp has the same shape regardless of language, and the reconciliation pass cites applied entries by exactly this timestamp.
 _HISTORY_ENTRY = re.compile(r"^## (\d{4}-\d{2}-\d{2} \d{2}:\d{2})", re.MULTILINE)
+#: The blocks of an entry that carry something the approved spec does not: values the builder chose, and what
+#: the user asked for in the build chat. Both languages, since the history is written in the project's language.
+_SPEC_DEPARTURES = (*BUILDER_DECISIONS_HEADING.values(), *USER_REQUESTS_HEADING.values())
 
 #: The "intelligent default" marker AI-PLC attaches to Option A. It is detected by the arrow, not the wording —
 #: measured (11 drill projects), the words after it varied: "제안" (suggestion), "추정" (estimate), "Suggested",
@@ -67,7 +71,7 @@ Origin = Literal["A.1", "A.2", "A", "B", "EP1"]
 SectionStatus = Literal["sourced", "partial", "missing", "derived"]
 ValidationStatus = Literal["validated", "survey", "planned", "none"]
 #: Whether the spec of record reflects the change history. not_needed: there is no history (nothing changed after
-#: approval) · current: `spec-as-built.md` reflects up to the last history entry · missing: there is history but
+#: approval), or only a first build that followed the spec without decisions or requests · current: `spec-as-built.md` reflects up to the last history entry · missing: there is history but
 #: no `spec-as-built.md` · stale: `spec-as-built.md` stopped before the last entry.
 ReconcileStatus = Literal["not_needed", "current", "missing", "stale"]
 
@@ -197,6 +201,13 @@ def reconcile_status(history: str | None, as_built: str | None) -> ReconcileStat
     if not stamps:
         return "not_needed"
     if as_built is None:
+        # **A plain first build is not a change.** Every build_complete appends an entry, the first build
+        # included, so without this every freshly built prototype read as `missing` (observed: the card said
+        # "what the builds changed is not in the spec" right after the first build). A lone entry with
+        # neither builder decisions nor user requests only says "built as the spec says" -- there is
+        # nothing to reconcile. With either block it does carry something the spec lacks, so it still counts.
+        if len(stamps) == 1 and not any(h in (history or "") for h in _SPEC_DEPARTURES):
+            return "not_needed"
         return "missing"
     # The model transcribing it in ISO shape (`2026-10-13T16:27`) counts as the same citation.
     return "current" if stamps[-1] in as_built.replace("T", " ") else "stale"
