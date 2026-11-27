@@ -82,7 +82,7 @@ def test_a_quote_backed_row_comes_back_only_while_its_quote_is_there():
 
 def test_missing_topics_and_a_lagging_spec_are_candidates():
     paths = [D + "prototypes/a/PROTOTYPE-a.md", D + "prototypes/a/change-history.md"]
-    state = assess(paths, {D + "prototypes/a/change-history.md": "## 2026-10-13 16:27 UTC · gen 1\n\n검색 제거\n"})
+    state = assess(paths, {D + "prototypes/a/change-history.md": "## 2026-10-12 09:00 UTC · gen 1\n\n최초 빌드\n\n## 2026-10-13 16:27 UTC · gen 2\n\n검색 제거\n"})
     record = supplement.Supplement(answers={"problem.evidence": supplement.Answer(text="인터뷰"),
                                             "problem.why_now": supplement.Answer(unknown=True)})
     candidates, _ = open_rows.collect(state, record, {}, None, LAB, {"problem.why_now": "지금 풀어야 하는 이유"}, HANDOFF)

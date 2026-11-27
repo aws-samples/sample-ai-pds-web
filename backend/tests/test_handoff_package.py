@@ -1034,7 +1034,7 @@ def test_an_unreconciled_spec_reaches_the_vision_as_a_fact_and_a_rule():
     d = "aiplc-docs/discovery/"
     history = d + "prototype/change-history.md"
     paths = [d + "prototype/prototype-spec.md", history]
-    stale = assess(paths, {history: "# 수정 이력\n\n## 2026-10-13 16:27 UTC · gen 1\n\n검색 제거\n"})
+    stale = assess(paths, {history: "# 수정 이력\n\n## 2026-10-12 09:00 UTC · gen 1\n\n최초 빌드\n\n## 2026-10-13 16:27 UTC · gen 2\n\n검색 제거\n"})
     fresh = assess([d + "prototype/prototype-spec.md"], {})
 
     [proto] = stale.prototypes

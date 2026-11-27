@@ -2573,10 +2573,19 @@ def test_no_history_needs_no_reconciliation(proto_env):
     assert _reconcile_of(proto_env["s3"]) == "not_needed"
 
 
-def test_a_history_without_spec_as_built_is_missing(proto_env):
+def test_a_plain_first_build_has_nothing_to_reconcile(proto_env):
+    """The first build writes an entry too; one that followed the spec must not prompt a reconcile."""
     s3 = proto_env["s3"]
     _seed_spec(s3)
     s3.blobs[f"{_ART}/change-history.md"] = _HISTORY
+    assert _reconcile_of(s3) == "not_needed"
+
+
+def test_a_history_without_spec_as_built_is_missing(proto_env):
+    s3 = proto_env["s3"]
+    _seed_spec(s3)
+    s3.blobs[f"{_ART}/change-history.md"] = (
+        _HISTORY + "\n## 2026-01-05 10:00 UTC · gen 2\n\n**변경**\nB\n")
     assert _reconcile_of(s3) == "missing"
 
 
